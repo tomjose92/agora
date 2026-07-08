@@ -1,0 +1,12 @@
+[package]
+name = "agora-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agora-core = { path = "../agora-core" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

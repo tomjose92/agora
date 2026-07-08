@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agora</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="page-agora">
+<main>
+  <div class="topbar">
+    <div class="brand"><span class="brand-mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 2.5 7v1.5h19V7L12 2zM4 10h2.6v8H4v8zm0 0v8m5.7-8h2.6v8H9.7v-8zm5.7 0H18v8h-2.6v-8zM3 19.5h18V22H3v-2.5z"/></svg></span> Agora</div>
+    <div class="topbar-status" id="topbar-status"></div>
+    <button class="btn sm" id="btn-connections" onclick="connToggle()">Connections</button>
+  </div>
+  <div id="content"></div>
+</main>
+<div class="toast-host" id="toast-host"></div>
+<div class="conn-overlay" id="conn-overlay" style="display:none" onclick="if(event.target===this)connToggle()">
+  <div class="conn-panel" id="conn-panel"></div>
+</div>
+<script src="shim.js"></script>
+<script src="agora.js"></script>
+<script src="connections.js"></script>
+<script>boot();</script>
+</body>
+</html>
