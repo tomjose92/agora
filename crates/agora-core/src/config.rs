@@ -183,3 +183,37 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     }
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instance_identity_is_generated_once_and_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config::load(dir.path()).unwrap();
+        let id = cfg.instance_id();
+        assert_eq!(id.len(), 32); // 16 random bytes, hex
+        assert_eq!(cfg.instance_name(), "My Agora");
+        cfg.update(|c| c.instance_name = "Home Agora".into());
+        drop(cfg);
+        // A reload keeps both the generated id and the chosen name.
+        let cfg = Config::load(dir.path()).unwrap();
+        assert_eq!(cfg.instance_id(), id);
+        assert_eq!(cfg.instance_name(), "Home Agora");
+    }
+
+    #[test]
+    fn legacy_config_without_identity_gets_one() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"owner_token": "aaaa", "username": "tom"}"#,
+        )
+        .unwrap();
+        let cfg = Config::load(dir.path()).unwrap();
+        assert!(!cfg.instance_id().is_empty());
+        assert_eq!(cfg.instance_name(), "My Agora");
+        assert_eq!(cfg.username(), "tom");
+    }
+}

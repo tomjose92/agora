@@ -83,6 +83,12 @@ appear in the app — local or remote, same steps:
 Agora reconnects with backoff, so restarting either side heals itself. One
 Agora can hold connections to any number of Pantheo instances at once.
 
+Right after connecting, the app introduces itself with an `identify` frame —
+a stable instance id plus the display name set under **Connections → This
+Agora**. A Pantheo serving several Agoras uses that identity to keep each
+app's sessions, profile bindings, and deliveries apart (its session list and
+profile builder label chats with the Agora's name).
+
 ### Third-party agents (dial-in, pairing tokens)
 
 Anything that can open a WebSocket can be an Agora agent — an OpenClaw or
