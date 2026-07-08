@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Agora",
+    "slug": "agora",
+    "version": "0.1.0",
+    "scheme": "agora",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#101216",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.agora.mobile"
+    },
+    "android": {
+      "package": "app.agora.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#101216",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-notifications",
+      "expo-sharing",
+      "expo-image"
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+name: mobile
+
+on:
+  push:
+    paths: ["mobile/**", "crates/**", ".github/workflows/mobile.yml"]
+  pull_request:
+    paths: ["mobile/**", "crates/**", ".github/workflows/mobile.yml"]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  # The TS client against a real agora-server: catches payload drift between
+  # the Rust API and the hand-written mobile types.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p agora-server
+      - run: npm ci
+        working-directory: mobile
+      - run: npm run test:integration
+        working-directory: mobile

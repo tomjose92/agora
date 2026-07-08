@@ -1,0 +1,156 @@
+/* Payload shapes mirrored from crates/agora-core/src/{server,store,hub}.rs.
+   There is no shared schema with the Rust server; the integration tests are
+   what keep these honest. */
+
+export interface Me {
+  username: string;
+  version: string;
+}
+
+export interface Channel {
+  id: string;
+  group_id: string;
+  name: string;
+  topic: string;
+  created_at: number;
+  /* Embedded by the groups endpoint only. */
+  unread?: number;
+  last_read_id?: number;
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  description: string;
+  created_by: string | null;
+  created_at: number;
+  channels: Channel[];
+  role: "admin" | "member";
+}
+
+export interface Attachment {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
+}
+
+export interface Message {
+  id: number;
+  channel_id: string;
+  thread_id: number | null;
+  author_type: "user" | "agent";
+  author_id: string;
+  author_name: string | null;
+  text: string;
+  ts: number;
+  attachments: Attachment[];
+  /* Top-level pages only. */
+  reply_count?: number;
+}
+
+export interface StarredMessage extends Message {
+  starred_at: number;
+  root: Message | null;
+}
+
+export interface PinnedMessage extends Message {
+  pinned_by: string | null;
+  pinned_at: number;
+}
+
+export interface Member {
+  channel_id: string | null;
+  member_type: "user" | "agent";
+  member_id: string;
+  role: string;
+  added_at: number;
+  /* Agents get their display name resolved server-side. */
+  name?: string;
+}
+
+export interface AgentInfo {
+  id: string;
+  name: string;
+  source: string;
+  requires_mention: boolean;
+  last_seen: number;
+  live: boolean;
+  avatar: string | null;
+}
+
+export interface ChannelAgent {
+  id: string;
+  name: string;
+}
+
+export interface TypingEvent {
+  type: "typing";
+  channel_id: string;
+  thread_id: number | null;
+  agent_id: string;
+  agent_name: string;
+  active: boolean;
+}
+
+export interface ProgressEvent {
+  type: "progress";
+  channel_id: string;
+  thread_id: number | null;
+  agent_id: string;
+  agent_name: string;
+  handle: string;
+  text: string;
+}
+
+export interface MessageEvent {
+  type: "message";
+  message: Message;
+}
+
+export interface ReadEvent {
+  type: "read";
+  channel_id: string;
+  last_read_id: number;
+}
+
+export interface PinEvent {
+  type: "pin";
+  channel_id: string;
+  pinned: boolean;
+  pin?: PinnedMessage;
+  message_id?: number;
+}
+
+export type WsEvent =
+  | TypingEvent
+  | ProgressEvent
+  | MessageEvent
+  | ReadEvent
+  | PinEvent;
+
+export interface ChannelActivity {
+  typing: TypingEvent[];
+  progress: ProgressEvent[];
+}
+
+export interface ConnStatus {
+  name: string;
+  url: string;
+  connected: boolean;
+  agents: { id: string; name: string }[];
+  last_error: string | null;
+}
+
+export interface Connection {
+  name: string;
+  url: string;
+  enabled: boolean;
+  status: ConnStatus | null;
+}
+
+export interface PairingToken {
+  token: string;
+  name: string;
+  created_at: number;
+}
