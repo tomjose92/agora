@@ -1,0 +1,14 @@
+# Rust build artifacts
+/target/
+
+# Tauri codegen (regenerated on every build)
+crates/agora-desktop/gen/schemas/
+
+# Runtime state (headless server default data dir)
+/data/
+
+# Node (Tauri CLI is invoked via npx; nothing should land here)
+node_modules/
+
+# OS noise
+.DS_Store
