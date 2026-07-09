@@ -56,9 +56,10 @@
       <label for="url">Server URL</label>
       <input id="url" placeholder="https://agora.up.railway.app" autocapitalize="off" autocorrect="off" spellcheck="false" />
       <label for="token">Owner token</label>
-      <input id="token" placeholder="printed in the server log / config.json" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <input id="token" type="password" placeholder="printed in the server log / config.json" autocapitalize="off" autocorrect="off" spellcheck="false" />
       <button class="primary" id="connect">Connect to remote server</button>
       <button class="ghost" id="embedded">Use the built-in local server</button>
+      <button class="ghost" id="cancel">Cancel</button>
     </div>
     <div class="status" id="status"></div>
   </div>
@@ -83,10 +84,18 @@
   } else {
     const invoke = tauri.core.invoke;
     const editing = new URLSearchParams(location.search).has("edit");
+    // Unsaved form values survive a failed attempt + page reopen; cleared
+    // once a connection actually succeeds.
+    const draft = {
+      load() { try { return JSON.parse(localStorage.getItem("connect-draft")) || null; } catch { return null; } },
+      save() { localStorage.setItem("connect-draft", JSON.stringify({ url: urlEl.value, token: tokenEl.value })); },
+      clear() { localStorage.removeItem("connect-draft"); },
+    };
 
     invoke("get_server_settings").then(async (settings) => {
-      urlEl.value = settings.url || "";
-      tokenEl.value = settings.token || "";
+      const saved = draft.load();
+      urlEl.value = (saved && saved.url) || settings.url || "";
+      tokenEl.value = (saved && saved.token) || settings.token || "";
       // Fresh boot in remote mode: try the stored server before showing the form.
       if (!editing && settings.mode === "remote" && settings.url) {
         busy(true);
@@ -100,13 +109,17 @@
       }
     });
 
+    [urlEl, tokenEl].forEach((el) => el.addEventListener("input", draft.save));
+
     document.getElementById("connect").addEventListener("click", async () => {
       busy(true);
       setStatus("Checking " + (urlEl.value || "server") + "…", "ok");
+      draft.save();
       try {
         await invoke("set_server_settings", {
           settings: { mode: "remote", url: urlEl.value.trim(), token: tokenEl.value.trim() },
         }); // navigates away on success
+        draft.clear();
       } catch (e) {
         busy(false);
         setStatus(String(e), "error");
@@ -118,10 +131,27 @@
       setStatus("Starting the local server…", "ok");
       try {
         await invoke("set_server_settings", { settings: { mode: "embedded" } });
+        draft.clear();
       } catch (e) {
         busy(false);
         setStatus(String(e), "error");
       }
+    });
+
+    // Leave without changing anything (Cancel button or Esc).
+    async function cancel() {
+      busy(true);
+      setStatus("");
+      try {
+        await invoke("open_current_server");
+      } catch (e) {
+        busy(false);
+        setStatus(String(e), "error");
+      }
+    }
+    document.getElementById("cancel").addEventListener("click", cancel);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") cancel();
     });
   }
 </script>

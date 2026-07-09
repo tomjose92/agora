@@ -43,7 +43,13 @@ struct Embedded {
 
 impl Embedded {
     fn url(&self) -> Url {
-        format!("http://{}/?token={}", self.addr, self.token)
+        // A wildcard bind (0.0.0.0, set to let phones on the LAN in) is not a
+        // routable destination — the webview must dial loopback instead.
+        let mut addr = self.addr;
+        if addr.ip().is_unspecified() {
+            addr.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        format!("http://{}/?token={}", addr, self.token)
             .parse()
             .expect("valid loopback url")
     }
@@ -62,7 +68,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_server_settings,
             set_server_settings,
-            connect_remote
+            connect_remote,
+            open_current_server
         ])
         .menu(|handle| {
             let menu = Menu::default(handle)?;
@@ -242,6 +249,26 @@ async fn connect_remote(app: AppHandle) -> Result<(), String> {
         .ok_or("No remote server configured yet")?;
     validate_remote(&stored).await?;
     open_main(&app, url.parse().map_err(|_| "Invalid server URL")?);
+    Ok(())
+}
+
+/// Leave the settings page without changing anything: navigate back to
+/// whatever server the saved settings point at.
+#[tauri::command]
+async fn open_current_server(app: AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let stored = settings::load(&data_dir);
+    match (stored.mode, stored.remote_url()) {
+        (Mode::Remote, Some(url)) => {
+            open_main(&app, url.parse().map_err(|_| "Invalid server URL")?);
+        }
+        _ => {
+            let embedded = ensure_embedded(&app)
+                .await
+                .map_err(|e| format!("embedded server failed to start: {e}"))?;
+            open_main(&app, embedded.url());
+        }
+    }
     Ok(())
 }
 
