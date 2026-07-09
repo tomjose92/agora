@@ -2085,9 +2085,12 @@ async function agoLiveToggle(threadId) {
     playQueue: [], audio: null,
   };
   _agoLive.timer = setInterval(agoLiveTick, AGO_LIVE.TICK_MS);
-  await agoUnlockPlayback();   // mobile: playback unlock + resume AudioContext
   agoDrawMain();
   agoDrawThread();   // thread-scoped sessions render their strip in the panel
+  // Playback unlock + AudioContext resume, deliberately not awaited: the
+  // play() promise of the unlock clip can stay pending forever in some
+  // webviews (Tauri/WKWebView), and the strip must render immediately.
+  agoUnlockPlayback();
 }
 
 function agoLiveStop() {
