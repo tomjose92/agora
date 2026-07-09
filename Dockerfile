@@ -20,6 +20,7 @@ COPY ui /app/ui
 # Accept connections from the platform's proxy; Railway injects PORT itself.
 ENV AGORA_BIND=0.0.0.0
 EXPOSE 4470
-VOLUME ["/data"]
+# No VOLUME directive: Railway rejects it ("use Railway Volumes"). Attach a
+# Railway volume mounted at /data instead so state survives redeploys.
 
 CMD ["agora-server", "--data-dir", "/data", "--ui-dir", "/app/ui"]
