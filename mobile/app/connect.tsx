@@ -17,7 +17,7 @@ import {
 import { Redirect } from "expo-router";
 import { Image as ExpoImage } from "expo-image";
 import * as WebBrowser from "expo-web-browser";
-import { normalizeBaseUrl } from "../src/api/client";
+import { normalizeBaseUrl, originOf } from "../src/api/client";
 import { googleEnabled, runGoogleFlow } from "../src/lib/googleAuth";
 import { useSession } from "../src/state/session";
 import { colors, radius } from "../src/lib/theme";
@@ -37,6 +37,8 @@ export default function Connect() {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Force Google's account chooser on retries (see runGoogleFlow).
+  const [googleRetry, setGoogleRetry] = useState(false);
 
   // A signed-out relaunch knows the server before the first render settles.
   useEffect(() => {
@@ -65,10 +67,13 @@ export default function Connect() {
     setError("");
     try {
       const normalized = normalizeBaseUrl(url);
-      // Reachability check that also learns the sign-in methods.
+      // Reachability check that also learns the sign-in methods. Keep the
+      // origin the server actually answered from (http 301s to https): later
+      // authorized requests must not cross a redirect, which strips the
+      // Authorization header on iOS.
       const res = await fetch(`${normalized}/api/auth/config`).catch(() => null);
       if (!res) throw new Error("Could not reach that server");
-      setBase(normalized);
+      setBase(originOf(res.url, normalized));
       setStep("signin");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -95,10 +100,11 @@ export default function Connect() {
     setBusy(true);
     setError("");
     try {
-      const session = await runGoogleFlow(base);
+      const session = await runGoogleFlow(base, googleRetry);
       // A dismissed sheet is not an error — just return to the form.
       if (session) await signIn(base, session);
     } catch (e) {
+      setGoogleRetry(true);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -170,7 +176,7 @@ export default function Connect() {
                   style={styles.input}
                   value={token}
                   onChangeText={setToken}
-                  placeholder="owner token"
+                  placeholder="admin token (from the server log)"
                   placeholderTextColor={colors.faint}
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -185,7 +191,7 @@ export default function Connect() {
                   {busy && !google ? (
                     <ActivityIndicator color={colors.onAccent} />
                   ) : (
-                    <Text style={styles.btnText}>Connect</Text>
+                    <Text style={styles.btnText}>Sign in as admin</Text>
                   )}
                 </Pressable>
               </>
@@ -195,7 +201,7 @@ export default function Connect() {
                 onPress={() => setShowToken(true)}
                 disabled={busy}
               >
-                <Text style={styles.btnGhostText}>Use the owner token instead</Text>
+                <Text style={styles.btnGhostText}>Sign in as admin</Text>
               </Pressable>
             )}
             {error ? <Text style={styles.error}>{error}</Text> : null}

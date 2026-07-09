@@ -39,6 +39,7 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
     connections.sync();
 
     let snapshot = config.snapshot();
+    let (auth_limiter, upload_limiter) = server::AppState::default_limiters();
     let state = server::AppState {
         hub,
         config,
@@ -47,6 +48,8 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
         data_dir,
         restart_handler: Arc::new(std::sync::Mutex::new(None)),
         speech_cache: Arc::new(std::sync::Mutex::new(Vec::new())),
+        auth_limiter,
+        upload_limiter,
     };
     let app = server::router(state.clone());
     let addr: SocketAddr = format!("{}:{}", snapshot.bind, snapshot.port).parse()?;
@@ -64,8 +67,20 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
         Err(e) => return Err(e.into()),
     };
     let bound = listener.local_addr()?;
+    // A non-loopback bind exposes the API (owner-token gated, but still) on the
+    // network with no TLS of its own — it must sit behind a firewall and a TLS
+    // reverse proxy. Loopback has no wire to sniff, so stay quiet there.
+    if !bound.ip().is_loopback() {
+        tracing::warn!(
+            "Agora is bound to {bound} (not loopback): reachable off-host in cleartext. \
+             Put it behind a firewall and a TLS reverse proxy (see README §Deploying)."
+        );
+    }
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
+        // ConnectInfo carries the client IP to the rate limiter; Option<_> in
+        // the handlers keeps it working when a transport doesn't supply it.
+        let service = app.into_make_service_with_connect_info::<SocketAddr>();
+        if let Err(e) = axum::serve(listener, service).await {
             tracing::error!("server stopped: {e}");
         }
     });

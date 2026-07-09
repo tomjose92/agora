@@ -73,6 +73,12 @@ pub struct ConfigData {
     pub bind: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// When true, refuse plaintext `ws://`/`http://` to non-loopback hosts on
+    /// outbound connections (the token and all traffic would otherwise travel
+    /// in the clear). Off by default so LAN/dev setups keep working; turn it on
+    /// for deployments where every peer is reachable over TLS.
+    #[serde(default)]
+    pub require_tls: bool,
     #[serde(default)]
     pub connections: Vec<Connection>,
     #[serde(default)]
@@ -119,6 +125,7 @@ impl Default for ConfigData {
             username: default_username(),
             bind: default_bind(),
             port: default_port(),
+            require_tls: false,
             connections: Vec::new(),
             pairing_tokens: Vec::new(),
             max_file_mb: default_max_file_mb(),

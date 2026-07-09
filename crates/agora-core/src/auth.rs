@@ -109,17 +109,29 @@ pub fn state_matches(cookie: &str, param: &str) -> bool {
 }
 
 /// The Google consent URL to redirect the browser to (step 1 of the flow).
-pub fn build_consent_url(gc: &GoogleConfig, redirect_uri: &str, state: &str) -> String {
-    let q = form_urlencoded(&[
-        ("client_id", &gc.client_id),
+///
+/// No `prompt` by default: a returning user with one active Google session
+/// bounces straight through with no screen at all. `select_account` is only
+/// forced when the client asks (retry after `no_access`) — otherwise Google
+/// would keep silently re-picking the same disallowed account.
+pub fn build_consent_url(
+    gc: &GoogleConfig,
+    redirect_uri: &str,
+    state: &str,
+    select_account: bool,
+) -> String {
+    let mut pairs = vec![
+        ("client_id", gc.client_id.as_str()),
         ("redirect_uri", redirect_uri),
         ("response_type", "code"),
         ("scope", GOOGLE_SCOPE),
         ("state", state),
         ("access_type", "online"),
-        ("prompt", "select_account"),
-    ]);
-    format!("{GOOGLE_AUTH_URI}?{q}")
+    ];
+    if select_account {
+        pairs.push(("prompt", "select_account"));
+    }
+    format!("{GOOGLE_AUTH_URI}?{}", form_urlencoded(&pairs))
 }
 
 /// Exchange an authorization `code` for Google's token response (blocking —
@@ -280,12 +292,16 @@ mod tests {
 
     #[test]
     fn consent_url_carries_client_and_redirect() {
-        let url = build_consent_url(&gc(), "https://a.example/api/auth/google/callback", "st");
+        let url = build_consent_url(&gc(), "https://a.example/api/auth/google/callback", "st", false);
         assert!(url.starts_with(GOOGLE_AUTH_URI));
         assert!(url.contains("client_id=cid.apps.googleusercontent.com"));
         assert!(url.contains("redirect_uri=https%3A%2F%2Fa.example%2Fapi%2Fauth%2Fgoogle%2Fcallback"));
         assert!(url.contains("state=st"));
         assert!(url.contains("scope=openid%20email%20profile"));
+        // Silent re-auth by default; the chooser only on request.
+        assert!(!url.contains("prompt="));
+        let url = build_consent_url(&gc(), "https://a.example/cb", "st", true);
+        assert!(url.contains("prompt=select_account"));
     }
 
     #[test]

@@ -53,14 +53,20 @@ export async function googleEnabled(baseUrl: string): Promise<boolean> {
 }
 
 /** Run the browser round-trip and return the session token. Returns null
-    when the user dismissed the sheet; throws on real failures. */
-export async function runGoogleFlow(baseUrl: string): Promise<string | null> {
+    when the user dismissed the sheet; throws on real failures.
+    `selectAccount` forces Google's account chooser (retry after a rejected
+    account, which silent re-auth would otherwise re-pick forever). */
+export async function runGoogleFlow(
+  baseUrl: string,
+  selectAccount = false,
+): Promise<string | null> {
   if (!(await googleEnabled(baseUrl))) {
     throw new Error("That server does not have Google sign-in configured");
   }
   const redirect = Linking.createURL("auth");
   const result = await WebBrowser.openAuthSessionAsync(
-    `${baseUrl}/api/auth/google/start?next=${encodeURIComponent(redirect)}`,
+    `${baseUrl}/api/auth/google/start?next=${encodeURIComponent(redirect)}` +
+      (selectAccount ? "&select_account=1" : ""),
     redirect,
   );
   if (result.type !== "success") return null;

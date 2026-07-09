@@ -13,8 +13,12 @@
       "bundleIdentifier": "app.agora.mobile",
       "infoPlist": {
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true,
-          "NSAllowsLocalNetworking": true
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "10.0.0.0/8": { "NSExceptionAllowsInsecureHTTPLoads": true },
+            "172.16.0.0/12": { "NSExceptionAllowsInsecureHTTPLoads": true },
+            "192.168.0.0/16": { "NSExceptionAllowsInsecureHTTPLoads": true }
+          }
         }
       }
     },

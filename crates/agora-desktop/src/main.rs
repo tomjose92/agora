@@ -346,12 +346,16 @@ async fn probe_server(url: String) -> Result<serde_json::Value, String> {
 /// the system browser, then persist the returned session token exactly like
 /// a pasted owner token (remote mode) and navigate to the server.
 #[tauri::command]
-async fn google_sign_in(app: AppHandle, url: String) -> Result<(), String> {
+async fn google_sign_in(
+    app: AppHandle,
+    url: String,
+    select_account: Option<bool>,
+) -> Result<(), String> {
     let base = url.trim().trim_end_matches('/').to_string();
     if !base.starts_with("http://") && !base.starts_with("https://") {
         return Err("Server URL must start with http:// or https://".into());
     }
-    let token = google_login::run_flow(base.clone()).await?;
+    let token = google_login::run_flow(base.clone(), select_account.unwrap_or(false)).await?;
     let settings = DesktopSettings {
         mode: Mode::Remote,
         url: Some(base),

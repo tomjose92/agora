@@ -15,6 +15,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::config::Config;
@@ -140,10 +142,49 @@ impl ConnectionManager {
         }
     }
 
+    /// Warn (or, under `require_tls`, refuse) when a connection would send the
+    /// instance token and message traffic over plaintext to a remote host.
+    /// Loopback is always allowed — there is no wire to sniff.
+    fn guard_transport(&self, url: &str) -> anyhow::Result<()> {
+        let lower = url.trim().to_ascii_lowercase();
+        let plaintext = lower.starts_with("ws://") || lower.starts_with("http://");
+        if !plaintext {
+            return Ok(());
+        }
+        let host = lower
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or("")
+            .split(['/', ':', '?'])
+            .next()
+            .unwrap_or("");
+        let is_loopback =
+            host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".local");
+        if is_loopback {
+            return Ok(());
+        }
+        if self.config.snapshot().require_tls {
+            anyhow::bail!("refusing plaintext connection to {host}: require_tls is on (use wss://)");
+        }
+        tracing::warn!(
+            "connection dials plaintext {url}: the instance token and all traffic travel \
+             unencrypted. Use wss:// (front the peer with TLS), or set require_tls to refuse this."
+        );
+        Ok(())
+    }
+
     async fn run_once(&self, name: &str, url: &str, token: &str) -> anyhow::Result<()> {
-        let sep = if url.contains('?') { '&' } else { '?' };
-        let full = format!("{url}{sep}token={token}");
-        let (ws, _) = connect_async(&full).await?;
+        // Pass the instance token in the Authorization header, not the URL:
+        // query strings leak into proxy/access logs, and this is a root-level
+        // credential. The server still accepts a `?token=` fallback for older
+        // peers, but we no longer emit one. (Refuse plaintext ws:// to a
+        // non-loopback host when require_tls is on — see below.)
+        self.guard_transport(url)?;
+        let mut request = url.into_client_request()?;
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, format!("Bearer {token}").parse()?);
+        let (ws, _) = connect_async(request).await?;
         let (mut sink, mut stream) = ws.split();
 
         // The other side speaks first: hello with its agent roster.

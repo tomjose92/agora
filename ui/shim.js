@@ -73,17 +73,17 @@ function authGate() {
   AUTH_ERROR = "";
   el.innerHTML = `<div class="auth-card">
     <div class="auth-brand"><img src="/icon.png" alt="">Agora</div>
-    <p id="auth-hint">Paste this instance's owner token (shown in the server
-       log or in <code>config.json</code>).</p>
+    <p id="auth-hint">Admin sign-in: paste this instance's admin token (shown
+       in the server log or in <code>config.json</code>).</p>
     <button class="btn google" id="auth-google" style="display:none"
             onclick="location.href='/api/auth/google/start'">
       Continue with Google</button>
     <div id="auth-token-form">
-      <input id="auth-token" placeholder="owner token" autocomplete="off">
-      <button class="btn primary" onclick="authSubmit()">Connect</button>
+      <input id="auth-token" placeholder="admin token" autocomplete="off">
+      <button class="btn primary" onclick="authSubmit()">Sign in as admin</button>
     </div>
     <button class="auth-link" id="auth-token-toggle" style="display:none">
-      Use the owner token instead</button>
+      Sign in as admin</button>
     <p id="auth-error" style="color:#f87171">${esc(errText)}</p>
   </div>`;
   document.body.appendChild(el);

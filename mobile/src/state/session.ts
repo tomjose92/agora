@@ -82,11 +82,16 @@ export const useSession = create<SessionState>((set) => ({
   },
 
   async signIn(serverUrl, token) {
-    const guess = normalizeBaseUrl(serverUrl);
+    let guess = normalizeBaseUrl(serverUrl);
     const trimmed = token.trim();
-    // Validate by hand (not via ApiClient) to see the *final* URL: hosts
-    // that 301 http->https would silently work for fetch but break the
-    // WebSocket, so store the canonical origin the server redirected to.
+    // Find the canonical origin with an unauthenticated request BEFORE
+    // sending the token: iOS drops the Authorization header when fetch
+    // follows a redirect, so a stored http:// URL against a host that 301s
+    // to https turns a perfectly good token into a 401. (This also stores
+    // the canonical origin, which the WebSocket needs — it can't follow
+    // redirects at all.)
+    const probe = await fetch(`${guess}/api/auth/config`).catch(() => null);
+    if (probe) guess = originOf(probe.url, guess);
     const res = await fetch(`${guess}/api/me`, {
       headers: { Authorization: `Bearer ${trimmed}` },
     });

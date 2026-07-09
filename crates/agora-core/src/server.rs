@@ -9,10 +9,12 @@
 //! stay mechanical: same payloads, same event frames.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{ConnectInfo, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
@@ -30,6 +32,12 @@ const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
 const MAX_FILES_PER_MESSAGE: usize = 5;
 
+/// Upper bound on an uploaded import archive. An import carries the whole
+/// database plus every attachment, so it is legitimately large — but a 1 GiB
+/// (or unbounded) body is a cheap way to exhaust memory/disk. 256 MiB covers a
+/// substantial personal instance; raise it deliberately for a bigger migration.
+const MAX_IMPORT_BYTES: usize = 256 * 1024 * 1024;
+
 /// Voice notes: generous for a spoken message (~10 min of Opus), but a hard
 /// stop against arbitrary blobs going to the transcription API.
 const MAX_VOICE_BYTES: usize = 15 * 1024 * 1024;
@@ -40,6 +48,58 @@ const SPEECH_CACHE_MAX: usize = 64;
 
 /// message_id -> mp3 bytes, most-recently-used last.
 type SpeechCache = std::sync::Mutex<Vec<(i64, Vec<u8>)>>;
+
+/// Requests per client per window on the auth surface (Google sign-in): enough
+/// for a real round-trip and retries, low enough to blunt automated abuse of an
+/// unauthenticated, externally-expensive path.
+const AUTH_RATE_MAX: u32 = 30;
+/// Requests per client per window on the upload surface (message/voice/import).
+const UPLOAD_RATE_MAX: u32 = 60;
+const RATE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Tiny fixed-window rate limiter — no external dependency. Keyed by an opaque
+/// string (client IP when known, a shared bucket otherwise). This is an origin
+/// backstop, not an edge control: behind a reverse proxy every request shares
+/// the proxy's IP, so pair it with a limiter at the edge for real per-client
+/// fairness.
+pub struct RateLimiter {
+    window: Duration,
+    max: u32,
+    buckets: std::sync::Mutex<HashMap<String, (Instant, u32)>>,
+}
+
+impl RateLimiter {
+    fn new(window: Duration, max: u32) -> Self {
+        Self {
+            window,
+            max,
+            buckets: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// True if the request is within budget; false once the key is over it.
+    fn allow(&self, key: &str) -> bool {
+        let now = Instant::now();
+        let mut buckets = self.buckets.lock().unwrap();
+        // Opportunistic sweep so a churn of distinct keys can't grow the map
+        // without bound.
+        if buckets.len() > 4096 {
+            buckets.retain(|_, (start, _)| now.duration_since(*start) < self.window);
+        }
+        let entry = buckets.entry(key.to_string()).or_insert((now, 0));
+        if now.duration_since(entry.0) >= self.window {
+            *entry = (now, 0);
+        }
+        entry.1 += 1;
+        entry.1 <= self.max
+    }
+}
+
+/// Rate-limit key for a request: the client IP. `run()` always serves with
+/// connect info, so the peer address is present on every transport.
+fn rate_key(peer: &SocketAddr) -> String {
+    peer.ip().to_string()
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -54,6 +114,22 @@ pub struct AppState {
     pub restart_handler: Arc<std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>>,
     /// TTS output per message id (see [`SPEECH_CACHE_MAX`]).
     pub speech_cache: Arc<SpeechCache>,
+    /// Per-client fixed-window limiter for the Google sign-in surface.
+    pub auth_limiter: Arc<RateLimiter>,
+    /// Per-client fixed-window limiter for the upload surface.
+    pub upload_limiter: Arc<RateLimiter>,
+}
+
+impl AppState {
+    /// Build the two rate limiters an [`AppState`] needs, with the standard
+    /// windows/budgets. Kept here so every constructor (headless + desktop)
+    /// wires the same policy.
+    pub fn default_limiters() -> (Arc<RateLimiter>, Arc<RateLimiter>) {
+        (
+            Arc::new(RateLimiter::new(RATE_WINDOW, AUTH_RATE_MAX)),
+            Arc::new(RateLimiter::new(RATE_WINDOW, UPLOAD_RATE_MAX)),
+        )
+    }
 }
 
 type ApiError = (StatusCode, Json<Value>);
@@ -146,7 +222,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/export", get(export_data))
         .route(
             "/api/import",
-            post(import_data).layer(axum::extract::DefaultBodyLimit::max(1024 * 1024 * 1024)),
+            post(import_data).layer(axum::extract::DefaultBodyLimit::max(MAX_IMPORT_BYTES)),
         )
         .route("/api/pairing", get(list_pairing).post(create_pairing))
         .route("/api/pairing/{token}", delete(revoke_pairing))
@@ -530,10 +606,14 @@ async fn post_message_upload(
     State(state): State<AppState>,
     Path(channel_id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_owner(&state, &headers, &q)?;
+    if !state.upload_limiter.allow(&rate_key(&peer)) {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
+    }
     channel_or_404(&state, &channel_id)?;
     let max_bytes = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
     let mut text = String::new();
@@ -598,10 +678,14 @@ async fn post_voice_message(
     State(state): State<AppState>,
     Path(channel_id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_owner(&state, &headers, &q)?;
+    if !state.upload_limiter.allow(&rate_key(&peer)) {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
+    }
     channel_or_404(&state, &channel_id)?;
     let Some(key) = crate::voice::api_key() else {
         return Err(err(
@@ -1072,10 +1156,14 @@ async fn export_data(
 async fn import_data(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
     require_owner(&state, &headers, &q)?;
+    if !state.upload_limiter.allow(&rate_key(&peer)) {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
+    }
     let replace = matches!(
         q.get("replace").map(String::as_str),
         Some("1" | "true" | "yes")
@@ -1318,8 +1406,13 @@ async fn auth_config(State(state): State<AppState>) -> Json<Value> {
 async fn google_start(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Response {
+    if !state.auth_limiter.allow(&rate_key(&peer)) {
+        return err(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in attempts — slow down")
+            .into_response();
+    }
     let Some(gc) = state.config.google() else {
         return err(StatusCode::NOT_FOUND, "Google sign-in is not enabled").into_response();
     };
@@ -1329,7 +1422,10 @@ async fn google_start(
     }
     let oauth_state = crate::auth::encode_state(&next);
     let redirect_uri = oauth_redirect_uri(&state, &headers);
-    let url = crate::auth::build_consent_url(&gc, &redirect_uri, &oauth_state);
+    // `?select_account=1` lets a client force the account chooser (e.g. a
+    // retry after the allowlist rejected the silently-reused account).
+    let select_account = q.get("select_account").map(String::as_str) == Some("1");
+    let url = crate::auth::build_consent_url(&gc, &redirect_uri, &oauth_state, select_account);
     let secure = redirect_uri.starts_with("https://");
     redirect_with_cookie(&url, set_state_cookie(secure, &oauth_state, OAUTH_STATE_MAX_AGE))
 }
@@ -1340,8 +1436,13 @@ async fn google_start(
 async fn google_callback(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Response {
+    if !state.auth_limiter.allow(&rate_key(&peer)) {
+        return err(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in attempts — slow down")
+            .into_response();
+    }
     let state_param = q.get("state").cloned().unwrap_or_default();
     let next = crate::auth::next_from_state(&state_param);
     let secure = oauth_redirect_uri(&state, &headers).starts_with("https://");

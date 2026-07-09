@@ -13,8 +13,10 @@ use std::time::{Duration, Instant};
 /// How long the user gets to finish the consent screen.
 const FLOW_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Runs the whole flow and returns the session token.
-pub async fn run_flow(base: String) -> Result<String, String> {
+/// Runs the whole flow and returns the session token. `select_account`
+/// forces Google's account chooser — used on retries so a rejected account
+/// isn't silently re-picked forever.
+pub async fn run_flow(base: String, select_account: bool) -> Result<String, String> {
     check_enabled(&base).await?;
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("could not open a local listener: {e}"))?;
@@ -24,8 +26,9 @@ pub async fn run_flow(base: String) -> Result<String, String> {
         .port();
     let next = format!("http://127.0.0.1:{port}/callback");
     let start = format!(
-        "{base}/api/auth/google/start?next={}",
-        urlencode(&next)
+        "{base}/api/auth/google/start?next={}{}",
+        urlencode(&next),
+        if select_account { "&select_account=1" } else { "" }
     );
     open_browser(&start)?;
     tokio::task::spawn_blocking(move || wait_for_callback(listener))

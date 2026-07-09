@@ -293,6 +293,29 @@ The typical "graduate my laptop Agora to the cloud" flow: deploy on Railway,
 run the first command above, then flip the desktop app to remote mode
 (Server → Server Settings…) and sign the mobile app into the same URL.
 
+## Network exposure
+
+Agora authenticates every request with the owner token (or a Google session
+token), and it defaults to a **loopback bind** so nothing is reachable off-host
+until you opt in.
+
+- **Binding `0.0.0.0`** (LAN bridges, or the Docker image, which forces it for
+  PaaS routing) puts the API on the network. The owner token is then the *only*
+  thing standing between the internet and full control of the instance, so a
+  `0.0.0.0` deployment **must** sit behind a firewall and a TLS reverse proxy —
+  never expose the raw port directly. On boot the server logs a warning when it
+  binds a non-loopback address.
+- **TLS is not terminated by Agora itself.** Over plaintext `ws://`/`http://`
+  the owner token and every message travel in the clear. Front it with TLS
+  (see the reverse-proxy config above; Railway/PaaS domains give you TLS for
+  free). Outbound Pantheo connections send the instance token as an
+  `Authorization: Bearer` header (not a logged `?token=`), and setting
+  `require_tls` makes the server refuse to dial a non-loopback peer over
+  plaintext.
+- **Rate limiting** on the Google sign-in and upload endpoints is an in-process
+  backstop only. Behind a proxy every request shares the proxy's IP, so keep a
+  real limiter at the edge for internet-facing deployments.
+
 ## Configuration (`config.json` in the data dir)
 
 | Key | Default | Meaning |
@@ -300,8 +323,9 @@ run the first command above, then flip the desktop app to remote mode
 | `owner_token` | generated | Authenticates the UI/REST API (`?token=` or `Authorization: Bearer`). |
 | `session_secret` | generated | Signs the session tokens minted by Google sign-in; rotate it to sign everyone out. |
 | `username` | `me` | Display name of the local user. |
-| `bind` | `127.0.0.1` | Set `0.0.0.0` to accept LAN/remote agent bridges. |
+| `bind` | `127.0.0.1` | Set `0.0.0.0` to accept LAN/remote agent bridges. See [Network exposure](#network-exposure). |
 | `port` | `4470` | Falls back to an ephemeral port if taken. |
+| `require_tls` | `false` | Refuse plaintext `ws://`/`http://` outbound connections to non-loopback hosts (the token would travel in the clear). |
 | `connections` | `[]` | Outbound Pantheo endpoints (managed from the UI). |
 | `pairing_tokens` | `[]` | Dial-in bridge credentials (managed from the UI). |
 | `max_file_mb` | `10` | Per-attachment upload cap. |
@@ -341,6 +365,16 @@ AGORA_PUBLIC_URL=https://agora.up.railway.app      # must match the redirect URI
 The allowlist is the authorization layer: Agora v1 is single-user, so any
 allowed email signs in *as the owner*. An empty allowlist keeps Google sign-in
 disabled outright.
+
+> **Token trust:** the `id_token` is validated by its claims (`iss`, `aud`,
+> `exp`, `email_verified`, allowlist) but **not** by an RS256/JWKS signature
+> check. This is safe because the token is fetched directly from Google's token
+> endpoint over the server's TLS back-channel (authorization-code flow), so its
+> authenticity is already established by transport — a JWKS verification would
+> be redundant and add a network dependency. Do **not** repurpose
+> `decode_id_token` for tokens received from an untrusted source (e.g. an
+> implicit-flow token straight from a browser); those must have their signature
+> verified. See `crates/agora-core/src/auth.rs`.
 
 Per client:
 

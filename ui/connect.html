@@ -106,12 +106,14 @@
         Continue with Google
       </button>
       <div class="divider hidden" id="token-divider">or</div>
+      <!-- "Admin" in the UI is the owner token underneath — same credential,
+           friendlier name. -->
       <div id="token-form">
-        <label for="token">Owner token</label>
+        <label for="token">Admin token</label>
         <input id="token" type="password" placeholder="printed in the server log / config.json" autocapitalize="off" autocorrect="off" spellcheck="false" />
-        <button class="primary" id="connect">Connect</button>
+        <button class="primary" id="connect">Sign in as admin</button>
       </div>
-      <button class="ghost hidden" id="token-toggle">Use the owner token instead</button>
+      <button class="ghost hidden" id="token-toggle">Sign in as admin</button>
       <button class="subtle" id="change-server">Change server</button>
     </div>
 
@@ -170,7 +172,7 @@
         $("token-toggle").classList.toggle("hidden", !google);
         $("signin-sub").textContent = google
           ? "Sign in with an allowed Google account."
-          : "Paste this server's owner token (printed in its log).";
+          : "Admin sign-in: paste this server's admin token (printed in its log).";
         show("signin");
       } catch (e) {
         setStatus(String(e), "error");
@@ -219,13 +221,17 @@
     });
     urlEl.addEventListener("keydown", (e) => { if (e.key === "Enter") $("continue").click(); });
 
+    // After a failed attempt, the retry forces Google's account chooser —
+    // otherwise Google silently re-picks the same (rejected) account.
+    let googleRetry = false;
     $("google").addEventListener("click", async () => {
       busy(true);
       setStatus("Finish signing in with Google in your browser…", "ok");
       try {
-        await invoke("google_sign_in", { url: baseUrl() }); // navigates away on success
+        await invoke("google_sign_in", { url: baseUrl(), selectAccount: googleRetry }); // navigates away on success
         draft.clear();
       } catch (e) {
+        googleRetry = true;
         busy(false);
         setStatus(String(e), "error");
       }
