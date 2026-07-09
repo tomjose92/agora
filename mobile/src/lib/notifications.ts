@@ -46,12 +46,25 @@ export function notifyAgentMessage(message: Message): void {
   });
 }
 
-/** One catch-up banner per channel with new activity, from the poller. */
-export function notifyUnreadChannel(channel: ChannelUnread, newCount: number): void {
+/** One catch-up banner per channel with new activity, from the poller.
+    Mentions lead the copy so "someone @'d you" isn't buried in traffic. */
+export function notifyUnreadChannel(
+  channel: ChannelUnread,
+  newCount: number,
+  newMentions = 0,
+): void {
+  const body =
+    newMentions > 0
+      ? newMentions === 1
+        ? "You were mentioned"
+        : `${newMentions} mentions`
+      : newCount === 1
+        ? "1 new message"
+        : `${newCount} new messages`;
   void Notifications.scheduleNotificationAsync({
     content: {
       title: `${channel.group} / #${channel.name}`,
-      body: newCount === 1 ? "1 new message" : `${newCount} new messages`,
+      body,
       data: { channel_id: channel.id },
     },
     trigger: null,

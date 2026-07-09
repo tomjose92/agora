@@ -28,6 +28,16 @@ describe("parseInline", () => {
     // Same guard as the desktop regex: * must hug non-space content.
     expect(parseInline("2 * 3 * 4")).toEqual([{ kind: "text", text: "2 * 3 * 4" }]);
   });
+
+  it("parses @mentions at token boundaries", () => {
+    expect(parseInline("hey @tom, look")).toEqual([
+      { kind: "text", text: "hey " },
+      { kind: "mention", text: "@tom" },
+      { kind: "text", text: ", look" },
+    ]);
+    // Emails are not mentions (the @ is glued to the local part).
+    expect(parseInline("mail a@b.com")).toEqual([{ kind: "text", text: "mail a@b.com" }]);
+  });
 });
 
 describe("parseMd", () => {

@@ -19,14 +19,16 @@ CREATE TABLE IF NOT EXISTS groups (
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     created_by TEXT,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS channels (
     id TEXT PRIMARY KEY,
     group_id TEXT NOT NULL,
     name TEXT NOT NULL,
     topic TEXT NOT NULL DEFAULT '',
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_channels_group ON channels(group_id);
 CREATE TABLE IF NOT EXISTS memberships (
@@ -72,6 +74,23 @@ CREATE TABLE IF NOT EXISTS reads (
     updated_at REAL NOT NULL,
     PRIMARY KEY (username, channel_id)
 );
+-- Per-thread read markers (threads have their own unread state; channel
+-- badges only count top-level messages).
+CREATE TABLE IF NOT EXISTS thread_reads (
+    username TEXT NOT NULL,
+    thread_id INTEGER NOT NULL,
+    last_read_id INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (username, thread_id)
+);
+-- One row per user @mentioned by a message; drives mention-aware badges.
+CREATE TABLE IF NOT EXISTS mentions (
+    message_id INTEGER NOT NULL,
+    channel_id TEXT NOT NULL,
+    username TEXT NOT NULL,
+    PRIMARY KEY (message_id, username)
+);
+CREATE INDEX IF NOT EXISTS idx_mentions_user_channel ON mentions(username, channel_id, message_id);
 CREATE TABLE IF NOT EXISTS files (
     id TEXT PRIMARY KEY,
     channel_id TEXT NOT NULL,
@@ -95,6 +114,29 @@ CREATE TABLE IF NOT EXISTS agents (
     last_seen REAL NOT NULL
 );
 "#;
+
+/// Columns added after v1 shipped: CREATE TABLE IF NOT EXISTS won't alter
+/// existing tables, so bolt them on when missing.
+fn migrate(conn: &Connection) {
+    let has_column = |table: &str, column: &str| -> bool {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
+        let found = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|c| c == column);
+        found
+    };
+    for table in ["groups", "channels"] {
+        if !has_column(table, "position") {
+            conn.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN position INTEGER NOT NULL DEFAULT 0"),
+                [],
+            )
+            .unwrap();
+        }
+    }
+}
 
 pub fn now() -> f64 {
     SystemTime::now()
@@ -161,6 +203,7 @@ impl Store {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn);
         Ok(Self {
             conn: Mutex::new(conn),
             files_dir: path.parent().unwrap_or(Path::new(".")).join("agora_files"),
@@ -170,6 +213,7 @@ impl Store {
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn);
         Ok(Self {
             conn: Mutex::new(conn),
             files_dir: std::env::temp_dir().join("agora_files_test"),
@@ -208,7 +252,9 @@ impl Store {
         {
             let conn = self.conn.lock().unwrap();
             conn.execute(
-                "INSERT INTO groups (id, name, description, created_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO groups (id, name, description, created_by, created_at, position) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, \
+                   (SELECT COALESCE(MAX(position), 0) + 1 FROM groups))",
                 params![gid, name, description, created_by, now()],
             )
             .unwrap();
@@ -239,7 +285,9 @@ impl Store {
     pub fn list_groups(&self) -> Vec<Value> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, description, created_by, created_at FROM groups ORDER BY name")
+            .prepare(
+                "SELECT id, name, description, created_by, created_at FROM groups ORDER BY position, name",
+            )
             .unwrap();
         stmt.query_map([], |r| {
             Ok(json!({
@@ -287,7 +335,10 @@ impl Store {
                         .filter_map(Result::ok)
                         .collect()
                 };
-                for table in ["messages", "pins", "stars", "files", "reads"] {
+                for cid in &channel_ids {
+                    delete_thread_reads_for_channel(&conn, cid);
+                }
+                for table in ["messages", "pins", "stars", "files", "reads", "mentions"] {
                     conn.execute(
                         &format!("DELETE FROM {table} WHERE channel_id IN ({placeholders})"),
                         params_from_iter(channel_ids.iter()),
@@ -308,12 +359,65 @@ impl Store {
         {
             let conn = self.conn.lock().unwrap();
             conn.execute(
-                "INSERT INTO channels (id, group_id, name, topic, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO channels (id, group_id, name, topic, created_at, position) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, \
+                   (SELECT COALESCE(MAX(position), 0) + 1 FROM channels WHERE group_id = ?2))",
                 params![cid, group_id, name, topic, now()],
             )
             .unwrap();
         }
         self.channel(&cid).unwrap_or(Value::Null)
+    }
+
+    /// Rename a channel and/or set its topic (None = leave unchanged).
+    pub fn update_channel(
+        &self,
+        channel_id: &str,
+        name: Option<&str>,
+        topic: Option<&str>,
+    ) -> Option<Value> {
+        {
+            let conn = self.conn.lock().unwrap();
+            if let Some(n) = name {
+                conn.execute(
+                    "UPDATE channels SET name = ?1 WHERE id = ?2",
+                    params![n, channel_id],
+                )
+                .unwrap();
+            }
+            if let Some(t) = topic {
+                conn.execute(
+                    "UPDATE channels SET topic = ?1 WHERE id = ?2",
+                    params![t, channel_id],
+                )
+                .unwrap();
+            }
+        }
+        self.channel(channel_id)
+    }
+
+    /// Persist a manual order: each id's position becomes its array index.
+    /// Ids not listed keep their old position (they sort after by name).
+    pub fn reorder_groups(&self, ids: &[String]) {
+        let conn = self.conn.lock().unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            conn.execute(
+                "UPDATE groups SET position = ?1 WHERE id = ?2",
+                params![i as i64 + 1, id],
+            )
+            .unwrap();
+        }
+    }
+
+    pub fn reorder_channels(&self, group_id: &str, ids: &[String]) {
+        let conn = self.conn.lock().unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            conn.execute(
+                "UPDATE channels SET position = ?1 WHERE id = ?2 AND group_id = ?3",
+                params![i as i64 + 1, id, group_id],
+            )
+            .unwrap();
+        }
     }
 
     pub fn channel(&self, channel_id: &str) -> Option<Value> {
@@ -336,7 +440,8 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, group_id, name, topic, created_at FROM channels WHERE group_id = ?1 ORDER BY name",
+                "SELECT id, group_id, name, topic, created_at FROM channels \
+                 WHERE group_id = ?1 ORDER BY position, name",
             )
             .unwrap();
         stmt.query_map(params![group_id], |r| {
@@ -369,7 +474,8 @@ impl Store {
                 .execute("DELETE FROM channels WHERE id = ?1", params![channel_id])
                 .unwrap()
                 > 0;
-            for table in ["messages", "memberships", "pins", "stars", "files", "reads"] {
+            delete_thread_reads_for_channel(&conn, channel_id);
+            for table in ["messages", "memberships", "pins", "stars", "files", "reads", "mentions"] {
                 conn.execute(
                     &format!("DELETE FROM {table} WHERE channel_id = ?1"),
                     params![channel_id],
@@ -797,8 +903,10 @@ impl Store {
         .unwrap_or(0)
     }
 
-    /// Per-channel unread state: `{channel_id: {count, last_read_id}}`.
-    /// Unread = messages newer than the marker, own messages excluded.
+    /// Per-channel unread state: `{channel_id: {count, mentions, last_read_id}}`.
+    /// Unread = **top-level** messages newer than the marker, own messages
+    /// excluded (thread replies surface via thread unreads, not here).
+    /// Mentions count @you messages (any thread) newer than the marker.
     pub fn unread_counts(&self, username: &str, channel_ids: &[String]) -> Value {
         if channel_ids.is_empty() {
             return json!({});
@@ -807,10 +915,13 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT c.id, COALESCE(r.last_read_id, 0), COUNT(m.id) \
+                "SELECT c.id, COALESCE(r.last_read_id, 0), COUNT(m.id), \
+                   (SELECT COUNT(*) FROM mentions mn WHERE mn.channel_id = c.id \
+                     AND mn.username = ?1 AND mn.message_id > COALESCE(r.last_read_id, 0)) \
                  FROM channels c \
                  LEFT JOIN reads r ON r.username = ?1 AND r.channel_id = c.id \
                  LEFT JOIN messages m ON m.channel_id = c.id \
+                   AND m.thread_id IS NULL \
                    AND m.id > COALESCE(r.last_read_id, 0) \
                    AND NOT (m.author_type = 'user' AND m.author_id = ?2) \
                  WHERE c.id IN ({placeholders}) GROUP BY c.id"
@@ -824,14 +935,129 @@ impl Store {
         let mut out = serde_json::Map::new();
         let rows = stmt
             .query_map(params_from_iter(p.iter().map(|b| b.as_ref())), |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
             })
             .unwrap()
             .filter_map(Result::ok);
-        for (cid, last_read, count) in rows {
-            out.insert(cid, json!({"count": count, "last_read_id": last_read}));
+        for (cid, last_read, count, mentions) in rows {
+            out.insert(
+                cid,
+                json!({"count": count, "mentions": mentions, "last_read_id": last_read}),
+            );
         }
         Value::Object(out)
+    }
+
+    // ---------------------------------------------------------- mentions
+
+    /// Record which users a message @mentioned (called by the hub at post
+    /// time with already-matched usernames).
+    pub fn add_mentions(&self, message_id: i64, channel_id: &str, usernames: &[String]) {
+        if usernames.is_empty() {
+            return;
+        }
+        let conn = self.conn.lock().unwrap();
+        for user in usernames {
+            conn.execute(
+                "INSERT INTO mentions (message_id, channel_id, username) VALUES (?1, ?2, ?3) \
+                 ON CONFLICT(message_id, username) DO NOTHING",
+                params![message_id, channel_id, user],
+            )
+            .unwrap();
+        }
+    }
+
+    // ------------------------------------------------------- thread reads
+
+    /// Advance the user's per-thread read marker (None = thread max id).
+    /// Monotonic like `mark_read`. Returns the effective marker.
+    pub fn mark_thread_read(
+        &self,
+        username: &str,
+        thread_id: i64,
+        message_id: Option<i64>,
+    ) -> i64 {
+        let conn = self.conn.lock().unwrap();
+        let target = match message_id {
+            Some(id) => id.max(0),
+            None => conn
+                .query_row(
+                    "SELECT COALESCE(MAX(id), 0) FROM messages WHERE thread_id = ?1",
+                    params![thread_id],
+                    |r| r.get::<_, i64>(0),
+                )
+                .unwrap_or(0),
+        };
+        conn.execute(
+            "INSERT INTO thread_reads (username, thread_id, last_read_id, updated_at) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(username, thread_id) DO UPDATE SET \
+             last_read_id = MAX(last_read_id, excluded.last_read_id), updated_at = excluded.updated_at",
+            params![username, thread_id, target, now()],
+        )
+        .unwrap();
+        conn.query_row(
+            "SELECT last_read_id FROM thread_reads WHERE username = ?1 AND thread_id = ?2",
+            params![username, thread_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    }
+
+    /// The user's threads inbox: every thread they participate in (authored
+    /// the root or any reply), newest activity first. Each row is the root
+    /// message plus channel/group names, reply stats, and the user's unread
+    /// reply count (own replies excluded).
+    pub fn my_threads(&self, username: &str, limit: usize) -> Vec<Value> {
+        let rows: Vec<Value> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT r.id, r.channel_id, r.thread_id, r.author_type, r.author_id, \
+                       r.author_name, r.text, r.ts, \
+                       c.name, c.group_id, COALESCE(g.name, ''), \
+                       COUNT(m.id), MAX(m.id), MAX(m.ts), \
+                       COALESCE(tr.last_read_id, 0), \
+                       SUM(CASE WHEN m.id > COALESCE(tr.last_read_id, 0) \
+                             AND NOT (m.author_type = 'user' AND m.author_id = ?1) \
+                           THEN 1 ELSE 0 END) \
+                     FROM messages r \
+                     JOIN channels c ON c.id = r.channel_id \
+                     LEFT JOIN groups g ON g.id = c.group_id \
+                     JOIN messages m ON m.thread_id = r.id \
+                     LEFT JOIN thread_reads tr ON tr.username = ?1 AND tr.thread_id = r.id \
+                     WHERE r.thread_id IS NULL AND ( \
+                       (r.author_type = 'user' AND r.author_id = ?1) \
+                       OR EXISTS (SELECT 1 FROM messages p WHERE p.thread_id = r.id \
+                            AND p.author_type = 'user' AND p.author_id = ?1)) \
+                     GROUP BY r.id ORDER BY MAX(m.id) DESC LIMIT ?2",
+                )
+                .unwrap();
+            stmt.query_map(params![username, limit as i64], |r| {
+                let mut root = message_row(r, 0)?;
+                root["reply_count"] = json!(r.get::<_, i64>(11)?);
+                Ok(json!({
+                    "root": root,
+                    "channel_id": r.get::<_, String>(1)?,
+                    "channel_name": r.get::<_, String>(8)?,
+                    "group_id": r.get::<_, String>(9)?,
+                    "group_name": r.get::<_, String>(10)?,
+                    "reply_count": r.get::<_, i64>(11)?,
+                    "last_reply_id": r.get::<_, i64>(12)?,
+                    "last_reply_ts": r.get::<_, f64>(13)?,
+                    "last_read_id": r.get::<_, i64>(14)?,
+                    "unread": r.get::<_, i64>(15)?,
+                }))
+            })
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+        };
+        rows
     }
 
     // ------------------------------------------------------------- pins
@@ -936,6 +1162,17 @@ impl Store {
     }
 }
 
+/// thread_reads has no channel_id column; scope the delete via the thread's
+/// root message. Must run before the channel's messages are deleted.
+fn delete_thread_reads_for_channel(conn: &Connection, channel_id: &str) {
+    conn.execute(
+        "DELETE FROM thread_reads WHERE thread_id IN \
+         (SELECT id FROM messages WHERE channel_id = ?1)",
+        params![channel_id],
+    )
+    .unwrap();
+}
+
 fn insert_member(
     conn: &Connection,
     group_id: &str,
@@ -1036,6 +1273,139 @@ mod tests {
         // Stale ack cannot regress.
         assert_eq!(s.mark_read("tom", cid, Some(0)), id1);
         assert_eq!(s.unread_counts("tom", &[cid.to_string()])[cid]["count"], 1);
+    }
+
+    #[test]
+    fn unread_counts_top_level_only_with_mentions() {
+        let s = store();
+        let g = s.create_group("G", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let root = s.add_message(cid, "root", "agent", "bot", None, None, &[]);
+        let root_id = root["id"].as_i64().unwrap();
+        // Thread replies don't inflate the channel badge...
+        s.add_message(cid, "reply", "agent", "bot", None, Some(root_id), &[]);
+        let m = s.add_message(cid, "hey @tom", "agent", "bot", None, Some(root_id), &[]);
+        s.add_mentions(m["id"].as_i64().unwrap(), cid, &["tom".to_string()]);
+        let u = s.unread_counts("tom", &[cid.to_string()]);
+        assert_eq!(u[cid]["count"], 1); // just the root
+        // ...but an @mention inside a thread still counts as a mention.
+        assert_eq!(u[cid]["mentions"], 1);
+        s.mark_read("tom", cid, None);
+        let u = s.unread_counts("tom", &[cid.to_string()]);
+        assert_eq!(u[cid]["count"], 0);
+        assert_eq!(u[cid]["mentions"], 0);
+    }
+
+    #[test]
+    fn thread_reads_monotonic() {
+        let s = store();
+        let g = s.create_group("G", "", None);
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let root = s.add_message(cid, "root", "user", "tom", None, None, &[]);
+        let root_id = root["id"].as_i64().unwrap();
+        let r1 = s.add_message(cid, "r1", "agent", "bot", None, Some(root_id), &[]);
+        s.add_message(cid, "r2", "agent", "bot", None, Some(root_id), &[]);
+        let id1 = r1["id"].as_i64().unwrap();
+        assert_eq!(s.mark_thread_read("tom", root_id, Some(id1)), id1);
+        // Stale ack cannot regress; None advances to the thread max.
+        assert_eq!(s.mark_thread_read("tom", root_id, Some(0)), id1);
+        let max = s.mark_thread_read("tom", root_id, None);
+        assert!(max > id1);
+    }
+
+    #[test]
+    fn my_threads_participation_and_unreads() {
+        let s = store();
+        let g = s.create_group("G", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        // Thread A: tom's root, bot replies -> participant with unreads.
+        let a = s.add_message(cid, "mine", "user", "tom", None, None, &[]);
+        let a_id = a["id"].as_i64().unwrap();
+        s.add_message(cid, "re A", "agent", "bot", Some("Bot"), Some(a_id), &[]);
+        // Thread B: bot root and replies only -> not tom's thread.
+        let b = s.add_message(cid, "bots", "agent", "bot", None, None, &[]);
+        let b_id = b["id"].as_i64().unwrap();
+        s.add_message(cid, "re B", "agent", "bot2", None, Some(b_id), &[]);
+        // Thread C: bot root, tom replied -> participant.
+        let cmsg = s.add_message(cid, "topic", "agent", "bot", None, None, &[]);
+        let c_id = cmsg["id"].as_i64().unwrap();
+        s.add_message(cid, "me too", "user", "tom", None, Some(c_id), &[]);
+        let threads = s.my_threads("tom", 50);
+        let ids: Vec<i64> = threads.iter().map(|t| t["root"]["id"].as_i64().unwrap()).collect();
+        assert_eq!(ids, vec![c_id, a_id]); // newest activity first, no thread B
+        let thread_a = threads.iter().find(|t| t["root"]["id"] == a_id).unwrap();
+        assert_eq!(thread_a["unread"], 1);
+        assert_eq!(thread_a["channel_name"], "main");
+        assert_eq!(thread_a["group_name"], "G");
+        // Own reply in C is not unread to tom.
+        let thread_c = threads.iter().find(|t| t["root"]["id"] == c_id).unwrap();
+        assert_eq!(thread_c["unread"], 0);
+        // Acking A clears its unread.
+        s.mark_thread_read("tom", a_id, None);
+        let threads = s.my_threads("tom", 50);
+        let thread_a = threads.iter().find(|t| t["root"]["id"] == a_id).unwrap();
+        assert_eq!(thread_a["unread"], 0);
+    }
+
+    #[test]
+    fn manual_ordering() {
+        let s = store();
+        let a = s.create_group("Alpha", "", None);
+        let b = s.create_group("Beta", "", None);
+        let (aid, bid) = (a["id"].as_str().unwrap(), b["id"].as_str().unwrap());
+        // Creation order is preserved (position auto-increments).
+        let names: Vec<String> = s.list_groups().iter().map(|g| g["name"].as_str().unwrap().into()).collect();
+        assert_eq!(names, vec!["Alpha", "Beta"]);
+        s.reorder_groups(&[bid.to_string(), aid.to_string()]);
+        let names: Vec<String> = s.list_groups().iter().map(|g| g["name"].as_str().unwrap().into()).collect();
+        assert_eq!(names, vec!["Beta", "Alpha"]);
+        let c1 = s.create_channel(aid, "zeta", "");
+        let c2 = s.create_channel(aid, "acme", "");
+        let (c1id, c2id) = (c1["id"].as_str().unwrap(), c2["id"].as_str().unwrap());
+        let names: Vec<String> = s.group_channels(aid).iter().map(|c| c["name"].as_str().unwrap().into()).collect();
+        assert_eq!(names, vec!["zeta", "acme"]); // creation order, not alphabetical
+        s.reorder_channels(aid, &[c2id.to_string(), c1id.to_string()]);
+        let names: Vec<String> = s.group_channels(aid).iter().map(|c| c["name"].as_str().unwrap().into()).collect();
+        assert_eq!(names, vec!["acme", "zeta"]);
+    }
+
+    #[test]
+    fn update_channel_name_and_topic() {
+        let s = store();
+        let g = s.create_group("G", "", None);
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "old", "old topic");
+        let cid = c["id"].as_str().unwrap();
+        let updated = s.update_channel(cid, Some("new"), None).unwrap();
+        assert_eq!(updated["name"], "new");
+        assert_eq!(updated["topic"], "old topic");
+        let updated = s.update_channel(cid, None, Some("fresh topic")).unwrap();
+        assert_eq!(updated["name"], "new");
+        assert_eq!(updated["topic"], "fresh topic");
+    }
+
+    #[test]
+    fn mentions_cascade_with_channel_delete() {
+        let s = store();
+        let g = s.create_group("G", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let root = s.add_message(cid, "root @tom", "agent", "bot", None, None, &[]);
+        let root_id = root["id"].as_i64().unwrap();
+        s.add_mentions(root_id, cid, &["tom".to_string()]);
+        s.mark_thread_read("tom", root_id, Some(5));
+        s.delete_channel(cid);
+        // Fresh channel with the same id space: no leftover state.
+        let u = s.unread_counts("tom", &[cid.to_string()]);
+        assert!(u[cid].is_null() || u[cid]["mentions"] == 0);
+        assert!(s.my_threads("tom", 50).is_empty());
     }
 
     #[test]

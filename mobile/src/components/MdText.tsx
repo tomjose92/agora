@@ -17,6 +17,8 @@ function SpanText({ span }: { span: Span }) {
           {span.text}
         </Text>
       );
+    case "mention":
+      return <Text style={styles.mention}>{span.text}</Text>;
     default:
       return <Text>{span.text}</Text>;
   }
@@ -101,6 +103,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.panelStrong,
   },
   link: { color: colors.a2, fontWeight: "500" },
+  mention: {
+    color: "#b3a8ff",
+    fontWeight: "600",
+    backgroundColor: "rgba(139,124,255,0.18)",
+  },
   pre: {
     backgroundColor: colors.panelStrong,
     borderRadius: 8,

@@ -60,8 +60,8 @@ async function pollOnce(): Promise<void> {
   const { groups } = (await res.json()) as { groups: Group[] };
   const channels = unreadChannels(groups);
   const prev = await readSnapshot();
-  for (const channel of channelsToNotify(prev, channels)) {
-    notifyUnreadChannel(channel, channel.unread - (prev?.[channel.id] ?? 0));
+  for (const notice of channelsToNotify(prev, channels)) {
+    notifyUnreadChannel(notice.channel, notice.newCount, notice.newMentions);
   }
   await writeSnapshot(snapshotOf(channels));
 }

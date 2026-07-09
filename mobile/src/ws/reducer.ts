@@ -10,9 +10,12 @@ import type {
   MessageEvent,
   PinEvent,
   ReadEvent,
+  ThreadReadEvent,
+  ThreadRow,
   WsEvent,
 } from "../api/types";
 import { keys } from "../api/keys";
+import { mentionsMe } from "../lib/unread";
 import { useLive } from "../state/live";
 
 export type MessagePages = InfiniteData<Message[], unknown>;
@@ -48,7 +51,9 @@ export function bumpReplyCount(
 }
 
 /** Unread bookkeeping on the groups payload for a new message. Own messages
-    are never unread (the server also advances our marker on post). */
+    are never unread (the server also advances our marker on post). Channel
+    counts track top-level messages only — thread replies badge their thread —
+    but an @you anywhere bumps the channel's mention count. */
 export function applyMessageToGroups(
   groups: Group[] | undefined,
   message: Message,
@@ -56,13 +61,22 @@ export function applyMessageToGroups(
 ): Group[] | undefined {
   if (!groups) return undefined;
   const own = message.author_type === "user" && message.author_id === username;
+  const isReply = message.thread_id != null;
   return groups.map((g) => ({
     ...g,
     channels: g.channels.map((c) => {
       if (c.id !== message.channel_id) return c;
-      if (own) return { ...c, unread: 0, last_read_id: message.id };
+      if (own) {
+        return isReply ? c : { ...c, unread: 0, mentions: 0, last_read_id: message.id };
+      }
       if (message.id <= (c.last_read_id ?? 0)) return c;
-      return { ...c, unread: (c.unread ?? 0) + 1 };
+      const mention = mentionsMe(message.text, username);
+      if (isReply && !mention) return c;
+      return {
+        ...c,
+        unread: isReply ? (c.unread ?? 0) : (c.unread ?? 0) + 1,
+        mentions: mention ? (c.mentions ?? 0) + 1 : (c.mentions ?? 0),
+      };
     }),
   }));
 }
@@ -76,10 +90,48 @@ export function applyReadToGroups(
     ...g,
     channels: g.channels.map((c) =>
       c.id === ev.channel_id
-        ? { ...c, unread: 0, last_read_id: ev.last_read_id }
+        ? { ...c, unread: 0, mentions: 0, last_read_id: ev.last_read_id }
         : c,
     ),
   }));
+}
+
+/** A thread reply landed: update the inbox row (reply stats + unread).
+    Returns undefined-unchanged semantics like the other transforms; if the
+    thread isn't in the cache the caller refetches instead. */
+export function applyReplyToThreads(
+  threads: ThreadRow[] | undefined,
+  message: Message,
+  username: string,
+): ThreadRow[] | undefined {
+  if (!threads || message.thread_id == null) return threads;
+  const own = message.author_type === "user" && message.author_id === username;
+  const idx = threads.findIndex((t) => t.root.id === message.thread_id);
+  if (idx < 0) return threads;
+  const t = threads[idx];
+  const updated: ThreadRow = {
+    ...t,
+    reply_count: t.reply_count + 1,
+    last_reply_id: Math.max(t.last_reply_id, message.id),
+    last_reply_ts: message.ts,
+    unread: own ? t.unread : t.unread + 1,
+    last_read_id: own ? Math.max(t.last_read_id, message.id) : t.last_read_id,
+  };
+  const out = threads.slice();
+  out.splice(idx, 1);
+  return [updated, ...out]; // newest activity first, like the server
+}
+
+export function applyThreadRead(
+  threads: ThreadRow[] | undefined,
+  ev: ThreadReadEvent,
+): ThreadRow[] | undefined {
+  if (!threads) return undefined;
+  return threads.map((t) =>
+    t.root.id === ev.thread_id && ev.last_read_id >= t.last_read_id
+      ? { ...t, unread: 0, last_read_id: ev.last_read_id }
+      : t,
+  );
 }
 
 /* ------------------------------------------------------------- driver */
@@ -112,6 +164,18 @@ export function applyWsEvent(
       qc.setQueryData<Group[]>(keys.groups, (groups) =>
         applyMessageToGroups(groups, message, ctx.username),
       );
+      if (message.thread_id != null) {
+        const threads = qc.getQueryData<ThreadRow[]>(keys.threads);
+        if (threads && threads.some((t) => t.root.id === message.thread_id)) {
+          qc.setQueryData<ThreadRow[]>(keys.threads, (t) =>
+            applyReplyToThreads(t, message, ctx.username),
+          );
+        } else {
+          // A reply in a thread we don't have rows for (maybe newly ours) —
+          // let the server decide whether it belongs in the inbox.
+          void qc.invalidateQueries({ queryKey: keys.threads });
+        }
+      }
       if (message.author_type === "agent") {
         // The agent replied: its typing/progress rows are stale.
         useLive.getState().agentDone(message.channel_id, message.author_id);
@@ -122,6 +186,12 @@ export function applyWsEvent(
     case "read": {
       qc.setQueryData<Group[]>(keys.groups, (groups) =>
         applyReadToGroups(groups, ev),
+      );
+      break;
+    }
+    case "thread_read": {
+      qc.setQueryData<ThreadRow[]>(keys.threads, (threads) =>
+        applyThreadRead(threads, ev),
       );
       break;
     }

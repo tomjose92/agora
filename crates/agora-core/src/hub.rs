@@ -339,6 +339,56 @@ impl Hub {
         last
     }
 
+    /// Advance a per-thread read marker and tell the user's other devices.
+    pub fn mark_thread_read(
+        &self,
+        username: &str,
+        thread_id: i64,
+        message_id: Option<i64>,
+    ) -> i64 {
+        let last = self.store.mark_thread_read(username, thread_id, message_id);
+        let channel_id = self
+            .store
+            .message(thread_id)
+            .and_then(|m| m["channel_id"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        self.send_to_user(
+            username,
+            &json!({
+                "type": "thread_read", "thread_id": thread_id,
+                "channel_id": channel_id, "last_read_id": last,
+            }),
+        );
+        last
+    }
+
+    /// Persist @user mentions so unread badges can distinguish "spoken to
+    /// you" from mere traffic. Matches mention tokens against the channel's
+    /// group members; self-mentions are ignored.
+    fn record_mentions(&self, message: &Value) {
+        let tokens = mention_tokens(message["text"].as_str().unwrap_or_default());
+        if tokens.is_empty() {
+            return;
+        }
+        let channel_id = message["channel_id"].as_str().unwrap_or_default();
+        let Some(channel) = self.store.channel(channel_id) else { return };
+        let group_id = channel["group_id"].as_str().unwrap_or_default();
+        let author_is_user = message["author_type"] == "user";
+        let author_id = message["author_id"].as_str().unwrap_or_default();
+        let mentioned: Vec<String> = self
+            .store
+            .members(group_id)
+            .iter()
+            .filter(|m| m["member_type"] == "user")
+            .filter_map(|m| m["member_id"].as_str().map(str::to_string))
+            .filter(|u| tokens.contains(&u.to_lowercase()))
+            .filter(|u| !(author_is_user && u == author_id))
+            .collect();
+        if let Some(id) = message["id"].as_i64() {
+            self.store.add_mentions(id, channel_id, &mentioned);
+        }
+    }
+
     // ------------------------------------------------------------- posting
 
     pub fn post_user_message(
@@ -366,6 +416,11 @@ impl Hub {
         // Your own message is never unread to you.
         self.store
             .mark_read(username, channel_id, message["id"].as_i64());
+        if let Some(tid) = thread_id {
+            self.store
+                .mark_thread_read(username, tid, message["id"].as_i64());
+        }
+        self.record_mentions(&message);
         self.broadcast(channel_id, &json!({"type": "message", "message": message}));
         self.fan_out(&message, false, None, false);
         message
@@ -397,6 +452,7 @@ impl Hub {
             *v += 1;
             *v
         };
+        self.record_mentions(&message);
         self.broadcast(channel_id, &json!({"type": "message", "message": message}));
         // Agent replies are the only messages not authored by the (single)
         // local user, so they're the ones worth a notification.
@@ -915,6 +971,60 @@ mod tests {
         assert_eq!(rx_member.try_recv().unwrap()["type"], "message");
         assert!(rx_out.try_recv().is_err());
         assert_eq!(rx_root.try_recv().unwrap()["type"], "message");
+    }
+
+    #[test]
+    fn mentions_recorded_for_group_users() {
+        let h = hub();
+        let _rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        // Self-mention: not recorded (and your own post acks the channel).
+        h.post_user_message(&cid, "note to @tom self", "tom", None, None, vec![]);
+        let u = h.store.unread_counts("tom", &[cid.clone()]);
+        assert_eq!(u[&cid]["mentions"], 0);
+        // Agent @mentions tom: recorded. Unknown token: not recorded.
+        h.post_agent_message("bot-a", "Bot A", &cid, "ping @tom", None);
+        h.post_agent_message("bot-a", "Bot A", &cid, "cc @nobody", None);
+        let u = h.store.unread_counts("tom", &[cid.clone()]);
+        assert_eq!(u[&cid]["mentions"], 1);
+    }
+
+    #[test]
+    fn thread_read_events_go_to_acking_user_only() {
+        let h = hub();
+        let cid = setup_channel(&h, &[]);
+        h.store.add_member(
+            h.store.channel(&cid).unwrap()["group_id"].as_str().unwrap(),
+            "user",
+            "alice",
+            "member",
+            None,
+        );
+        let root = h.post_user_message(&cid, "root", "tom", None, None, vec![]);
+        let root_id = root["id"].as_i64().unwrap();
+        h.post_user_message(&cid, "reply", "tom", None, Some(root_id), vec![]);
+        let (tx_tom, mut rx_tom) = unbounded_channel();
+        let (tx_alice, mut rx_alice) = unbounded_channel();
+        h.attach_socket("tom", false, tx_tom);
+        h.attach_socket("alice", false, tx_alice);
+        h.mark_thread_read("alice", root_id, None);
+        let ev = rx_alice.try_recv().unwrap();
+        assert_eq!(ev["type"], "thread_read");
+        assert_eq!(ev["thread_id"], root_id);
+        assert_eq!(ev["channel_id"], cid);
+        assert!(rx_tom.try_recv().is_err());
+    }
+
+    #[test]
+    fn own_thread_reply_acks_thread_marker() {
+        let h = hub();
+        let cid = setup_channel(&h, &[]);
+        let root = h.post_user_message(&cid, "root", "tom", None, None, vec![]);
+        let root_id = root["id"].as_i64().unwrap();
+        h.post_user_message(&cid, "my reply", "tom", None, Some(root_id), vec![]);
+        let threads = h.store.my_threads("tom", 10);
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0]["unread"], 0);
     }
 
     #[test]

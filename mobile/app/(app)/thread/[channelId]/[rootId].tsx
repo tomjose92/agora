@@ -1,31 +1,51 @@
 /* Thread view: the root message pinned at the top, replies below, and a
    composer that posts with thread_id (the server folds reply-to-reply back
-   to the root, same as resolve_thread in server.rs). */
+   to the root, same as resolve_thread in server.rs).
 
-import React, { useMemo } from "react";
+   Upgraded to match the channel screen: FlashList with pagination and
+   bottom anchoring, a root fallback fetch for threads opened from the inbox
+   or a notification (whose root isn't in the loaded top-level window),
+   per-thread read acking while the viewer sits at the bottom, long-press
+   star, and user mentions in the composer. */
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
-  ScrollView,
+  Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
+import { FlashList, type FlashListRef } from "@shopify/flash-list";
+import { useQueryClient } from "@tanstack/react-query";
+import { keys } from "../../../../src/api/keys";
 import {
   flattenMessages,
   useChannelAgents,
+  useGroups,
+  useMarkThreadRead,
+  useMembers,
+  useMessage,
   useMessages,
   useSendMessage,
+  useStarMessage,
+  useStars,
 } from "../../../../src/api/queries";
-import { Composer } from "../../../../src/components/Composer";
+import type { Message, ThreadRow } from "../../../../src/api/types";
+import { Composer, type MentionCandidate } from "../../../../src/components/Composer";
 import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows";
 import { MessageItem } from "../../../../src/components/MessageItem";
+import { toastErr } from "../../../../src/components/Toast";
 import { useHeaderKeyboardOffset } from "../../../../src/lib/keyboard";
 import { colors } from "../../../../src/lib/theme";
 import { useChannelLive } from "../../../../src/state/live";
 import { useSession } from "../../../../src/state/session";
+
+type Row = { kind: "root"; m: Message } | { kind: "msg"; m: Message };
 
 export default function ThreadScreen() {
   const params = useLocalSearchParams<{
@@ -37,19 +57,88 @@ export default function ThreadScreen() {
   const rootId = Number(params.rootId);
   const session = useSession((s) => s.session)!;
   const keyboardOffset = useHeaderKeyboardOffset();
+  const qc = useQueryClient();
 
   const replies = useMessages(channelId, rootId);
   const topLevel = useMessages(channelId, null);
   const send = useSendMessage(channelId);
   const channelAgents = useChannelAgents(channelId);
+  const stars = useStars(channelId);
+  const star = useStarMessage(channelId);
+  const markThreadRead = useMarkThreadRead(rootId);
   const { typing, progress } = useChannelLive(channelId, rootId);
 
-  // The root usually sits in the already-loaded top-level page set.
-  const root = useMemo(
+  const groups = useGroups();
+  const groupId = useMemo(() => {
+    for (const g of groups.data ?? []) {
+      if (g.channels.some((c) => c.id === channelId)) return g.id;
+    }
+    return null;
+  }, [groups.data, channelId]);
+  const members = useMembers(groupId ?? "");
+
+  // The root usually sits in the already-loaded top-level page set; when it
+  // doesn't (inbox / notification / old pin), fetch it directly.
+  const cachedRoot = useMemo(
     () => flattenMessages(topLevel.data).find((m) => m.id === rootId) ?? null,
     [topLevel.data, rootId],
   );
+  const fetchedRoot = useMessage(rootId, cachedRoot === null);
+  const root = cachedRoot ?? fetchedRoot.data ?? null;
+
   const thread = useMemo(() => flattenMessages(replies.data), [replies.data]);
+  const rows = useMemo<Row[]>(() => {
+    const out: Row[] = [];
+    if (root) out.push({ kind: "root", m: root });
+    for (const m of thread) out.push({ kind: "msg", m });
+    return out;
+  }, [root, thread]);
+
+  /* Read acking: while the viewer sits at the bottom, new replies are read.
+     Mirrors the channel screen's channel-marker debounce. */
+  const atBottom = useRef(true);
+  const readTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestId = thread.length ? thread[thread.length - 1].id : 0;
+  useEffect(() => {
+    if (!atBottom.current || latestId === 0) return;
+    const row = qc
+      .getQueryData<ThreadRow[]>(keys.threads)
+      ?.find((t) => t.root.id === rootId);
+    if (row && latestId <= row.last_read_id) return;
+    if (readTimer.current) clearTimeout(readTimer.current);
+    readTimer.current = setTimeout(() => markThreadRead.mutate(latestId), 600);
+    return () => {
+      if (readTimer.current) clearTimeout(readTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestId]);
+
+  const mentionCandidates = useMemo<MentionCandidate[]>(() => {
+    const agents = (channelAgents.data ?? []).map((a) => ({ id: a.id, name: a.name }));
+    const people = (members.data ?? [])
+      .filter((m) => m.member_type === "user")
+      .map((m) => ({ id: m.member_id, name: m.member_id }));
+    return [...agents, ...people];
+  }, [channelAgents.data, members.data]);
+
+  const starredIds = useMemo(() => new Set((stars.data ?? []).map((s) => s.id)), [stars.data]);
+  const [actionsFor, setActionsFor] = useState<Message | null>(null);
+
+  const listRef = useRef<FlashListRef<Row>>(null);
+
+  const renderRow = useCallback(
+    ({ item }: { item: Row }) => (
+      <View style={item.kind === "root" ? styles.rootMsg : undefined}>
+        <MessageItem
+          session={session}
+          message={item.m}
+          starred={starredIds.has(item.m.id)}
+          onLongPress={setActionsFor}
+        />
+      </View>
+    ),
+    [session, starredIds],
+  );
 
   return (
     <>
@@ -64,45 +153,101 @@ export default function ThreadScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={keyboardOffset}
       >
-        <ScrollView contentContainerStyle={styles.scroll}>
-          {root ? (
-            <View style={styles.rootMsg}>
-              <MessageItem session={session} message={root} />
-            </View>
-          ) : null}
-          {replies.isLoading ? (
-            <ActivityIndicator color={colors.dim} style={{ paddingVertical: 24 }} />
-          ) : null}
-          {!replies.isLoading && thread.length === 0 ? (
-            <Text style={styles.empty}>No replies yet.</Text>
-          ) : null}
-          {thread.map((m) => (
-            <MessageItem key={m.id} session={session} message={m} />
-          ))}
-        </ScrollView>
+        <FlashList
+          ref={listRef}
+          data={rows}
+          renderItem={renderRow}
+          keyExtractor={(item) =>
+            item.kind === "root" ? `root-${item.m.id}` : String(item.m.id)
+          }
+          maintainVisibleContentPosition={{
+            startRenderingFromBottom: true,
+            autoscrollToBottomThreshold: 0.15,
+          }}
+          onStartReached={() => {
+            if (replies.hasNextPage && !replies.isFetchingNextPage) void replies.fetchNextPage();
+          }}
+          onStartReachedThreshold={0.4}
+          onScroll={(e) => {
+            const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+            atBottom.current =
+              contentOffset.y + layoutMeasurement.height >= contentSize.height - 60;
+          }}
+          scrollEventThrottle={64}
+          ListHeaderComponent={
+            replies.isFetchingNextPage ? (
+              <ActivityIndicator color={colors.dim} style={{ paddingVertical: 14 }} />
+            ) : null
+          }
+          ListEmptyComponent={
+            replies.isLoading || (cachedRoot === null && fetchedRoot.isLoading) ? (
+              <ActivityIndicator color={colors.dim} style={{ paddingVertical: 40 }} />
+            ) : (
+              <Text style={styles.empty}>No replies yet.</Text>
+            )
+          }
+        />
         <TypingRow typing={typing} />
         <ProgressBubbles progress={progress} />
         <Composer
           placeholder="Reply in thread"
-          mentions={(channelAgents.data ?? []).map((a) => ({ id: a.id, name: a.name }))}
+          mentions={mentionCandidates}
           sending={send.isPending}
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: rootId, files });
           }}
         />
       </KeyboardAvoidingView>
+      {actionsFor ? (
+        <Modal transparent animationType="fade" onRequestClose={() => setActionsFor(null)}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setActionsFor(null)}>
+            <View style={styles.sheet}>
+              <Pressable
+                style={styles.sheetBtn}
+                onPress={() => {
+                  const starred = starredIds.has(actionsFor.id);
+                  star.mutate(
+                    { messageId: actionsFor.id, starred: !starred },
+                    { onError: (e) => toastErr("Star failed", e) },
+                  );
+                  setActionsFor(null);
+                }}
+              >
+                <Text style={styles.sheetText}>
+                  {starredIds.has(actionsFor.id) ? "★ Unstar" : "☆ Star"}
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Modal>
+      ) : null}
     </>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  scroll: { paddingVertical: 8 },
   rootMsg: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.borderStrong,
     paddingBottom: 8,
     marginBottom: 8,
+    paddingTop: 8,
   },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 24 },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "#14161d",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 16,
+    gap: 4,
+    paddingBottom: 34,
+  },
+  sheetBtn: { paddingVertical: 13 },
+  sheetText: { color: colors.text, fontSize: 15.5 },
 });

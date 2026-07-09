@@ -13,8 +13,10 @@ export interface Channel {
   name: string;
   topic: string;
   created_at: number;
-  /* Embedded by the groups endpoint only. */
+  /* Embedded by the groups endpoint only. `unread` counts top-level
+     messages; `mentions` counts @you messages (any thread). */
   unread?: number;
+  mentions?: number;
   last_read_id?: number;
 }
 
@@ -47,6 +49,20 @@ export interface Message {
   attachments: Attachment[];
   /* Top-level pages only. */
   reply_count?: number;
+}
+
+/** One row of GET /api/threads: a thread the user participates in. */
+export interface ThreadRow {
+  root: Message;
+  channel_id: string;
+  channel_name: string;
+  group_id: string;
+  group_name: string;
+  reply_count: number;
+  last_reply_id: number;
+  last_reply_ts: number;
+  last_read_id: number;
+  unread: number;
 }
 
 export interface StarredMessage extends Message {
@@ -114,6 +130,13 @@ export interface ReadEvent {
   last_read_id: number;
 }
 
+export interface ThreadReadEvent {
+  type: "thread_read";
+  thread_id: number;
+  channel_id: string;
+  last_read_id: number;
+}
+
 export interface PinEvent {
   type: "pin";
   channel_id: string;
@@ -127,6 +150,7 @@ export type WsEvent =
   | ProgressEvent
   | MessageEvent
   | ReadEvent
+  | ThreadReadEvent
   | PinEvent;
 
 export interface ChannelActivity {

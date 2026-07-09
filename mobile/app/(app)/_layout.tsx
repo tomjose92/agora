@@ -10,8 +10,8 @@ import { useSession } from "../../src/state/session";
 import { useAgoraSocket } from "../../src/ws/useAgoraSocket";
 import { notifyAgentMessage, setBadge, setupNotifications } from "../../src/lib/notifications";
 import { registerBackgroundPolling, saveUnreadSnapshot } from "../../src/lib/background";
-import { notificationTarget, totalUnread } from "../../src/lib/unread";
-import { useGroups } from "../../src/api/queries";
+import { notificationTarget, totalThreadUnread, totalUnread } from "../../src/lib/unread";
+import { useGroups, useThreads } from "../../src/api/queries";
 import { colors } from "../../src/lib/theme";
 
 function LiveSocket() {
@@ -21,15 +21,16 @@ function LiveSocket() {
   return null;
 }
 
-/** Badge = total unread; snapshot feeds the background poller's diff so
-    messages read here don't come back as stale catch-up banners. */
+/** Badge = channel unreads + thread unreads; snapshot feeds the background
+    poller's diff so messages read here don't come back as stale banners. */
 function UnreadSync() {
   const groups = useGroups().data;
+  const threads = useThreads().data;
   useEffect(() => {
     if (!groups) return;
-    setBadge(totalUnread(groups));
+    setBadge(totalUnread(groups) + totalThreadUnread(threads ?? []));
     saveUnreadSnapshot(groups);
-  }, [groups]);
+  }, [groups, threads]);
   return null;
 }
 

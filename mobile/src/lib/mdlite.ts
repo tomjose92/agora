@@ -9,7 +9,8 @@ export type Span =
   | { kind: "bold"; text: string }
   | { kind: "italic"; text: string }
   | { kind: "code"; text: string }
-  | { kind: "link"; text: string; url: string };
+  | { kind: "link"; text: string; url: string }
+  | { kind: "mention"; text: string };
 
 export type Block =
   | { kind: "para"; spans: Span[] }
@@ -24,6 +25,7 @@ const INLINE = new RegExp(
     "(https?:\\/\\/[^\\s<]+)", // 4 bare url
     "\\*\\*([^*\\n]+)\\*\\*", // 5 bold
     "(?:^|(?<=[\\s(]))\\*(\\S(?:[^*\\n]*\\S)?)\\*(?=$|[\\s).,!?:;])", // 6 italic
+    "(?:^|(?<=[\\s(]))@([A-Za-z0-9][\\w.-]*)", // 7 @mention (server token shape)
   ].join("|"),
   "g",
 );
@@ -38,6 +40,7 @@ export function parseInline(text: string): Span[] {
     else if (m[4] !== undefined) spans.push({ kind: "link", text: m[4], url: m[4] });
     else if (m[5] !== undefined) spans.push({ kind: "bold", text: m[5] });
     else if (m[6] !== undefined) spans.push({ kind: "italic", text: m[6] });
+    else if (m[7] !== undefined) spans.push({ kind: "mention", text: `@${m[7]}` });
     last = m.index! + m[0].length;
   }
   if (last < text.length) spans.push({ kind: "text", text: text.slice(last) });

@@ -15,7 +15,7 @@ use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -77,9 +77,14 @@ pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/api/me", get(me))
         .route("/api/groups", get(list_groups).post(create_group))
+        .route("/api/groups/order", put(reorder_groups))
         .route("/api/groups/{group_id}", delete(delete_group))
         .route("/api/groups/{group_id}/channels", post(create_channel))
-        .route("/api/groups/{group_id}/channels/{channel_id}", delete(delete_channel))
+        .route("/api/groups/{group_id}/channels/order", put(reorder_channels))
+        .route(
+            "/api/groups/{group_id}/channels/{channel_id}",
+            patch(update_channel).delete(delete_channel),
+        )
         .route("/api/groups/{group_id}/members", get(list_members).post(add_member))
         .route(
             "/api/groups/{group_id}/members/{member_type}/{member_id}",
@@ -91,6 +96,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/channels/{channel_id}/messages/upload", post(post_message_upload))
         .route("/api/channels/{channel_id}/read", put(mark_read))
+        .route("/api/messages/{message_id}", get(get_message))
+        .route("/api/threads", get(list_threads))
+        .route("/api/threads/{thread_id}/read", put(mark_thread_read))
         .route("/api/channels/{channel_id}/stars", get(list_stars))
         .route(
             "/api/channels/{channel_id}/stars/{message_id}",
@@ -160,6 +168,7 @@ fn group_payload(state: &AppState, group: &Value, username: &str) -> Value {
         let cid = c["id"].as_str().unwrap_or_default();
         let unread = &unreads[cid];
         c["unread"] = unread["count"].clone();
+        c["mentions"] = unread["mentions"].clone();
         c["last_read_id"] = unread["last_read_id"].clone();
     }
     let mut out = group.clone();
@@ -273,6 +282,78 @@ async fn create_channel(
     }
     let topic = payload["topic"].as_str().unwrap_or("").trim();
     Ok(Json(state.hub.store.create_channel(&group_id, &name, topic)))
+}
+
+async fn update_channel(
+    State(state): State<AppState>,
+    Path((group_id, channel_id)): Path<(String, String)>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let channel = channel_or_404(&state, &channel_id)?;
+    if channel["group_id"] != group_id.as_str() {
+        return Err(err(StatusCode::NOT_FOUND, "Channel not in this group"));
+    }
+    let name = match payload.get("name").and_then(Value::as_str) {
+        Some(n) => {
+            let n = n.trim();
+            if n.is_empty() {
+                return Err(err(StatusCode::BAD_REQUEST, "Channel name can't be empty"));
+            }
+            Some(n.to_string())
+        }
+        None => None,
+    };
+    let topic = payload
+        .get("topic")
+        .and_then(Value::as_str)
+        .map(|t| t.trim().to_string());
+    let updated = state
+        .hub
+        .store
+        .update_channel(&channel_id, name.as_deref(), topic.as_deref())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown channel"))?;
+    Ok(Json(updated))
+}
+
+async fn reorder_groups(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let ids: Vec<String> = payload["ids"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "ids array required"));
+    }
+    state.hub.store.reorder_groups(&ids);
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn reorder_channels(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    group_or_404(&state, &group_id)?;
+    let ids: Vec<String> = payload["ids"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "ids array required"));
+    }
+    state.hub.store.reorder_channels(&group_id, &ids);
+    Ok(Json(json!({"ok": true})))
 }
 
 async fn delete_channel(
@@ -520,6 +601,61 @@ async fn mark_read(
     let last = state
         .hub
         .mark_read(&user, &channel_id, payload["last_read_id"].as_i64());
+    Ok(Json(json!({"ok": true, "last_read_id": last})))
+}
+
+/// Single message fetch — lets clients open a thread whose root isn't in
+/// their loaded window (threads inbox, old pins, deep links).
+async fn get_message(
+    State(state): State<AppState>,
+    Path(message_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let mut message = state
+        .hub
+        .store
+        .message(message_id)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    if message["thread_id"].is_null() {
+        message["reply_count"] = json!(state.hub.store.thread_size(message_id));
+    }
+    Ok(Json(message))
+}
+
+/// Threads inbox: every thread the user participates in, newest first.
+async fn list_threads(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    let limit: usize = q
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100)
+        .clamp(1, 500);
+    Ok(Json(json!({"threads": state.hub.store.my_threads(&user, limit)})))
+}
+
+async fn mark_thread_read(
+    State(state): State<AppState>,
+    Path(thread_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    state
+        .hub
+        .store
+        .message(thread_id)
+        .filter(|m| m["thread_id"].is_null())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown thread"))?;
+    let last = state
+        .hub
+        .mark_thread_read(&user, thread_id, payload["last_read_id"].as_i64());
     Ok(Json(json!({"ok": true, "last_read_id": last})))
 }
 

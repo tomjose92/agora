@@ -1,11 +1,14 @@
 import {
   channelsToNotify,
+  mentionsMe,
   notificationTarget,
   snapshotOf,
+  totalMentions,
+  totalThreadUnread,
   totalUnread,
   unreadChannels,
 } from "../src/lib/unread";
-import type { Group } from "../src/api/types";
+import type { Group, ThreadRow } from "../src/api/types";
 
 function groups(): Group[] {
   return [
@@ -17,7 +20,7 @@ function groups(): Group[] {
       created_at: 0,
       role: "admin",
       channels: [
-        { id: "c1", group_id: "g1", name: "general", topic: "", created_at: 0, unread: 2 },
+        { id: "c1", group_id: "g1", name: "general", topic: "", created_at: 0, unread: 2, mentions: 1 },
         { id: "c2", group_id: "g1", name: "random", topic: "", created_at: 0, unread: 0 },
       ],
     },
@@ -36,15 +39,38 @@ function groups(): Group[] {
   ];
 }
 
-describe("unreadChannels / totalUnread", () => {
+describe("unreadChannels / totals", () => {
   it("flattens groups with group names attached", () => {
     const channels = unreadChannels(groups());
     expect(channels).toEqual([
-      { id: "c1", name: "general", group: "Home", unread: 2 },
-      { id: "c2", name: "random", group: "Home", unread: 0 },
-      { id: "c3", name: "standup", group: "Work", unread: 0 },
+      { id: "c1", name: "general", group: "Home", unread: 2, mentions: 1 },
+      { id: "c2", name: "random", group: "Home", unread: 0, mentions: 0 },
+      { id: "c3", name: "standup", group: "Work", unread: 0, mentions: 0 },
     ]);
     expect(totalUnread(groups())).toBe(2);
+    expect(totalMentions(groups())).toBe(1);
+  });
+
+  it("sums thread unreads", () => {
+    const threads = [{ unread: 2 }, { unread: 0 }, { unread: 3 }] as ThreadRow[];
+    expect(totalThreadUnread(threads)).toBe(5);
+  });
+});
+
+describe("mentionsMe", () => {
+  it("matches @username case-insensitively at token boundaries", () => {
+    expect(mentionsMe("hey @tom, look", "tom")).toBe(true);
+    expect(mentionsMe("hey @Tom", "tom")).toBe(true);
+    expect(mentionsMe("@tom leads", "tom")).toBe(true);
+    expect(mentionsMe("(@tom)", "tom")).toBe(true);
+  });
+
+  it("rejects lookalikes and other users", () => {
+    expect(mentionsMe("hey @tommy", "tom")).toBe(false);
+    expect(mentionsMe("mail me a@tom.com", "tom")).toBe(false);
+    expect(mentionsMe("hey @alice", "tom")).toBe(false);
+    expect(mentionsMe("no mention here", "tom")).toBe(false);
+    expect(mentionsMe("anything", "")).toBe(false);
   });
 });
 
@@ -55,20 +81,40 @@ describe("channelsToNotify", () => {
     expect(channelsToNotify(null, channels)).toEqual([]);
   });
 
-  it("notifies only channels whose unread grew", () => {
+  it("notifies only channels whose unread grew, with the delta", () => {
     const prev = snapshotOf(channels); // c1: 2
     const next = channels.map((c) => (c.id === "c1" ? { ...c, unread: 5 } : c));
-    expect(channelsToNotify(prev, next).map((c) => c.id)).toEqual(["c1"]);
+    const notices = channelsToNotify(prev, next);
+    expect(notices.map((n) => n.channel.id)).toEqual(["c1"]);
+    expect(notices[0].newCount).toBe(3);
+  });
+
+  it("notifies on mention growth even when the count is flat (thread @you)", () => {
+    const prev = snapshotOf(channels);
+    const next = channels.map((c) => (c.id === "c2" ? { ...c, mentions: 1 } : c));
+    const notices = channelsToNotify(prev, next);
+    expect(notices.map((n) => n.channel.id)).toEqual(["c2"]);
+    expect(notices[0].newCount).toBe(0);
+    expect(notices[0].newMentions).toBe(1);
   });
 
   it("treats channels missing from the snapshot as previously zero", () => {
     const next = channels.map((c) => (c.id === "c3" ? { ...c, unread: 1 } : c));
-    expect(channelsToNotify({}, next).map((c) => c.id)).toEqual(["c1", "c3"]);
+    expect(channelsToNotify({}, next).map((n) => n.channel.id)).toEqual(["c1", "c3"]);
+  });
+
+  it("accepts legacy numeric snapshots (pre-mentions installs)", () => {
+    const prev = { c1: 2, c2: 0, c3: 0 };
+    const next = channels.map((c) => (c.id === "c1" ? { ...c, unread: 3 } : c));
+    const notices = channelsToNotify(prev, next);
+    // c1 unread grew 2->3; its mention (unknown to the old snapshot) also counts.
+    expect(notices.map((n) => n.channel.id)).toEqual(["c1"]);
+    expect(notices[0].newCount).toBe(1);
   });
 
   it("never notifies when unread dropped (read elsewhere)", () => {
     const prev = snapshotOf(channels);
-    const next = channels.map((c) => ({ ...c, unread: 0 }));
+    const next = channels.map((c) => ({ ...c, unread: 0, mentions: 0 }));
     expect(channelsToNotify(prev, next)).toEqual([]);
   });
 });

@@ -23,6 +23,7 @@ import type {
   PairingToken,
   PinnedMessage,
   StarredMessage,
+  ThreadRow,
 } from "./types";
 
 const PAGE_SIZE = 50;
@@ -63,6 +64,22 @@ export function useCreateChannel() {
     mutationFn: (v: { groupId: string; name: string; topic?: string }) =>
       api.post(`/api/groups/${v.groupId}/channels`, { name: v.name, topic: v.topic }),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.groups }),
+  });
+}
+
+export function useUpdateChannel() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { groupId: string; channelId: string; name?: string; topic?: string }) =>
+      api.patch(`/api/groups/${v.groupId}/channels/${v.channelId}`, {
+        name: v.name,
+        topic: v.topic,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.groups });
+      void qc.invalidateQueries({ queryKey: keys.threads });
+    },
   });
 }
 
@@ -204,6 +221,42 @@ export function useMarkRead(channelId: string) {
         { last_read_id: lastReadId },
       ),
     // Groups cache is patched by the WS "read" echo.
+  });
+}
+
+/* ------------------------------------------------------------- threads */
+
+/** The threads inbox: every thread the user participates in, newest first.
+    Live updates arrive via the WS reducer. */
+export function useThreads() {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.threads,
+    queryFn: async () =>
+      (await api.get<{ threads: ThreadRow[] }>("/api/threads?limit=100")).threads,
+  });
+}
+
+/** Single message fetch — the thread screen's root fallback when the root
+    isn't in the loaded top-level window (inbox, notification, deep link). */
+export function useMessage(messageId: number, enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.message(messageId),
+    queryFn: () => api.get<Message>(`/api/messages/${messageId}`),
+    enabled,
+  });
+}
+
+export function useMarkThreadRead(threadId: number) {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (lastReadId: number | null) =>
+      api.put<{ ok: boolean; last_read_id: number }>(
+        `/api/threads/${threadId}/read`,
+        { last_read_id: lastReadId },
+      ),
+    // Threads cache is patched by the WS "thread_read" echo.
   });
 }
 

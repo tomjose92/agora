@@ -291,19 +291,97 @@ a.btn { text-decoration: none; }
 }
 
 /* ---------- unread indicators ---------- */
+/* Slack/Discord convention: plain traffic is a muted count; red means @you. */
 .ago-unread-badge {
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
   min-width: 18px; height: 16px; padding: 0 5px; border-radius: 999px;
-  background: #f23f43; color: #fff; font-size: 10px; font-weight: 700; line-height: 1;
+  background: rgba(255,255,255,.14); color: var(--text);
+  font-size: 10px; font-weight: 700; line-height: 1;
 }
+.ago-unread-badge.mention { background: #f23f43; color: #fff; }
 .ago-chan.unread { color: var(--text); }
 .ago-chan.unread .nm { font-weight: 700; }
 .ago-group-head.unread .nm { color: var(--text); }
 .ago-side-dot {
   display: none; width: 8px; height: 8px; border-radius: 50%;
-  background: #f23f43; margin: 8px auto 0; flex-shrink: 0;
+  background: rgba(255,255,255,.4); margin: 8px auto 0; flex-shrink: 0;
 }
+.ago-side-dot.mention { background: #f23f43; }
 .agora-layout.side-collapsed .ago-side-dot { display: block; }
+.side-title-actions { display: inline-flex; align-items: center; gap: 2px; }
+.ago-side-toggle.filter { font-size: 12px; }
+.ago-side-toggle.filter.on { color: var(--a1); background: rgba(139,124,255,.12); }
+
+/* ---------- threads inbox + sidebar threads ---------- */
+.ago-inbox-item {
+  display: flex; align-items: center; gap: 8px; margin: 8px 8px 0;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  font-size: 12.5px; font-weight: 600; color: var(--dim); flex-shrink: 0;
+}
+.ago-inbox-item:hover { background: rgba(255,255,255,.04); color: var(--text); }
+.ago-inbox-item.active { background: rgba(139,124,255,.14); color: var(--text); }
+.ago-inbox-item.unread { color: var(--text); }
+.ago-inbox-item .tico { font-size: 12px; }
+.ago-inbox-item .nm { flex: 1; }
+.ago-inbox-item .ago-unread-badge,
+.ago-side-thread .ago-unread-badge { background: rgba(139,124,255,.35); color: #dcd6ff; }
+.agora-layout.side-collapsed .agora-side .ago-inbox-item { display: none; }
+
+.ago-side-thread {
+  display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 44px;
+  border-radius: 8px; cursor: pointer; font-size: 11.5px; color: var(--faint);
+}
+.ago-side-thread:hover { background: rgba(255,255,255,.04); color: var(--text); }
+.ago-side-thread .tico { flex-shrink: 0; opacity: .6; }
+.ago-side-thread .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ago-side-thread.unread { color: var(--dim); }
+.ago-side-thread.unread .nm { color: var(--text); font-weight: 600; }
+
+.ago-inbox-list { gap: 8px; }
+.ago-inbox-row {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 12px; cursor: pointer;
+  background: var(--panel);
+}
+.ago-inbox-row:hover { background: var(--panel-strong); border-color: var(--border-strong); }
+.ago-inbox-row.unread { border-color: rgba(139,124,255,.4); }
+.ago-inbox-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  font-size: 11px; color: var(--dim);
+}
+.ago-inbox-top .chan { font-weight: 600; color: var(--text); }
+.ago-inbox-top .chan .hash { opacity: .5; }
+.ago-inbox-top .chan .grp { font-weight: 400; color: var(--faint); }
+.ago-inbox-top .ts { color: var(--faint); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.ago-inbox-main {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12.5px;
+}
+.ago-inbox-main .author { font-weight: 600; flex-shrink: 0; }
+.ago-inbox-main .snippet {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim);
+}
+.ago-inbox-foot { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--faint); }
+
+/* ---------- channel rename / topic editor ---------- */
+.ago-edit-btn {
+  border: none; background: transparent; color: var(--faint); font: inherit;
+  font-size: 12px; cursor: pointer; padding: 2px 5px; border-radius: 6px;
+  opacity: 0; transition: opacity .15s ease; flex-shrink: 0;
+}
+.ago-head-text:hover .ago-edit-btn { opacity: 1; }
+.ago-edit-btn:hover { color: var(--a1); background: rgba(255,255,255,.05); }
+.ago-chan-edit { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.ago-chan-edit input {
+  background: rgba(0,0,0,.25); border: 1px solid var(--border-strong); border-radius: 8px;
+  padding: 6px 9px; color: var(--text); font: inherit; font-size: 12.5px; outline: none;
+  min-width: 0;
+}
+.ago-chan-edit input:focus { border-color: var(--a1); }
+.ago-chan-edit #ago-edit-name { width: 150px; flex-shrink: 0; }
+.ago-chan-edit #ago-edit-topic { flex: 1; }
+
+/* ---------- drag-to-reorder ---------- */
+.ago-chan[draggable="true"], .ago-group-head[draggable="true"] { -webkit-user-drag: element; }
 
 .ago-new-divider {
   display: flex; align-items: center; gap: 8px; color: #f23f43;
@@ -515,6 +593,15 @@ a.btn { text-decoration: none; }
 }
 
 @media (max-width: 820px) {
+  /* index.html declares viewport-fit=cover; consume the notch/home-indicator
+     insets so the composer isn't under the home bar. */
+  main {
+    padding: 12px 10px 12px;
+    padding: max(12px, env(safe-area-inset-top))
+             max(10px, env(safe-area-inset-right))
+             max(12px, env(safe-area-inset-bottom))
+             max(10px, env(safe-area-inset-left));
+  }
   .agora-layout { gap: 0; }
   .agora-side, .agora-main, .agora-thread {
     width: 100%; flex-shrink: 1; min-height: 0;
@@ -549,6 +636,16 @@ a.btn { text-decoration: none; }
   .bubble.ago-bubble { max-width: 88%; }
   .ago-thread-btn { opacity: 1; }
   .ago-pin-row .ago-x { opacity: 1; }
+  .ago-edit-btn { opacity: 1; }          /* no hover on touch */
+  /* Comfortable touch targets for the new nav rows. */
+  .ago-inbox-item { padding: 11px 10px; }
+  .ago-side-thread { padding-top: 9px; padding-bottom: 9px; }
+  .ago-chan { padding-top: 9px; padding-bottom: 9px; }
+  .ago-chan .ago-x { opacity: 1; }
+  .ago-chan-edit { flex-wrap: wrap; }
+  .ago-chan-edit #ago-edit-name, .ago-chan-edit #ago-edit-topic {
+    font-size: 16px;                      /* iOS anti-zoom */
+  }
 
   .agora-main .chat-input, .agora-thread .chat-input { padding: 10px; gap: 8px; }
   .agora-main .chat-input textarea, .agora-thread .chat-input textarea {

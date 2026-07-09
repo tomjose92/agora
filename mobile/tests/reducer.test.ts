@@ -3,12 +3,20 @@
 
 import { QueryClient } from "@tanstack/react-query";
 import { keys } from "../src/api/keys";
-import type { Group, Message, TypingEvent, ProgressEvent } from "../src/api/types";
+import type {
+  Group,
+  Message,
+  ProgressEvent,
+  ThreadRow,
+  TypingEvent,
+} from "../src/api/types";
 import { useLive } from "../src/state/live";
 import {
   appendMessage,
   applyMessageToGroups,
   applyReadToGroups,
+  applyReplyToThreads,
+  applyThreadRead,
   applyWsEvent,
   bumpReplyCount,
   type MessagePages,
@@ -100,6 +108,96 @@ describe("applyMessageToGroups", () => {
   it("ignores messages at or below the read marker", () => {
     const out = applyMessageToGroups(groups(), msg({ id: 9 }), "me")!;
     expect(out[0].channels[0].unread).toBe(0);
+  });
+
+  it("thread replies don't move the channel count", () => {
+    const out = applyMessageToGroups(groups(), msg({ id: 10, thread_id: 5 }), "me")!;
+    expect(out[0].channels[0].unread).toBe(0);
+  });
+
+  it("an @me bumps the mention count — even from inside a thread", () => {
+    const out = applyMessageToGroups(
+      groups(),
+      msg({ id: 10, thread_id: 5, text: "ping @me here" }),
+      "me",
+    )!;
+    expect(out[0].channels[0].unread).toBe(0);
+    expect(out[0].channels[0].mentions).toBe(1);
+  });
+
+  it("a top-level @me bumps both counts", () => {
+    const out = applyMessageToGroups(groups(), msg({ id: 10, text: "hey @me" }), "me")!;
+    expect(out[0].channels[0]).toMatchObject({ unread: 1, mentions: 1 });
+  });
+});
+
+function threadRow(over: Partial<ThreadRow> = {}): ThreadRow {
+  return {
+    root: msg({ id: 5, author_type: "user", author_id: "me" }),
+    channel_id: "general-1a2b",
+    channel_name: "general",
+    group_id: "g1",
+    group_name: "Home",
+    reply_count: 1,
+    last_reply_id: 8,
+    last_reply_ts: 1751899000,
+    last_read_id: 8,
+    unread: 0,
+    ...over,
+  };
+}
+
+describe("applyReplyToThreads", () => {
+  it("bumps reply stats and unread for someone else's reply", () => {
+    const out = applyReplyToThreads([threadRow()], msg({ id: 11, thread_id: 5 }), "me")!;
+    expect(out[0]).toMatchObject({
+      reply_count: 2,
+      last_reply_id: 11,
+      unread: 1,
+    });
+  });
+
+  it("my own reply advances my marker without unread", () => {
+    const mine = msg({ id: 11, thread_id: 5, author_type: "user", author_id: "me" });
+    const out = applyReplyToThreads([threadRow()], mine, "me")!;
+    expect(out[0]).toMatchObject({ reply_count: 2, unread: 0, last_read_id: 11 });
+  });
+
+  it("moves the thread to the top (newest activity first)", () => {
+    const other = threadRow({ root: msg({ id: 99 }), last_reply_id: 100 });
+    const out = applyReplyToThreads(
+      [other, threadRow()],
+      msg({ id: 101, thread_id: 5 }),
+      "me",
+    )!;
+    expect(out.map((t) => t.root.id)).toEqual([5, 99]);
+  });
+
+  it("leaves unknown threads alone (caller refetches)", () => {
+    const rows = [threadRow()];
+    expect(applyReplyToThreads(rows, msg({ id: 11, thread_id: 42 }), "me")).toBe(rows);
+  });
+});
+
+describe("applyThreadRead", () => {
+  it("zeroes unread and moves the marker", () => {
+    const out = applyThreadRead([threadRow({ unread: 3 })], {
+      type: "thread_read",
+      thread_id: 5,
+      channel_id: "general-1a2b",
+      last_read_id: 20,
+    })!;
+    expect(out[0]).toMatchObject({ unread: 0, last_read_id: 20 });
+  });
+
+  it("ignores stale acks", () => {
+    const out = applyThreadRead([threadRow({ unread: 2, last_read_id: 30 })], {
+      type: "thread_read",
+      thread_id: 5,
+      channel_id: "general-1a2b",
+      last_read_id: 20,
+    })!;
+    expect(out[0]).toMatchObject({ unread: 2, last_read_id: 30 });
   });
 });
 
@@ -206,5 +304,29 @@ describe("applyWsEvent", () => {
       { username: "me" },
     );
     expect(qc.getQueryData<Group[]>(keys.groups)![0].channels[0].last_read_id).toBe(20);
+  });
+
+  it("routes a thread reply into the threads inbox cache", () => {
+    qc.setQueryData(keys.threads, [threadRow()]);
+    applyWsEvent(
+      qc,
+      { type: "message", message: msg({ id: 11, thread_id: 5 }) },
+      { username: "me" },
+    );
+    const threads = qc.getQueryData<ThreadRow[]>(keys.threads)!;
+    expect(threads[0]).toMatchObject({ reply_count: 2, unread: 1 });
+  });
+
+  it("applies thread_read frames to the threads cache", () => {
+    qc.setQueryData(keys.threads, [threadRow({ unread: 2 })]);
+    applyWsEvent(
+      qc,
+      { type: "thread_read", thread_id: 5, channel_id: "general-1a2b", last_read_id: 20 },
+      { username: "me" },
+    );
+    expect(qc.getQueryData<ThreadRow[]>(keys.threads)![0]).toMatchObject({
+      unread: 0,
+      last_read_id: 20,
+    });
   });
 });

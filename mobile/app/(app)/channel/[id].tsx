@@ -230,6 +230,20 @@ export default function ChannelScreen() {
   const listRef = useRef<FlashListRef<Row>>(null);
   const [showJump, setShowJump] = useState(false);
 
+  /* Land on the "New" divider instead of the bottom when there's a backlog
+     (Slack behavior) — once, on the first page load. */
+  const landedOnDivider = useRef(false);
+  useEffect(() => {
+    if (landedOnDivider.current || !rows.length) return;
+    landedOnDivider.current = true;
+    const idx = rows.findIndex((r) => r.kind === "divider");
+    if (idx <= 0) return; // no divider (or it's at the very top already)
+    // Give FlashList a frame to settle its bottom-anchored initial render.
+    setTimeout(() => {
+      listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.2 });
+    }, 80);
+  }, [rows]);
+
   const mentionCandidates = useMemo<MentionCandidate[]>(() => {
     const agents = (channelAgents.data ?? []).map((a) => ({ id: a.id, name: a.name }));
     const people = (members.data ?? [])

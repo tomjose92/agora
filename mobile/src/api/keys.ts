@@ -6,6 +6,8 @@ export const keys = {
   groups: ["groups"] as const,
   messages: (channelId: string, threadId: number | null) =>
     ["messages", channelId, threadId ?? 0] as const,
+  message: (id: number) => ["message", id] as const,
+  threads: ["threads"] as const,
   pins: (channelId: string) => ["pins", channelId] as const,
   stars: (channelId: string) => ["stars", channelId] as const,
   channelAgents: (channelId: string) => ["channelAgents", channelId] as const,
