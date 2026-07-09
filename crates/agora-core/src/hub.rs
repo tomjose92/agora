@@ -400,6 +400,23 @@ impl Hub {
         thread_id: Option<i64>,
         attachments: Vec<NewAttachment>,
     ) -> Value {
+        self.post_user_message_opts(channel_id, text, username, user_name, thread_id, attachments, false)
+    }
+
+    /// `voice` marks a spoken (live voice) turn: it rides on the inbound
+    /// fan-out only — the stored message is a normal transcript — steering
+    /// agents toward plain spoken prose, since replies will be read aloud.
+    #[allow(clippy::too_many_arguments)]
+    pub fn post_user_message_opts(
+        &self,
+        channel_id: &str,
+        text: &str,
+        username: &str,
+        user_name: Option<&str>,
+        thread_id: Option<i64>,
+        attachments: Vec<NewAttachment>,
+        voice: bool,
+    ) -> Value {
         let message = self.store.add_message(
             channel_id,
             text,
@@ -422,7 +439,7 @@ impl Hub {
         }
         self.record_mentions(&message);
         self.broadcast(channel_id, &json!({"type": "message", "message": message}));
-        self.fan_out(&message, false, None, false);
+        self.fan_out(&message, false, None, false, voice);
         message
     }
 
@@ -458,7 +475,7 @@ impl Hub {
         // local user, so they're the ones worth a notification.
         self.maybe_notify(&message);
         if streak <= BOT_LOOP_LIMIT {
-            self.fan_out(&message, true, Some(agent_id), true);
+            self.fan_out(&message, true, Some(agent_id), true, false);
         } else if streak == BOT_LOOP_LIMIT + 1 {
             tracing::info!("bot-loop limit hit in {channel_id} (thread {thread_id:?})");
         }
@@ -518,6 +535,7 @@ impl Hub {
         from_bot: bool,
         exclude_agent: Option<&str>,
         mentioned_only: bool,
+        voice: bool,
     ) {
         let channel_id = message["channel_id"].as_str().unwrap_or_default();
         let Some(channel) = self.store.channel(channel_id) else {
@@ -539,7 +557,7 @@ impl Hub {
             if handle.requires_mention && !mentioned {
                 continue;
             }
-            let inbound = self.build_inbound(message, &channel, &handle, mentioned, from_bot);
+            let inbound = self.build_inbound(message, &channel, &handle, mentioned, from_bot, voice);
             let _ = handle.tx.send(inbound);
         }
     }
@@ -551,6 +569,7 @@ impl Hub {
         handle: &AgentHandle,
         mentioned: bool,
         from_bot: bool,
+        voice: bool,
     ) -> Value {
         let mut text = message["text"].as_str().unwrap_or_default().to_string();
         let thread_id = message["thread_id"].as_i64();
@@ -608,9 +627,10 @@ impl Hub {
             },
             "text": text,
             "chat_name": chat_name,
-            "context_note": self.context_note(channel, &group, thread_id, handle),
+            "context_note": self.context_note(channel, &group, thread_id, handle, voice),
             "mentioned": mentioned,
             "from_bot": from_bot,
+            "voice_live": voice,
             "attachments": atts,
         })
     }
@@ -623,6 +643,7 @@ impl Hub {
         group: &Option<Value>,
         thread_id: Option<i64>,
         handle: &AgentHandle,
+        voice: bool,
     ) -> String {
         let mut lines = vec![
             "You are chatting in Agora, a group chat platform for agents and people \
@@ -702,11 +723,23 @@ impl Hub {
             "Anyone here can address a specific agent with its @mention; your replies post to this channel{}",
             if thread_id.is_some() { " thread." } else { "." }
         ));
-        lines.push(
-            "Formatting: this chat renders Markdown including GitHub-style pipe \
-             tables. Prefer a table when presenting tabular or comparative data."
-                .to_string(),
-        );
+        if voice {
+            // Live voice: the transcript came from speech and the reply will
+            // be read aloud by TTS — markdown would be spoken verbatim.
+            lines.push(
+                "Voice conversation: the user is speaking aloud and your reply \
+                 will be read out by text-to-speech. Answer conversationally \
+                 and briefly, in plain spoken prose — no markdown, tables, \
+                 code blocks, bullet lists, links, or emoji."
+                    .to_string(),
+            );
+        } else {
+            lines.push(
+                "Formatting: this chat renders Markdown including GitHub-style pipe \
+                 tables. Prefer a table when presenting tabular or comparative data."
+                    .to_string(),
+            );
+        }
         lines.join("\n")
     }
 
@@ -912,6 +945,27 @@ mod tests {
         assert!(rx_b.try_recv().is_ok());
         h.post_agent_message("bot-a", "Bot A", &cid, "hi again @bot-b", None);
         assert!(rx_b.try_recv().is_ok());
+    }
+
+    #[test]
+    fn voice_turn_rides_fan_out_and_steers_context_note() {
+        let h = hub();
+        let mut rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        // Normal message: not a voice turn, markdown hint present.
+        h.post_user_message(&cid, "hello", "tom", None, None, vec![]);
+        let frame = rx.try_recv().unwrap();
+        assert_eq!(frame["voice_live"], false);
+        assert!(frame["context_note"].as_str().unwrap().contains("Markdown"));
+        // Live voice turn: flagged, spoken-prose steering replaces the hint.
+        let msg = h.post_user_message_opts(&cid, "spoken words", "tom", None, None, vec![], true);
+        // The stored message is a plain transcript — nothing voice-specific.
+        assert_eq!(msg["text"], "spoken words");
+        let frame = rx.try_recv().unwrap();
+        assert_eq!(frame["voice_live"], true);
+        let note = frame["context_note"].as_str().unwrap();
+        assert!(note.contains("read out by text-to-speech"));
+        assert!(!note.contains("Markdown"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 /* Onboarding: point the app at a headless agora-server and paste the owner
-   token it prints on boot (the mobile analogue of the web UI's auth gate). */
+   token it prints on boot (the mobile analogue of the web UI's auth gate) —
+   or, when the server has it configured, sign in with Google instead. */
 
 import React, { useState } from "react";
 import {
@@ -13,8 +14,14 @@ import {
   View,
 } from "react-native";
 import { Redirect } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
+import { normalizeBaseUrl } from "../src/api/client";
+import { runGoogleFlow } from "../src/lib/googleAuth";
 import { useSession } from "../src/state/session";
 import { colors, radius } from "../src/lib/theme";
+
+// Closes the auth sheet if the deep link cold-started the app mid-flow.
+WebBrowser.maybeCompleteAuthSession();
 
 export default function Connect() {
   const { status, signIn } = useSession();
@@ -31,6 +38,22 @@ export default function Connect() {
     setError("");
     try {
       await signIn(url, token);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const google = async () => {
+    if (!url.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const base = normalizeBaseUrl(url);
+      const session = await runGoogleFlow(base);
+      // A dismissed sheet is not an error — just return to the form.
+      if (session) await signIn(base, session);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -82,6 +105,13 @@ export default function Connect() {
             <Text style={styles.btnText}>Connect</Text>
           )}
         </Pressable>
+        <Pressable
+          style={[styles.btnGhost, (!url.trim() || busy) && styles.btnOff]}
+          onPress={google}
+          disabled={!url.trim() || busy}
+        >
+          <Text style={styles.btnGhostText}>Sign in with Google instead</Text>
+        </Pressable>
       </View>
     </KeyboardAvoidingView>
   );
@@ -126,4 +156,12 @@ const styles = StyleSheet.create({
   },
   btnOff: { opacity: 0.4 },
   btnText: { color: colors.onAccent, fontSize: 15, fontWeight: "700" },
+  btnGhost: {
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 10,
+    alignItems: "center",
+    paddingVertical: 12,
+  },
+  btnGhostText: { color: colors.dim, fontSize: 14, fontWeight: "600" },
 });

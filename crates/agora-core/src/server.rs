@@ -30,6 +30,17 @@ const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
 const MAX_FILES_PER_MESSAGE: usize = 5;
 
+/// Voice notes: generous for a spoken message (~10 min of Opus), but a hard
+/// stop against arbitrary blobs going to the transcription API.
+const MAX_VOICE_BYTES: usize = 15 * 1024 * 1024;
+
+/// Synthesized speech per message, LRU-evicted, so replays and multiple
+/// listeners don't re-bill the TTS API. ~64 clips of a few hundred KB each.
+const SPEECH_CACHE_MAX: usize = 64;
+
+/// message_id -> mp3 bytes, most-recently-used last.
+type SpeechCache = std::sync::Mutex<Vec<(i64, Vec<u8>)>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub hub: Arc<Hub>,
@@ -41,6 +52,8 @@ pub struct AppState {
     /// server leaves this unset (the supervisor restarts it after exit 0);
     /// the desktop shell installs a relaunch here.
     pub restart_handler: Arc<std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>>,
+    /// TTS output per message id (see [`SPEECH_CACHE_MAX`]).
+    pub speech_cache: Arc<SpeechCache>,
 }
 
 type ApiError = (StatusCode, Json<Value>);
@@ -58,6 +71,14 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
+/// A UI credential is either the static owner token or a session token minted
+/// by Google sign-in. Both act as the single owner (v1 is single-user), so the
+/// username always comes from the config.
+fn is_ui_token(state: &AppState, token: &str) -> bool {
+    state.config.is_owner_token(token)
+        || crate::auth::verify_session(token, &state.config.session_secret()).is_some()
+}
+
 fn require_owner(
     state: &AppState,
     headers: &HeaderMap,
@@ -66,7 +87,7 @@ fn require_owner(
     let token = bearer(headers)
         .or_else(|| query.get("token").cloned())
         .unwrap_or_default();
-    if state.config.is_owner_token(&token) {
+    if is_ui_token(state, &token) {
         Ok(state.config.username())
     } else {
         Err(err(StatusCode::UNAUTHORIZED, "Authentication required"))
@@ -95,8 +116,10 @@ pub fn router(state: AppState) -> Router {
             get(list_messages).post(post_message),
         )
         .route("/api/channels/{channel_id}/messages/upload", post(post_message_upload))
+        .route("/api/channels/{channel_id}/voice", post(post_voice_message))
         .route("/api/channels/{channel_id}/read", put(mark_read))
         .route("/api/messages/{message_id}", get(get_message))
+        .route("/api/messages/{message_id}/speech", get(message_speech))
         .route("/api/threads", get(list_threads))
         .route("/api/threads/{thread_id}/read", put(mark_thread_read))
         .route("/api/channels/{channel_id}/stars", get(list_stars))
@@ -127,6 +150,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/pairing", get(list_pairing).post(create_pairing))
         .route("/api/pairing/{token}", delete(revoke_pairing))
+        .route("/api/auth/config", get(auth_config))
+        .route("/api/auth/google/start", get(google_start))
+        .route("/api/auth/google/callback", get(google_callback))
         .route("/ws", get(ui_ws))
         .route("/agent/ws", get(agent_ws));
     if let Some(dir) = &state.ui_dir {
@@ -220,6 +246,9 @@ async fn me(
     Ok(Json(json!({
         "username": user,
         "version": env!("CARGO_PKG_VERSION"),
+        // Voice features (voice notes, speak-aloud, live voice) need an
+        // OPENAI_API_KEY in the server env; clients hide the controls without it.
+        "voice": crate::voice::api_key().is_some(),
     })))
 }
 
@@ -559,6 +588,142 @@ async fn post_message_upload(
         .hub
         .post_user_message(&channel_id, &text, &user, None, thread_id, attachments);
     Ok(Json(message))
+}
+
+/// Voice input: transcribe an uploaded recording and post the transcript as a
+/// normal user message (the audio itself is not stored). `live=true` marks a
+/// hands-free live-voice turn: the fan-out tells member agents to answer in
+/// spoken prose because the reply will be read aloud.
+async fn post_voice_message(
+    State(state): State<AppState>,
+    Path(channel_id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    channel_or_404(&state, &channel_id)?;
+    let Some(key) = crate::voice::api_key() else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Voice input needs OPENAI_API_KEY on the server (speech-to-text is not configured)",
+        ));
+    };
+    let mut audio: Vec<u8> = Vec::new();
+    let mut filename = String::new();
+    let mut thread_id: Option<i64> = None;
+    let mut live = false;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid upload"))?
+    {
+        match field.name().unwrap_or("") {
+            "file" => {
+                filename = safe_filename(field.file_name().unwrap_or("voice-note.webm"));
+                audio = field
+                    .bytes()
+                    .await
+                    .map_err(|_| err(StatusCode::BAD_REQUEST, "Upload read failed"))?
+                    .to_vec();
+            }
+            "thread_id" => {
+                let raw = field.text().await.unwrap_or_default();
+                if !raw.is_empty() {
+                    thread_id = Some(
+                        raw.parse()
+                            .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid thread_id"))?,
+                    );
+                }
+            }
+            "live" => live = field.text().await.unwrap_or_default() == "true",
+            _ => {}
+        }
+    }
+    if audio.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Empty audio upload"));
+    }
+    if audio.len() > MAX_VOICE_BYTES {
+        return Err(err(StatusCode::BAD_REQUEST, "Voice recording too large"));
+    }
+    let thread_id = resolve_thread(&state, &channel_id, thread_id)?;
+    let text = tokio::task::spawn_blocking(move || crate::voice::transcribe(&key, &audio, &filename))
+        .await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Transcription task failed"))?
+        .map_err(|e| {
+            tracing::error!("voice transcription failed: {e}");
+            err(StatusCode::BAD_GATEWAY, "Transcription failed — try again")
+        })?;
+    if text.is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Couldn't hear anything in that recording",
+        ));
+    }
+    let message = state
+        .hub
+        .post_user_message_opts(&channel_id, &text, &user, None, thread_id, vec![], live);
+    Ok(Json(message))
+}
+
+/// Synthesize a message as speech for client playback (speak-aloud and live
+/// voice). MP3 because Safari's `<audio>` can't decode Opus.
+async fn message_speech(
+    State(state): State<AppState>,
+    Path(message_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let message = state
+        .hub
+        .store
+        .message(message_id)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    let Some(key) = crate::voice::api_key() else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Spoken replies need OPENAI_API_KEY on the server (text-to-speech is not configured)",
+        ));
+    };
+    let cached = {
+        let mut cache = state.speech_cache.lock().unwrap();
+        match cache.iter().position(|(id, _)| *id == message_id) {
+            Some(i) => {
+                let entry = cache.remove(i);
+                let audio = entry.1.clone();
+                cache.push(entry); // bump to most-recently-used
+                Some(audio)
+            }
+            None => None,
+        }
+    };
+    let audio = match cached {
+        Some(audio) => audio,
+        None => {
+            let text = message["text"].as_str().unwrap_or_default().to_string();
+            if crate::voice::clip_for_tts(&text).is_empty() {
+                return Err(err(StatusCode::BAD_REQUEST, "Nothing to speak"));
+            }
+            let audio = tokio::task::spawn_blocking(move || crate::voice::synthesize(&key, &text))
+                .await
+                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Speech task failed"))?
+                .map_err(|e| {
+                    tracing::error!("speech synthesis failed: {e}");
+                    err(StatusCode::BAD_GATEWAY, "Speech synthesis failed — try again")
+                })?;
+            let mut cache = state.speech_cache.lock().unwrap();
+            cache.retain(|(id, _)| *id != message_id);
+            cache.push((message_id, audio.clone()));
+            if cache.len() > SPEECH_CACHE_MAX {
+                cache.remove(0);
+            }
+            audio
+        }
+    };
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert("content-type", "audio/mpeg".parse().unwrap());
+    Ok((resp_headers, audio).into_response())
 }
 
 async fn get_file(
@@ -1083,6 +1248,179 @@ async fn revoke_pairing(
     Ok(Json(json!({"ok": true})))
 }
 
+// ----------------------------------------------------------- google sign-in
+
+/// Short-lived CSRF cookie binding a Google round-trip to the browser that
+/// started it; scoped to the auth routes.
+const OAUTH_STATE_COOKIE: &str = "agora_oauth_state";
+const OAUTH_STATE_MAX_AGE: u32 = 600;
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get("cookie")?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|pair| {
+            let (k, v) = pair.trim().split_once('=')?;
+            (k == name).then(|| v.to_string())
+        })
+}
+
+/// The Google callback URL: `public_url` wins (deterministic behind a proxy);
+/// otherwise derive it from the inbound request's Host header.
+fn oauth_redirect_uri(state: &AppState, headers: &HeaderMap) -> String {
+    let base = state.config.public_url();
+    let base = if base.is_empty() {
+        let host = headers
+            .get("host")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost");
+        let scheme = headers
+            .get("x-forwarded-proto")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("http");
+        format!("{scheme}://{host}")
+    } else {
+        base
+    };
+    format!("{base}/api/auth/google/callback")
+}
+
+fn set_state_cookie(secure: bool, state: &str, max_age: u32) -> String {
+    format!(
+        "{OAUTH_STATE_COOKIE}={state}; Max-Age={max_age}; Path=/api/auth; HttpOnly; SameSite=Lax{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+fn redirect_with_cookie(url: &str, cookie: String) -> Response {
+    (
+        StatusCode::FOUND,
+        [("location", url.to_string()), ("set-cookie", cookie)],
+    )
+        .into_response()
+}
+
+/// Which sign-in methods this instance offers; the login surfaces (web auth
+/// gate, desktop connect page, mobile connect screen) probe this before
+/// showing a Google button. Unauthenticated by design — it only reveals
+/// whether the button exists.
+async fn auth_config(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({
+        "google": {"enabled": state.config.google().is_some()},
+    }))
+}
+
+/// Step 1: bounce the browser to Google's consent screen. `?next=` says where
+/// the callback should deliver the session token — the web UI by default, or
+/// an allowlisted client target (desktop loopback listener / mobile deep link).
+async fn google_start(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(gc) = state.config.google() else {
+        return err(StatusCode::NOT_FOUND, "Google sign-in is not enabled").into_response();
+    };
+    let next = q.get("next").cloned().unwrap_or_else(|| "/".to_string());
+    if next != "/" && !crate::auth::allowed_next(&next) {
+        return err(StatusCode::BAD_REQUEST, "next target is not allowed").into_response();
+    }
+    let oauth_state = crate::auth::encode_state(&next);
+    let redirect_uri = oauth_redirect_uri(&state, &headers);
+    let url = crate::auth::build_consent_url(&gc, &redirect_uri, &oauth_state);
+    let secure = redirect_uri.starts_with("https://");
+    redirect_with_cookie(&url, set_state_cookie(secure, &oauth_state, OAUTH_STATE_MAX_AGE))
+}
+
+/// Step 2: Google bounced back. Verify CSRF state, exchange the code for an
+/// id_token over the TLS back-channel, check its claims + the email
+/// allowlist, then deliver a freshly minted session token to `next`.
+async fn google_callback(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let state_param = q.get("state").cloned().unwrap_or_default();
+    let next = crate::auth::next_from_state(&state_param);
+    let secure = oauth_redirect_uri(&state, &headers).starts_with("https://");
+
+    // Failures land where the flow started: the web UI reads the fragment,
+    // client listeners read ?error=.
+    let land_err = |reason: &str| -> Response {
+        let url = match &next {
+            Some(n) if n != "/" => format!(
+                "{n}{}error={}",
+                if n.contains('?') { "&" } else { "?" },
+                crate::auth::urlencode(reason)
+            ),
+            _ => format!("/#auth_error={}", crate::auth::urlencode(reason)),
+        };
+        redirect_with_cookie(&url, set_state_cookie(secure, "", 0))
+    };
+
+    let Some(gc) = state.config.google() else {
+        return land_err("google_disabled");
+    };
+    if let Some(e) = q.get("error") {
+        // Google-side refusal, e.g. access_denied from an unconsenting user.
+        tracing::warn!("google sign-in returned error={e}");
+        return land_err(&format!("google_{e}"));
+    }
+    let code = q.get("code").cloned().unwrap_or_default();
+    if code.is_empty() {
+        return land_err("no_code");
+    }
+    let cookie = cookie_value(&headers, OAUTH_STATE_COOKIE).unwrap_or_default();
+    if cookie.is_empty() || !crate::auth::state_matches(&cookie, &state_param) {
+        tracing::warn!("google sign-in: CSRF state mismatch");
+        return land_err("state");
+    }
+    let redirect_uri = oauth_redirect_uri(&state, &headers);
+    let exchange = {
+        let gc = gc.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::auth::exchange_code(&gc, &code, &redirect_uri)
+        })
+        .await
+    };
+    let email = match exchange {
+        Ok(Ok(tokens)) => {
+            let id_token = tokens["id_token"].as_str().unwrap_or_default();
+            match crate::auth::decode_id_token(id_token, &gc) {
+                Ok(email) => email,
+                Err(e) => {
+                    tracing::warn!("google sign-in: id_token rejected: {e}");
+                    return land_err(if e.to_string().contains("allowlist") {
+                        "no_access"
+                    } else {
+                        "token"
+                    });
+                }
+            }
+        }
+        _ => {
+            tracing::warn!("google sign-in: token exchange failed");
+            return land_err("token");
+        }
+    };
+    tracing::info!("google sign-in: {email} accepted");
+    let session = crate::auth::mint_session(
+        &state.config.username(),
+        &state.config.session_secret(),
+    );
+    let url = match &next {
+        Some(n) if n != "/" => format!(
+            "{n}{}token={}",
+            if n.contains('?') { "&" } else { "?" },
+            crate::auth::urlencode(&session)
+        ),
+        _ => format!("/#agora_session={}", crate::auth::urlencode(&session)),
+    };
+    redirect_with_cookie(&url, set_state_cookie(secure, "", 0))
+}
+
 // ------------------------------------------------------------- websockets
 
 async fn ui_ws(
@@ -1092,7 +1430,7 @@ async fn ui_ws(
 ) -> Response {
     // Browsers can't set headers on a websocket, so auth rides on ?token=.
     let token = q.get("token").cloned().unwrap_or_default();
-    if !state.config.is_owner_token(&token) {
+    if !is_ui_token(&state, &token) {
         return (StatusCode::UNAUTHORIZED, "bad token").into_response();
     }
     ws.on_upgrade(move |socket| handle_ui_socket(state, socket))

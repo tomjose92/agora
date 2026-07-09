@@ -212,6 +212,36 @@ export function useSendMessage(channelId: string) {
   });
 }
 
+/** Voice note / live-voice turn: upload a recording, the server transcribes
+    it and posts the transcript as a normal user message (returned here).
+    `live` steers member agents to answer in spoken prose. */
+export function useSendVoice(channelId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: {
+      file: OutgoingFile;
+      threadId: number | null;
+      live?: boolean;
+    }) => {
+      const form = new FormData();
+      form.append("file", v.file as unknown as Blob);
+      if (v.threadId != null) form.append("thread_id", String(v.threadId));
+      if (v.live) form.append("live", "true");
+      return api.upload<Message>(`/api/channels/${channelId}/voice`, form);
+    },
+    onSuccess: (message, v) => {
+      qc.setQueryData<MessagePages>(
+        keys.messages(channelId, v.threadId),
+        (data) => appendMessage(data, message),
+      );
+      qc.setQueryData<Group[]>(keys.groups, (groups) =>
+        applyMessageToGroups(groups, message, message.author_id),
+      );
+    },
+  });
+}
+
 export function useMarkRead(channelId: string) {
   const api = useApi();
   return useMutation({

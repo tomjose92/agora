@@ -1,7 +1,7 @@
 /* Agora chat UI: groups, channels, threads, live via the /ws websocket.
    Ported from Pantheo's admin page; talks to the standalone app's /api.
-   Voice/live/speak features from the original are stubbed out in v1 (they
-   depended on the Pantheo server's STT/TTS). */
+   Voice features (voice notes, speak-aloud, live voice) need OPENAI_API_KEY
+   set on the server — the controls hide when it isn't. */
 
 /* ---------- state ---------- */
 let _agoGroups = [];            // group payloads {id, name, channels, role}
@@ -59,19 +59,10 @@ let _agoUnreadsOnly =           // sidebar shows only unread/mentioned channels
 let _agoEditingChan = false;    // channel header rename/topic editor open
 let _agoDrag = null;            // drag-reorder state {type, id, gid}
 
-/* Voice features are not in the standalone app (v1) — inert stubs keep the
-   ported flow intact without the STT/TTS plumbing. */
-const _agoSpeakAll = false;
-function agoVoiceCancel() {}
-function agoLiveStop() {}
-function agoSpeakStop() {}
-function agoLiveScopeActive() { return false; }
-function agoLiveStripHTML() { return ""; }
-function agoVoiceBtnHTML() { return ""; }
-function agoLiveOnAgentMessage() {}
-function agoSpeakEnqueue() {}
-async function agoUnlockPlayback() {}
-let _agoRec = null;
+/* Voice features (voice notes, speak-aloud, live voice) need the server to
+   have an OPENAI_API_KEY; /api/me reports it and the controls hide without
+   it. Implementation lives in the "voice" sections near the end of the file. */
+let _agoVoiceOK = false;
 
 function agoSelGroup() { return _agoGroups.find(g => g.id === _agoSel.g) || null; }
 function agoSelChannel() {
@@ -684,6 +675,9 @@ function agoSelectGroup(gid) {
   agoSetExpanded(gid, true);
   _agoInboxOpen = false;
   if (_agoSel.g !== gid) {
+    agoVoiceCancel();   // a recording is tied to the channel it started in
+    agoLiveStop();      // so is a live voice session
+    agoSpeakStop();     // don't keep reading the previous channel's replies
     _agoSel.g = gid;
     const g = agoSelGroup();
     _agoSel.c = (g && g.channels[0] && g.channels[0].id) || null;
@@ -702,6 +696,9 @@ function agoSelectChannel(gid, cid) {
   agoSetExpanded(gid, true);
   _agoInboxOpen = false;
   if (_agoSel.c !== cid || _agoSel.g !== gid) {
+    agoVoiceCancel();   // a recording is tied to the channel it started in
+    agoLiveStop();      // so is a live voice session
+    agoSpeakStop();     // don't keep reading the previous channel's replies
     _agoFiles = {};     // pending attachments belong to the previous channel
     _agoSel.g = gid; _agoSel.c = cid;
     _agoThreadRoot = null; _agoThreadMsgs = []; _agoMembers = null;
@@ -823,6 +820,17 @@ function agoDrawMain() {
       <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">‹</button>
       ${headText}
       <div class="ago-head-actions">
+        ${_agoVoiceOK ? `
+        <button class="btn sm ago-speak-btn ${_agoSpeakAll ? "active" : ""}"
+          title="${_agoSpeakAll
+            ? "Stop speaking agent replies aloud"
+            : "Speak agent replies aloud (applies to every channel)"}"
+          onclick="agoSpeakToggle()">${_agoSpeakAll ? "🔊" : "🔇"}</button>
+        <button class="btn sm ago-live-btn ${agoLiveScopeActive(null) ? "active" : ""}"
+          title="${agoLiveScopeActive(null)
+            ? "End the live voice conversation"
+            : "Live voice: talk hands-free and hear the replies"}"
+          onclick="agoLiveToggle(null)">🎧 Live</button>` : ""}
         <button class="btn sm ago-star-toggle ${_agoStarsOpen ? "active" : ""}"
           title="Starred messages in #${esc(channel.name)}"
           onclick="agoToggleStarList()">${_agoStars.length ? "★ " + _agoStars.length : "☆"}</button>
@@ -839,6 +847,7 @@ function agoDrawMain() {
     <div class="ago-unread-bar" id="ago-unread-bar" style="display:none"></div>
     <div class="ago-log" id="ago-log" onscroll="agoOnScroll()"></div>
     <div class="ago-status" id="ago-status"></div>
+    ${agoLiveStripHTML(null)}
     ${agoFileChipsHTML(null)}
     <div class="chat-input" ondragover="agoDragOver(event)" ondrop="agoDrop(event, null)">
       <textarea id="ago-msg" rows="1" placeholder="Message #${esc(channel.name)}"
@@ -847,6 +856,7 @@ function agoDrawMain() {
         onpaste="agoPaste(event, null)"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
       ${agoAttachBtnHTML(null)}
+      ${agoVoiceBtnHTML(null)}
       <button class="btn primary" onclick="agoSend(null)">Send</button>
     </div>`;
   const msgBox = document.getElementById("ago-msg");
@@ -1253,6 +1263,7 @@ function agoKeydown(e, threadId) {
 }
 async function agoSend(threadId) {
   agoCloseMention();
+  if (_agoSpeakAll) await agoUnlockPlayback();   // mobile: Send tap unlocks playback
   const input = document.getElementById(threadId ? "ago-thread-msg" : "ago-msg");
   const channel = agoSelChannel();
   if (!input || !channel) return;
@@ -1398,6 +1409,10 @@ function agoAttachmentsHTML(m) {
 async function agoOpenThread(rootId) {
   const channel = agoSelChannel();
   if (!channel) return;
+  // Switching threads discards a recording from the previous thread composer,
+  // and ends a live session that was scoped to the previous thread.
+  if (_agoRec && _agoRec.threadId != null && _agoRec.threadId !== rootId) agoVoiceCancel();
+  if (_agoLive && _agoLive.threadId != null && _agoLive.threadId !== rootId) agoLiveStop();
   _agoThreadRoot = _agoMsgs.find(m => m.id === rootId)
     || _agoPins.find(p => p.id === rootId)
     || (_agoStars.find(s => s.root && s.root.id === rootId) || {}).root
@@ -1424,6 +1439,9 @@ async function agoOpenThread(rootId) {
   agoMaybeMarkThreadRead();
 }
 function agoCloseThread() {
+  // Discard a recording — and end a live session — scoped to this thread.
+  if (_agoRec && _agoRec.threadId != null) agoVoiceCancel();
+  if (_agoLive && _agoLive.threadId != null) agoLiveStop();
   _agoThreadRoot = null;
   _agoThreadMsgs = [];
   agoSetView("main");
@@ -1450,6 +1468,12 @@ function agoDrawThread() {
         ${channel ? `<span class="dim"><span class="hash">#</span>${esc(channel.name)}</span>` : ""}
       </div>
       <div class="ago-head-actions">
+        ${_agoVoiceOK ? `
+        <button class="btn sm ago-live-btn ${agoLiveScopeActive(_agoThreadRoot.id) ? "active" : ""}"
+          title="${agoLiveScopeActive(_agoThreadRoot.id)
+            ? "End the live voice conversation in this thread"
+            : "Live voice in this thread: talk hands-free, turns post here"}"
+          onclick="agoLiveToggle(${_agoThreadRoot.id})">🎧 Live</button>` : ""}
         <button class="btn sm ${agoIsPinned(_agoThreadRoot.id) ? "active" : ""}"
           title="${agoIsPinned(_agoThreadRoot.id) ? "Unpin this thread" : "Pin this thread for quick access"}"
           onclick="agoTogglePin(${_agoThreadRoot.id})">${agoIsPinned(_agoThreadRoot.id) ? "📌 Pinned" : "⚲ Pin"}</button>
@@ -1464,6 +1488,7 @@ function agoDrawThread() {
       ${_agoThreadMsgs.map(m => agoMsgHTML(m, true)).join("")}
     </div>
     <div class="ago-status" id="ago-thread-status"></div>
+    ${agoLiveStripHTML(_agoThreadRoot.id)}
     ${agoFileChipsHTML(_agoThreadRoot.id)}
     <div class="chat-input" ondragover="agoDragOver(event)" ondrop="agoDrop(event, ${_agoThreadRoot.id})">
       <textarea id="ago-thread-msg" rows="1" placeholder="Reply in thread…"
@@ -1471,6 +1496,7 @@ function agoDrawThread() {
         onpaste="agoPaste(event, ${_agoThreadRoot.id})"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
       ${agoAttachBtnHTML(_agoThreadRoot.id)}
+      ${agoVoiceBtnHTML(_agoThreadRoot.id)}
       <button class="btn primary" onclick="agoSend(${_agoThreadRoot.id})">Send</button>
     </div>`;
   const input = document.getElementById("ago-thread-msg");
@@ -1668,6 +1694,10 @@ function agoIngestMessage(m) {
       if (_agoProgress[h].agent_id === m.author_id) delete _agoProgress[h];
     });
     agoDrawStatus();
+    agoLiveOnAgentMessage(m);   // live voice mode: speak the reply
+    // Speak-aloud toggle: read the reply out unless a live session already
+    // speaks for this channel.
+    if (_agoSpeakAll && !agoLiveActive()) agoSpeakEnqueue(m.id);
   }
   // Thread replies don't ack the channel (that would clear a thread-mention
   // badge the user hasn't seen); the thread panel acks its own marker.
@@ -1697,4 +1727,559 @@ function agoHandleEvent(data) {
     };
     agoDrawStatus();
   }
+}
+
+/* ====================================================================
+   Voice features — ported from the Pantheo-embedded Agora page.
+   Server side: POST /api/channels/{id}/voice (STT) and
+   GET /api/messages/{id}/speech (TTS); both need OPENAI_API_KEY there.
+   ==================================================================== */
+
+/* ---------- voice input (🎙 in the composers) ----------
+   Click 🎙 to record, click again to stop-and-send: the audio is uploaded to
+   /voice, transcribed server-side, and posted as a normal text message (the
+   same flow WhatsApp/Discord voice notes take). Nothing is stored as audio. */
+let _agoRec = null;       // {key, threadId, recorder, stream, chunks, canceled, startedAt, timer}
+let _agoRecBusy = null;   // composer key while an upload/transcription is in flight
+
+function agoVoiceBtnHTML(threadId) {
+  if (!_agoVoiceOK) return "";
+  const key = agoRecKey(threadId);
+  const arg = threadId != null ? threadId : "null";
+  if (_agoRecBusy === key) {
+    return `<button class="btn ago-mic busy" disabled title="Transcribing…">
+      <span class="ago-rec-dots">…</span></button>`;
+  }
+  if (_agoRec && _agoRec.key === key) {
+    return `<button class="btn ago-mic cancel" title="Discard recording"
+        onclick="agoVoiceCancel()">✕</button>
+      <button class="btn ago-mic recording" title="Stop and send"
+        onclick="agoVoiceToggle(${arg})">■&nbsp;<span class="ago-rec-time" id="ago-rec-time-${key}">0:00</span></button>`;
+  }
+  return `<button class="btn ago-mic" title="Record a voice message"
+      onclick="agoVoiceToggle(${arg})">🎙</button>`;
+}
+
+function agoRecMime() {
+  // Chrome/Firefox record webm/opus; Safari records mp4 (AAC). Both are
+  // accepted by the transcription API.
+  for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+}
+
+async function agoVoiceToggle(threadId) {
+  if (_agoRec && _agoRec.key === agoRecKey(threadId)) { agoVoiceFinish(true); return; }
+  if (_agoRec) agoVoiceFinish(false);   // one recording at a time
+  await agoVoiceStart(threadId);
+}
+
+async function agoVoiceStart(threadId) {
+  if (!navigator.mediaDevices || typeof MediaRecorder === "undefined") {
+    toast("Voice input isn't supported in this browser", { variant: "warn" });
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    toast("Microphone blocked — allow mic access to send voice messages", { variant: "warn" });
+    return;
+  }
+  const mime = agoRecMime();
+  const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  const rec = {
+    key: agoRecKey(threadId), threadId, recorder, stream,
+    chunks: [], canceled: false, startedAt: Date.now(), timer: null,
+  };
+  recorder.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+  recorder.onstop = () => {
+    clearInterval(rec.timer);
+    stream.getTracks().forEach(t => t.stop());
+    if (_agoRec === rec) _agoRec = null;
+    if (!rec.canceled && rec.chunks.length) agoVoiceUpload(rec);
+    else agoRedrawComposer(rec.threadId);
+  };
+  _agoRec = rec;
+  recorder.start();
+  rec.timer = setInterval(() => {
+    const el = document.getElementById("ago-rec-time-" + rec.key);
+    if (!el) return;
+    const s = Math.floor((Date.now() - rec.startedAt) / 1000);
+    el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }, 250);
+  agoRedrawComposer(threadId);
+}
+
+function agoVoiceFinish(send) {
+  if (!_agoRec) return;
+  _agoRec.canceled = !send;
+  try { _agoRec.recorder.stop(); } catch (e) { _agoRec = null; }
+}
+function agoVoiceCancel() { agoVoiceFinish(false); }
+
+async function agoVoiceUpload(rec) {
+  const channel = agoSelChannel();
+  if (!channel) return;
+  const type = (rec.recorder.mimeType || "audio/webm").toLowerCase();
+  // The transcription API infers the codec from the file extension.
+  const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+  const blob = new Blob(rec.chunks, { type });
+  _agoRecBusy = rec.key;
+  agoRedrawComposer(rec.threadId);
+  try {
+    const fd = new FormData();
+    fd.append("file", blob, "voice-note." + ext);
+    if (rec.threadId != null) fd.append("thread_id", rec.threadId);
+    // FormData sets its own multipart boundary — only add the auth header.
+    const res = await fetch(`/api/channels/${encodeURIComponent(channel.id)}/voice`, {
+      method: "POST", headers: authHeaders(), body: fd,
+    });
+    if (!res.ok) {
+      let detail = await res.text();
+      try { detail = JSON.parse(detail).detail || detail; } catch (e) {}
+      throw new Error(detail);
+    }
+    agoIngestMessage(await res.json());   // websocket will dedupe by id
+  } catch (e) {
+    agoErr("Voice message failed", e);
+  } finally {
+    _agoRecBusy = null;
+    agoRedrawComposer(rec.threadId);
+  }
+}
+
+/* ---------- speak-aloud toggle (🔊 in the channel header) ----------
+   A personal, page-level preference (localStorage, like the sidebar state):
+   when on, agent replies arriving in whichever channel you're viewing are
+   read aloud via /speech. Off by default; global across all groups/channels.
+   The live voice mode below has its own playback — while a live session
+   runs, this stays out of the way. */
+let _agoSpeakAll = localStorage.getItem("agora_speak") === "on";
+let _agoSpeakQueue = [];    // message ids waiting to be spoken
+let _agoSpeakAudio = null;  // currently playing clip
+let _agoSpeakWarned = false;
+let _agoPlayWarned = false;   // autoplay blocked on mobile (one toast)
+let _agoPlayer = null;        // reused for TTS — iOS needs playsInline + unlock
+
+function agoPlayer() {
+  if (!_agoPlayer) {
+    _agoPlayer = new Audio();
+    _agoPlayer.setAttribute("playsinline", "");
+    _agoPlayer.playsInline = true;   // iOS: play in-page, not fullscreen
+  }
+  return _agoPlayer;
+}
+
+/* Mobile browsers (especially iOS Safari) block audio.play() unless the page
+   has been "unlocked" by a recent user gesture. Mic/getUserMedia satisfies
+   capture but not playback — call this from 🔊 / 🎧 Live taps. */
+async function agoUnlockPlayback() {
+  const p = agoPlayer();
+  // Tiny silent WAV — just enough to satisfy the autoplay gate.
+  p.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+  try {
+    await p.play();
+    p.pause();
+    p.currentTime = 0;
+    p.removeAttribute("src");
+    p.load();
+  } catch (e) { /* still try playback later */ }
+  if (_agoLive && _agoLive.ac && _agoLive.ac.state === "suspended") {
+    try { await _agoLive.ac.resume(); } catch (e) {}
+  }
+}
+
+async function agoPlaySpeech(url, onDone) {
+  const audio = agoPlayer();
+  audio.onended = null;
+  audio.onerror = null;
+  audio.src = url;
+  const done = () => { audio.onended = null; audio.onerror = null; onDone(); };
+  audio.onended = done;
+  audio.onerror = done;
+  try {
+    await audio.play();
+    return audio;
+  } catch (e) {
+    if (!_agoPlayWarned) {
+      _agoPlayWarned = true;
+      toast("Couldn't play the reply — tap 🔊 or 🎧 Live again to allow sound on this device",
+        { variant: "warn" });
+    }
+    done();
+    return null;
+  }
+}
+
+// The flag is cached per tab, so without this a second open tab would keep
+// speaking after the toggle was turned off elsewhere (and vice versa).
+window.addEventListener("storage", e => {
+  if (e.key !== "agora_speak") return;
+  _agoSpeakAll = e.newValue === "on";
+  if (!_agoSpeakAll) {
+    agoSpeakStop();
+    if (_agoLive) agoLiveStopPlayback(_agoLive);
+  }
+  agoDrawMain();
+});
+
+function agoSpeakToggle() {
+  _agoSpeakAll = !_agoSpeakAll;
+  localStorage.setItem("agora_speak", _agoSpeakAll ? "on" : "off");
+  if (_agoSpeakAll) agoUnlockPlayback();   // mobile: unlock before the async reply
+  if (!_agoSpeakAll) {
+    agoSpeakStop();
+    // A live session's playback obeys the toggle too: mute mid-sentence.
+    if (_agoLive) agoLiveStopPlayback(_agoLive);
+  }
+  agoDrawMain();
+}
+
+function agoSpeakStop() {
+  _agoSpeakQueue = [];
+  const audio = _agoSpeakAudio || (_agoPlayer && !_agoPlayer.paused ? _agoPlayer : null);
+  _agoSpeakAudio = null;
+  if (!audio) return;
+  audio.onended = null;
+  audio.onerror = null;
+  try { audio.pause(); } catch (e) {}
+  if (audio.src && audio.src.startsWith("blob:")) URL.revokeObjectURL(audio.src);
+}
+
+function agoSpeakEnqueue(messageId) {
+  _agoSpeakQueue.push(messageId);
+  if (!_agoSpeakAudio) agoSpeakNext();
+}
+
+async function agoSpeakNext() {
+  const id = _agoSpeakQueue.shift();
+  if (id == null || !_agoSpeakAll) { _agoSpeakAudio = null; return; }
+  let url;
+  try {
+    const res = await fetch(`/api/messages/${id}/speech`, { headers: authHeaders() });
+    if (!res.ok) {
+      // Surface "TTS not configured" once instead of failing silently forever.
+      if (res.status === 400 && !_agoSpeakWarned) {
+        _agoSpeakWarned = true;
+        let detail = await res.text();
+        try { detail = JSON.parse(detail).detail || detail; } catch (e) {}
+        toast("Can't speak replies: " + detail, { variant: "warn" });
+      }
+      agoSpeakNext();
+      return;
+    }
+    url = URL.createObjectURL(await res.blob());
+  } catch (e) { agoSpeakNext(); return; }
+  const done = () => {
+    URL.revokeObjectURL(url);
+    _agoSpeakAudio = null;
+    agoSpeakNext();
+  };
+  const playing = await agoPlaySpeech(url, done);
+  if (playing) _agoSpeakAudio = playing;
+  else done();
+}
+
+/* ---------- live voice mode (hands-free two-way conversation) ----------
+   A browser-side cascade: WebAudio VAD endpoints each utterance (speech
+   starts above an RMS threshold, ends after a silence gap), the clip goes to
+   /voice?live=true, and agent replies come back as normal messages that get
+   auto-spoken via /speech. Speaking while the agent audio plays interrupts
+   it (barge-in). The browser's echo cancellation keeps the agent's own
+   voice out of the mic. */
+const AGO_LIVE = {
+  TICK_MS: 50,            // VAD poll interval
+  SILENCE_MS: 800,        // utterance ends after this much quiet
+  MIN_UTTER_MS: 300,      // shorter blips are coughs/key clicks — dropped
+  BARGE_MS: 150,          // sustained speech during playback interrupts it
+  THRESHOLD: 0.015,       // RMS speech threshold on the mic signal
+  TURN_TIMEOUT_MS: 60000, // stop waiting for an agent reply after this long
+};
+const AGO_LIVE_LABELS = {
+  listening: "Listening — just talk",
+  recording: "Recording…",
+  thinking: "Thinking…",
+  speaking: "Speaking — talk to interrupt",
+};
+function agoLiveLabel(state) {
+  // With 🔊 off the session still listens and posts turns, but replies stay
+  // text-only — say so instead of implying audio is coming.
+  if (state === "listening" && !_agoSpeakAll) {
+    return "Listening — replies appear in chat (\uD83D\uDD0A off)";
+  }
+  return AGO_LIVE_LABELS[state] || state;
+}
+let _agoLive = null;   // active session (one per instance, tied to a channel
+                       // or, when started from the thread panel, to one thread)
+
+function agoLiveActive() {
+  const c = agoSelChannel();
+  return !!(_agoLive && c && _agoLive.channelId === c.id);
+}
+
+/* Is the session bound to this exact composer scope (null = the channel,
+   a root id = that thread)? Drives the toggle states and strip placement. */
+function agoLiveScopeActive(threadId) {
+  return agoLiveActive() && _agoLive.threadId === (threadId != null ? threadId : null);
+}
+
+function agoLiveStripHTML(threadId) {
+  if (!agoLiveScopeActive(threadId)) return "";
+  const s = _agoLive.state;
+  const arg = threadId != null ? threadId : "null";
+  return `<div class="ago-live-strip st-${s}" id="ago-live-strip">
+    <span class="ago-live-dot"></span>
+    <span class="ago-live-label">${agoLiveLabel(s)}</span>
+    <button class="btn sm" onclick="agoLiveToggle(${arg})">End</button>
+  </div>`;
+}
+
+function agoLiveSetState(live, state) {
+  if (live.state === state) return;
+  live.state = state;
+  const el = document.getElementById("ago-live-strip");
+  if (!el) return;
+  el.className = "ago-live-strip st-" + state;
+  const label = el.querySelector(".ago-live-label");
+  if (label) label.textContent = agoLiveLabel(state);
+}
+
+async function agoLiveToggle(threadId) {
+  threadId = threadId != null ? threadId : null;
+  if (_agoLive) {
+    const same = agoLiveScopeActive(threadId);
+    agoLiveStop();
+    if (same) return;   // same button: plain stop. Other scope: restart there.
+  }
+  const channel = agoSelChannel();
+  if (!channel) return;
+  if (!navigator.mediaDevices || typeof MediaRecorder === "undefined") {
+    toast("Live voice isn't supported in this browser", { variant: "warn" });
+    return;
+  }
+  if (_agoRec) agoVoiceCancel();   // the live loop owns the mic
+  let stream;
+  try {
+    // Echo cancellation is load-bearing: without it the agent's own playback
+    // re-triggers the endpointer and the session talks to itself.
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+    });
+  } catch (e) {
+    toast("Microphone blocked — allow mic access for live voice", { variant: "warn" });
+    return;
+  }
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const analyser = ac.createAnalyser();
+  analyser.fftSize = 1024;
+  ac.createMediaStreamSource(stream).connect(analyser);
+  _agoLive = {
+    channelId: channel.id, threadId, stream, ac, analyser,
+    buf: new Float32Array(analyser.fftSize),
+    state: "listening", timer: null,
+    recorder: null, chunks: [], utterStart: 0, lastVoice: 0,
+    voicedMs: 0,                              // consecutive voiced ms during playback
+    turnBusy: false, turnTimer: null, queue: [],
+    playQueue: [], audio: null,
+  };
+  _agoLive.timer = setInterval(agoLiveTick, AGO_LIVE.TICK_MS);
+  await agoUnlockPlayback();   // mobile: playback unlock + resume AudioContext
+  agoDrawMain();
+  agoDrawThread();   // thread-scoped sessions render their strip in the panel
+}
+
+function agoLiveStop() {
+  const live = _agoLive;
+  if (!live) return;
+  _agoLive = null;
+  clearInterval(live.timer);
+  clearTimeout(live.turnTimer);
+  const rec = live.recorder;
+  if (rec) {
+    rec.ondataavailable = null;
+    rec.onstop = null;
+    try { rec.stop(); } catch (e) {}
+  }
+  agoLiveStopPlayback(live);
+  live.stream.getTracks().forEach(t => t.stop());
+  try { live.ac.close(); } catch (e) {}
+  agoDrawMain();
+  agoDrawThread();
+}
+
+function agoLiveRms(live) {
+  live.analyser.getFloatTimeDomainData(live.buf);
+  let sum = 0;
+  for (let i = 0; i < live.buf.length; i++) sum += live.buf[i] * live.buf[i];
+  return Math.sqrt(sum / live.buf.length);
+}
+
+function agoLiveTick() {
+  const live = _agoLive;
+  if (!live) return;
+  const now = Date.now();
+  const voiced = agoLiveRms(live) >= AGO_LIVE.THRESHOLD;
+
+  // Barge-in: sustained speech while agent audio plays cancels the playback
+  // queue and starts capturing the interruption as a fresh utterance.
+  if (live.audio) {
+    live.voicedMs = voiced ? live.voicedMs + AGO_LIVE.TICK_MS : 0;
+    if (live.voicedMs >= AGO_LIVE.BARGE_MS) {
+      live.voicedMs = 0;
+      agoLiveStopPlayback(live);
+      agoLiveBeginUtterance(live, now);
+      return;
+    }
+    agoLiveSetState(live, "speaking");
+    return;
+  }
+
+  if (!live.recorder) {
+    if (voiced) agoLiveBeginUtterance(live, now);
+    else agoLiveSetState(live, live.turnBusy ? "thinking" : "listening");
+    return;
+  }
+  if (voiced) live.lastVoice = now;
+  if (now - live.lastVoice >= AGO_LIVE.SILENCE_MS) agoLiveEndUtterance(live);
+  else agoLiveSetState(live, "recording");
+}
+
+function agoLiveBeginUtterance(live, now) {
+  if (live.recorder) return;
+  const mime = agoRecMime();
+  let recorder;
+  try {
+    recorder = mime
+      ? new MediaRecorder(live.stream, { mimeType: mime })
+      : new MediaRecorder(live.stream);
+  } catch (e) {
+    agoErr("Live voice recording failed", e);
+    agoLiveStop();
+    return;
+  }
+  live.chunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) live.chunks.push(e.data); };
+  recorder.onstop = () => {
+    const ms = live.lastVoice - live.utterStart;
+    const chunks = live.chunks;
+    live.recorder = null;
+    live.chunks = [];
+    if (_agoLive !== live) return;   // session ended while recording
+    if (ms < AGO_LIVE.MIN_UTTER_MS || !chunks.length) return;   // noise blip
+    live.queue.push(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+    agoLivePump(live);
+  };
+  live.recorder = recorder;
+  live.utterStart = now;
+  live.lastVoice = now;
+  recorder.start();
+  agoLiveSetState(live, "recording");
+}
+
+function agoLiveEndUtterance(live) {
+  const rec = live.recorder;
+  if (!rec) return;
+  try { rec.stop(); } catch (e) { live.recorder = null; }
+}
+
+/* One turn in flight at a time: utterances spoken while the agent is
+   thinking queue up and post sequentially. */
+async function agoLivePump(live) {
+  if (_agoLive !== live || live.turnBusy || !live.queue.length) return;
+  live.turnBusy = true;
+  agoLiveSetState(live, "thinking");
+  clearTimeout(live.turnTimer);
+  // Safety valve: a channel with no live agents (or a dropped reply) must not
+  // wedge the session in "thinking" forever.
+  live.turnTimer = setTimeout(() => {
+    live.turnBusy = false;
+    agoLivePump(live);
+  }, AGO_LIVE.TURN_TIMEOUT_MS);
+  const blob = live.queue.shift();
+  const type = (blob.type || "audio/webm").toLowerCase();
+  const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+  try {
+    const fd = new FormData();
+    fd.append("file", blob, "utterance." + ext);
+    fd.append("live", "true");
+    if (live.threadId != null) fd.append("thread_id", live.threadId);
+    const res = await fetch(`/api/channels/${encodeURIComponent(live.channelId)}/voice`, {
+      method: "POST", headers: authHeaders(), body: fd,
+    });
+    if (!res.ok) {
+      let detail = await res.text();
+      try { detail = JSON.parse(detail).detail || detail; } catch (e) {}
+      throw new Error(detail);
+    }
+    agoIngestMessage(await res.json());   // websocket will dedupe by id
+  } catch (e) {
+    // Inaudible clips (breath, rustle) are routine in a hands-free loop —
+    // resume listening quietly instead of toasting an error.
+    if (!/couldn't hear/i.test((e && e.message) || "")) agoErr("Voice turn failed", e);
+    clearTimeout(live.turnTimer);
+    live.turnBusy = false;
+    agoLivePump(live);
+  }
+}
+
+/* An agent reply landed in the live channel: close the pending turn and
+   speak it — unless the 🔊 speak-aloud toggle is off, in which case the
+   reply stays text-only in the chat and the loop goes straight back to
+   listening. Called from agoIngestMessage. */
+function agoLiveOnAgentMessage(m) {
+  const live = _agoLive;
+  if (!live || m.channel_id !== live.channelId) return;
+  // Only replies in the session's scope close the turn and get spoken:
+  // channel sessions take top-level replies, thread sessions their thread's.
+  if ((m.thread_id != null ? m.thread_id : null) !== live.threadId) return;
+  clearTimeout(live.turnTimer);
+  live.turnBusy = false;
+  if (_agoSpeakAll) {
+    live.playQueue.push(m.id);
+    if (!live.audio) agoLivePlayNext(live);
+  } else {
+    agoLiveSetState(live, "listening");
+  }
+  agoLivePump(live);
+}
+
+async function agoLivePlayNext(live) {
+  if (_agoLive !== live) return;
+  const id = live.playQueue.shift();
+  if (id == null) {
+    live.audio = null;
+    agoLiveSetState(live, live.turnBusy ? "thinking" : "listening");
+    return;
+  }
+  let url;
+  try {
+    const res = await fetch(`/api/messages/${id}/speech`, { headers: authHeaders() });
+    if (!res.ok) throw new Error(await res.text());
+    url = URL.createObjectURL(await res.blob());
+  } catch (e) {
+    agoLivePlayNext(live);   // unspeakable message — keep the queue moving
+    return;
+  }
+  if (_agoLive !== live) { URL.revokeObjectURL(url); return; }
+  live.voicedMs = 0;
+  agoLiveSetState(live, "speaking");
+  const done = () => {
+    URL.revokeObjectURL(url);
+    if (live.audio) { live.audio = null; agoLivePlayNext(live); }
+  };
+  live.audio = await agoPlaySpeech(url, done);
+  if (!live.audio) done();
+}
+
+function agoLiveStopPlayback(live) {
+  live.playQueue = [];
+  const audio = live.audio || (_agoPlayer && !_agoPlayer.paused ? _agoPlayer : null);
+  live.audio = null;
+  if (!audio) return;
+  audio.onended = null;
+  audio.onerror = null;
+  try { audio.pause(); } catch (e) {}
+  if (audio.src && audio.src.startsWith("blob:")) URL.revokeObjectURL(audio.src);
 }

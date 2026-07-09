@@ -21,7 +21,8 @@
       "../../ui": "ui"
     },
     "macOS": {
-      "signingIdentity": "Apple Development: Tom Jose (U36YWR75H6)"
+      "signingIdentity": "Apple Development: Tom Jose (U36YWR75H6)",
+      "entitlements": "./Entitlements.plist"
     }
   }
 }

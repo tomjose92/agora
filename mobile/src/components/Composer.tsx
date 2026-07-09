@@ -1,5 +1,6 @@
-/* Message composer: text, attachments (max 5, like the server), and
-   @mention autocomplete over the channel's live agents + group members. */
+/* Message composer: text, attachments (max 5, like the server), voice notes
+   (🎤 → transcribed server-side), and @mention autocomplete over the
+   channel's live agents + group members. */
 
 import React, { useMemo, useRef, useState } from "react";
 import {
@@ -11,6 +12,13 @@ import {
   TextInput,
   View,
 } from "react-native";
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from "expo-audio";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -32,16 +40,78 @@ export function Composer({
   mentions,
   sending,
   onSend,
+  onSendVoice,
 }: {
   placeholder: string;
   mentions: MentionCandidate[];
   sending: boolean;
   onSend: (v: { text: string; files: OutgoingFile[] }) => Promise<void>;
+  /** When set (server has voice), a 🎤 button records a voice note and hands
+      the file here for the transcribe-and-post upload. */
+  onSendVoice?: (file: OutgoingFile) => Promise<void>;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<OutgoingFile[]>([]);
   const selection = useRef({ start: 0, end: 0 });
   const inputRef = useRef<TextInput>(null);
+
+  /* Voice note recording. The recorder hook is unconditional (hooks rule);
+     nothing touches the mic until the 🎤 tap. */
+  const [recPhase, setRecPhase] = useState<"idle" | "recording" | "uploading">("idle");
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recState = useAudioRecorderState(recorder, 500);
+
+  const startRec = async () => {
+    try {
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        toast("Microphone access is needed for voice messages", "warn");
+        return;
+      }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      setRecPhase("recording");
+    } catch (e) {
+      toastErr("Couldn't start recording", e);
+    }
+  };
+
+  const stopRec = async (): Promise<string | null> => {
+    try {
+      await recorder.stop();
+    } catch {
+      /* already stopped */
+    }
+    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    return recorder.uri;
+  };
+
+  const cancelRec = async () => {
+    await stopRec();
+    setRecPhase("idle");
+  };
+
+  const finishRec = async () => {
+    const tooShort = (recState.durationMillis ?? 0) < 500;
+    const uri = await stopRec();
+    if (!uri || tooShort) {
+      if (tooShort) toast("Recording too short", "warn");
+      setRecPhase("idle");
+      return;
+    }
+    setRecPhase("uploading");
+    try {
+      await onSendVoice?.({
+        uri,
+        name: `voice-note-${Date.now()}.m4a`,
+        type: "audio/m4a",
+      });
+    } catch (e) {
+      toastErr("Voice message failed", e);
+    }
+    setRecPhase("idle");
+  };
 
   /* Clear the home indicator when the keyboard is down; sit flush against
      the keyboard when it's up (the KeyboardAvoidingView handles the lift). */
@@ -126,6 +196,36 @@ export function Composer({
     }
   };
 
+  if (recPhase !== "idle") {
+    const secs = Math.floor((recState.durationMillis ?? 0) / 1000);
+    const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    return (
+      <View style={[styles.wrap, { paddingBottom: bottomPad }]}>
+        <View style={styles.row}>
+          <View style={styles.recDot} />
+          <Text style={styles.recTime}>
+            {recPhase === "uploading" ? "Transcribing…" : clock}
+          </Text>
+          <View style={{ flex: 1 }} />
+          <Pressable onPress={cancelRec} disabled={recPhase === "uploading"} style={styles.recCancel}>
+            <Text style={styles.recCancelText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            onPress={finishRec}
+            disabled={recPhase === "uploading"}
+            style={[styles.sendBtn, recPhase === "uploading" && styles.sendOff]}
+          >
+            {recPhase === "uploading" ? (
+              <ActivityIndicator size="small" color={colors.onAccent} />
+            ) : (
+              <Text style={styles.sendText}>↑</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.wrap, { paddingBottom: bottomPad }]}>
       {candidates.length > 0 ? (
@@ -159,6 +259,11 @@ export function Composer({
         <Pressable onPress={pickPhotos} hitSlop={8} style={styles.iconBtn}>
           <Text style={styles.icon}>🖼️</Text>
         </Pressable>
+        {onSendVoice ? (
+          <Pressable onPress={startRec} hitSlop={8} style={styles.iconBtn}>
+            <Text style={styles.icon}>🎤</Text>
+          </Pressable>
+        ) : null}
         <TextInput
           ref={inputRef}
           style={styles.input}
@@ -239,4 +344,21 @@ const styles = StyleSheet.create({
   },
   sendOff: { opacity: 0.4 },
   sendText: { color: colors.onAccent, fontSize: 18, fontWeight: "800" },
+  recDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.red,
+    alignSelf: "center",
+    marginLeft: 4,
+  },
+  recTime: {
+    color: colors.text,
+    fontSize: 15,
+    fontVariant: ["tabular-nums"],
+    alignSelf: "center",
+    marginLeft: 8,
+  },
+  recCancel: { alignSelf: "center", paddingHorizontal: 12, paddingVertical: 8 },
+  recCancelText: { color: colors.dim, fontSize: 14.5, fontWeight: "600" },
 });

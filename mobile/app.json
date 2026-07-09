@@ -37,7 +37,14 @@
       "expo-sharing",
       "expo-image",
       "./plugins/withNoPushEntitlement",
-      "expo-background-task"
+      "expo-background-task",
+      "expo-web-browser",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Agora uses the microphone for voice messages and live voice conversations with agents."
+        }
+      ]
     ]
   }
 }

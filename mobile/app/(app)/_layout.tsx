@@ -8,6 +8,7 @@ import { Redirect, Stack, router, type Href } from "expo-router";
 import * as Notifications from "expo-notifications";
 import { useSession } from "../../src/state/session";
 import { useAgoraSocket } from "../../src/ws/useAgoraSocket";
+import { emitAgentMessage } from "../../src/lib/agentBus";
 import { notifyAgentMessage, setBadge, setupNotifications } from "../../src/lib/notifications";
 import { registerBackgroundPolling, saveUnreadSnapshot } from "../../src/lib/background";
 import { notificationTarget, totalThreadUnread, totalUnread } from "../../src/lib/unread";
@@ -17,7 +18,10 @@ import { colors } from "../../src/lib/theme";
 function LiveSocket() {
   const session = useSession((s) => s.session)!;
   const username = useSession((s) => s.username);
-  useAgoraSocket(session, username, notifyAgentMessage);
+  useAgoraSocket(session, username, (m) => {
+    emitAgentMessage(m); // speak-aloud / live voice subscribers
+    notifyAgentMessage(m);
+  });
   return null;
 }
 

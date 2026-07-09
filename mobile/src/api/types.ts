@@ -5,6 +5,8 @@
 export interface Me {
   username: string;
   version: string;
+  /** Server has OPENAI_API_KEY: voice notes / speak-aloud / live voice work. */
+  voice?: boolean;
 }
 
 export interface Channel {

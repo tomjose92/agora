@@ -58,6 +58,7 @@
       <label for="token">Owner token</label>
       <input id="token" type="password" placeholder="printed in the server log / config.json" autocapitalize="off" autocorrect="off" spellcheck="false" />
       <button class="primary" id="connect">Connect to remote server</button>
+      <button class="ghost" id="google">Sign in with Google instead</button>
       <button class="ghost" id="embedded">Use the built-in local server</button>
       <button class="ghost" id="cancel">Cancel</button>
     </div>
@@ -119,6 +120,25 @@
         await invoke("set_server_settings", {
           settings: { mode: "remote", url: urlEl.value.trim(), token: tokenEl.value.trim() },
         }); // navigates away on success
+        draft.clear();
+      } catch (e) {
+        busy(false);
+        setStatus(String(e), "error");
+      }
+    });
+
+    // Google sign-in: needs only the URL — the token comes back from the
+    // server after the browser round-trip (see google_login.rs).
+    document.getElementById("google").addEventListener("click", async () => {
+      if (!urlEl.value.trim()) {
+        setStatus("Enter the server URL first", "error");
+        return;
+      }
+      busy(true);
+      setStatus("Finish signing in with Google in your browser…", "ok");
+      draft.save();
+      try {
+        await invoke("google_sign_in", { url: urlEl.value.trim() }); // navigates away on success
         draft.clear();
       } catch (e) {
         busy(false);

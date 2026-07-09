@@ -24,6 +24,7 @@ use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, WindowEve
 #[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
 
+mod google_login;
 #[cfg(target_os = "macos")]
 mod notify;
 mod remote_notify;
@@ -75,7 +76,8 @@ fn main() {
             get_server_settings,
             set_server_settings,
             connect_remote,
-            open_current_server
+            open_current_server,
+            google_sign_in
         ])
         .menu(|handle| {
             let menu = Menu::default(handle)?;
@@ -281,6 +283,30 @@ async fn open_current_server(app: AppHandle) -> Result<(), String> {
         }
     }
     sync_remote_notifier(&app, &stored);
+    Ok(())
+}
+
+/// Google sign-in against a remote server: run the loopback OAuth dance in
+/// the system browser, then persist the returned session token exactly like
+/// a pasted owner token (remote mode) and navigate to the server.
+#[tauri::command]
+async fn google_sign_in(app: AppHandle, url: String) -> Result<(), String> {
+    let base = url.trim().trim_end_matches('/').to_string();
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        return Err("Server URL must start with http:// or https://".into());
+    }
+    let token = google_login::run_flow(base.clone()).await?;
+    let settings = DesktopSettings {
+        mode: Mode::Remote,
+        url: Some(base),
+        token: Some(token),
+    };
+    validate_remote(&settings).await?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    settings::save(&data_dir, &settings).map_err(|e| e.to_string())?;
+    let url = settings.remote_url().ok_or("sign-in produced no session")?;
+    open_main(&app, url.parse().map_err(|_| "Invalid server URL")?);
+    sync_remote_notifier(&app, &settings);
     Ok(())
 }
 

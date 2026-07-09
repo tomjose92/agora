@@ -298,12 +298,65 @@ run the first command above, then flip the desktop app to remote mode
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `owner_token` | generated | Authenticates the UI/REST API (`?token=` or `Authorization: Bearer`). |
+| `session_secret` | generated | Signs the session tokens minted by Google sign-in; rotate it to sign everyone out. |
 | `username` | `me` | Display name of the local user. |
 | `bind` | `127.0.0.1` | Set `0.0.0.0` to accept LAN/remote agent bridges. |
 | `port` | `4470` | Falls back to an ephemeral port if taken. |
 | `connections` | `[]` | Outbound Pantheo endpoints (managed from the UI). |
 | `pairing_tokens` | `[]` | Dial-in bridge credentials (managed from the UI). |
 | `max_file_mb` | `10` | Per-attachment upload cap. |
+| `google_client_id` | `""` | Google OAuth client id (see [Google sign-in](#google-sign-in)). |
+| `google_client_secret` | `""` | Google OAuth client secret. |
+| `google_allowed_emails` | `[]` | The only Google accounts allowed in. Empty keeps Google sign-in off. |
+| `public_url` | `""` | Public https origin (behind a proxy) used to build the OAuth redirect URI. |
+
+## Google sign-in
+
+Instead of pasting the owner token, a deployed server can offer **Sign in with
+Google** — the same OIDC code flow Pantheo's dashboard uses. The web UI's auth
+gate, the desktop app's server picker, and the mobile connect screen all grow a
+Google button once the server is configured. A successful sign-in mints a
+30-day session token (HMAC-signed with `session_secret`) that is accepted
+everywhere the owner token is; Google credentials are never stored.
+
+Setup:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+   create an OAuth client of type **Web application** and add the redirect URI
+   `https://<your-agora-host>/api/auth/google/callback`.
+2. Configure the server — either env vars (Railway-friendly; persisted into
+   `config.json` at boot):
+
+```bash
+AGORA_GOOGLE_CLIENT_ID=....apps.googleusercontent.com
+AGORA_GOOGLE_CLIENT_SECRET=GOCSPX-...
+AGORA_GOOGLE_ALLOWED_EMAILS=you@gmail.com          # comma-separated
+AGORA_PUBLIC_URL=https://agora.up.railway.app      # must match the redirect URI
+```
+
+   or the same keys directly in `config.json`.
+3. Restart. `GET /api/auth/config` now reports `{"google":{"enabled":true}}`
+   and the sign-in buttons appear.
+
+The allowlist is the authorization layer: Agora v1 is single-user, so any
+allowed email signs in *as the owner*. An empty allowlist keeps Google sign-in
+disabled outright.
+
+Per client:
+
+- **Browser** — the auth gate shows *Sign in with Google*; the callback lands
+  the session in the URL fragment and the UI stores it like a pasted token.
+- **Desktop** — *Server → Server Settings… → Sign in with Google instead*
+  opens your default browser (Google refuses embedded webviews) and catches
+  the token on a loopback listener; the app then behaves exactly like remote
+  mode with a pasted token. Embedded mode needs no sign-in at all.
+- **iPhone** — the connect screen's Google button opens a system auth sheet
+  and returns via the `agora://auth` deep link; the session token goes into
+  the keychain in the owner token's place.
+
+Sessions expire after 30 days (or all at once if `session_secret` is rotated);
+clients drop back to their sign-in screen and one Google tap renews them. The
+owner token keeps working unchanged — Google sign-in is additive.
 
 ## Notifications
 

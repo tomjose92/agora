@@ -32,6 +32,7 @@ import {
   useMessage,
   useMessages,
   useSendMessage,
+  useSendVoice,
   useStarMessage,
   useStars,
 } from "../../../../src/api/queries";
@@ -62,6 +63,8 @@ export default function ThreadScreen() {
   const replies = useMessages(channelId, rootId);
   const topLevel = useMessages(channelId, null);
   const send = useSendMessage(channelId);
+  const sendVoice = useSendVoice(channelId);
+  const voiceOk = useSession((s) => s.voiceOk);
   const channelAgents = useChannelAgents(channelId);
   const stars = useStars(channelId);
   const star = useStarMessage(channelId);
@@ -196,6 +199,13 @@ export default function ThreadScreen() {
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: rootId, files });
           }}
+          onSendVoice={
+            voiceOk
+              ? async (file) => {
+                  await sendVoice.mutateAsync({ file, threadId: rootId });
+                }
+              : undefined
+          }
         />
       </KeyboardAvoidingView>
       {actionsFor ? (

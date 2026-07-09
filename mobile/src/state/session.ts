@@ -23,6 +23,8 @@ interface SessionState {
   status: Status;
   session: Session | null;
   username: string;
+  /** Server-side STT/TTS available (me.voice) — gates all voice UI. */
+  voiceOk: boolean;
   load: () => Promise<void>;
   signIn: (serverUrl: string, token: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -32,6 +34,7 @@ export const useSession = create<SessionState>((set) => ({
   status: "loading",
   session: null,
   username: "",
+  voiceOk: false,
 
   async load() {
     const [baseUrl, token] = await Promise.all([
@@ -64,7 +67,7 @@ export const useSession = create<SessionState>((set) => ({
           await SecureStore.setItemAsync(KEY_URL, canonical);
           set({ session: { baseUrl: canonical, token } });
         }
-        set({ username: me.username });
+        set({ username: me.username, voiceOk: !!me.voice });
       })
       .catch(() => {
         /* offline — keep the stored session */
@@ -87,7 +90,7 @@ export const useSession = create<SessionState>((set) => ({
       SecureStore.setItemAsync(KEY_URL, session.baseUrl),
       SecureStore.setItemAsync(KEY_TOKEN, session.token),
     ]);
-    set({ status: "signedIn", session, username: me.username });
+    set({ status: "signedIn", session, username: me.username, voiceOk: !!me.voice });
   },
 
   async signOut() {
@@ -95,7 +98,7 @@ export const useSession = create<SessionState>((set) => ({
       SecureStore.deleteItemAsync(KEY_URL),
       SecureStore.deleteItemAsync(KEY_TOKEN),
     ]);
-    set({ status: "signedOut", session: null, username: "" });
+    set({ status: "signedOut", session: null, username: "", voiceOk: false });
   },
 }));
 

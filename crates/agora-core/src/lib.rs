@@ -5,12 +5,14 @@
 //! agents 24/7). Everything — store, hub, HTTP/WS API, outbound connections,
 //! bundled UI — lives behind [`run`].
 
+pub mod auth;
 pub mod config;
 pub mod connections;
 pub mod hub;
 pub mod migrate;
 pub mod server;
 pub mod store;
+pub mod voice;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -44,6 +46,7 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
         ui_dir,
         data_dir,
         restart_handler: Arc::new(std::sync::Mutex::new(None)),
+        speech_cache: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
     let app = server::router(state.clone());
     let addr: SocketAddr = format!("{}:{}", snapshot.bind, snapshot.port).parse()?;

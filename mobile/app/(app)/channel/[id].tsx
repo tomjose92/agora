@@ -14,7 +14,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Stack, router, useLocalSearchParams } from "expo-router";
+import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import {
   flattenMessages,
@@ -26,6 +26,7 @@ import {
   usePinMessage,
   usePins,
   useSendMessage,
+  useSendVoice,
   useSeedActivity,
   useStarMessage,
   useStars,
@@ -35,10 +36,13 @@ import { Composer, type MentionCandidate } from "../../../src/components/Compose
 import { ProgressBubbles, TypingRow } from "../../../src/components/LiveRows";
 import { MessageItem } from "../../../src/components/MessageItem";
 import { toastErr } from "../../../src/components/Toast";
+import { onAgentMessage } from "../../../src/lib/agentBus";
 import { fmtTs } from "../../../src/lib/format";
 import { useHeaderKeyboardOffset } from "../../../src/lib/keyboard";
+import { enqueueSpeech, prepareSpeechAudio, stopSpeech } from "../../../src/lib/speech";
 import { colors } from "../../../src/lib/theme";
 import { useChannelLive } from "../../../src/state/live";
+import { usePrefs } from "../../../src/state/prefs";
 import { useSession } from "../../../src/state/session";
 
 type Row = { kind: "msg"; m: Message } | { kind: "divider" };
@@ -178,6 +182,7 @@ export default function ChannelScreen() {
 
   const messages = useMessages(channelId, null);
   const send = useSendMessage(channelId);
+  const sendVoice = useSendVoice(channelId);
   const markRead = useMarkRead(channelId);
   const pins = usePins(channelId);
   const stars = useStars(channelId);
@@ -277,6 +282,33 @@ export default function ChannelScreen() {
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
   const [sheet, setSheet] = useState<"pins" | "stars" | null>(null);
 
+  /* 🔊 speak-aloud: while this channel is focused (and not covered by the
+     live screen), agent replies landing here are read out via server TTS. */
+  const voiceOk = useSession((s) => s.voiceOk);
+  const speakAloud = usePrefs((s) => s.speakAloud);
+  const setSpeakAloud = usePrefs((s) => s.setSpeakAloud);
+  useFocusEffect(
+    useCallback(() => {
+      if (!voiceOk || !speakAloud) return;
+      void prepareSpeechAudio();
+      const off = onAgentMessage((m) => {
+        if (m.channel_id === channelId) enqueueSpeech(session, m.id);
+      });
+      return () => {
+        off();
+        stopSpeech();
+      };
+    }, [voiceOk, speakAloud, channelId, session]),
+  );
+
+  const openLive = useCallback(() => {
+    stopSpeech();
+    router.push({
+      pathname: "/(app)/live/[channelId]",
+      params: { channelId, channelName },
+    });
+  }, [channelId, channelName]);
+
   const renderRow = useCallback(
     ({ item }: { item: Row }) => {
       if (item.kind === "divider") {
@@ -310,6 +342,22 @@ export default function ChannelScreen() {
           headerShown: true,
           headerRight: () => (
             <View style={styles.headerBtns}>
+              {voiceOk ? (
+                <Pressable
+                  onPress={() => {
+                    if (speakAloud) stopSpeech();
+                    setSpeakAloud(!speakAloud);
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.headerBtn, !speakAloud && styles.headerBtnOff]}>🔊</Text>
+                </Pressable>
+              ) : null}
+              {voiceOk ? (
+                <Pressable onPress={openLive} hitSlop={8}>
+                  <Text style={styles.headerBtn}>🎧</Text>
+                </Pressable>
+              ) : null}
               <Pressable onPress={() => setSheet("pins")} hitSlop={8}>
                 <Text style={styles.headerBtn}>📌</Text>
               </Pressable>
@@ -393,6 +441,13 @@ export default function ChannelScreen() {
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: null, files });
           }}
+          onSendVoice={
+            voiceOk
+              ? async (file) => {
+                  await sendVoice.mutateAsync({ file, threadId: null });
+                }
+              : undefined
+          }
         />
       </KeyboardAvoidingView>
       {actionsFor ? (
@@ -440,6 +495,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   headerBtns: { flexDirection: "row", gap: 16 },
   headerBtn: { fontSize: 17 },
+  headerBtnOff: { opacity: 0.35 },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 40 },
   noAgents: {
     backgroundColor: "rgba(251,191,36,0.08)",

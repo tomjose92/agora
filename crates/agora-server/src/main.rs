@@ -5,9 +5,12 @@
 //! first run; the owner token is printed so a client can connect).
 //!
 //! PaaS-style env overrides (Railway injects `PORT`): `AGORA_BIND`, and
-//! `AGORA_PORT` / `PORT` (the former wins). They are persisted into
-//! config.json so dial-in bridges and printed URLs agree with what the
-//! platform routes to.
+//! `AGORA_PORT` / `PORT` (the former wins). Google sign-in can likewise be
+//! configured without touching the volume: `AGORA_GOOGLE_CLIENT_ID`,
+//! `AGORA_GOOGLE_CLIENT_SECRET`, `AGORA_GOOGLE_ALLOWED_EMAILS`
+//! (comma-separated), and `AGORA_PUBLIC_URL` (the https origin Google
+//! redirects back to). All are persisted into config.json so dial-in bridges
+//! and printed URLs agree with what the platform routes to.
 
 use std::path::PathBuf;
 
@@ -56,13 +59,19 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Fold `AGORA_BIND` and `AGORA_PORT`/`PORT` into config.json before boot.
+/// Fold the `AGORA_*` env overrides into config.json before boot.
 fn apply_env_overrides(data_dir: &std::path::Path) -> anyhow::Result<()> {
-    let bind = std::env::var("AGORA_BIND").ok().filter(|v| !v.is_empty());
-    let port = ["AGORA_PORT", "PORT"]
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let bind = env("AGORA_BIND");
+    let port = env("AGORA_PORT").or_else(|| env("PORT"));
+    let google_id = env("AGORA_GOOGLE_CLIENT_ID");
+    let google_secret = env("AGORA_GOOGLE_CLIENT_SECRET");
+    let google_emails = env("AGORA_GOOGLE_ALLOWED_EMAILS");
+    let public_url = env("AGORA_PUBLIC_URL");
+    if [&bind, &port, &google_id, &google_secret, &google_emails, &public_url]
         .iter()
-        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()));
-    if bind.is_none() && port.is_none() {
+        .all(|v| v.is_none())
+    {
         return Ok(());
     }
     let port: Option<u16> = match port {
@@ -76,6 +85,22 @@ fn apply_env_overrides(data_dir: &std::path::Path) -> anyhow::Result<()> {
         }
         if let Some(p) = port {
             c.port = p;
+        }
+        if let Some(v) = google_id {
+            c.google_client_id = v;
+        }
+        if let Some(v) = google_secret {
+            c.google_client_secret = v;
+        }
+        if let Some(v) = google_emails {
+            c.google_allowed_emails = v
+                .split(',')
+                .map(|e| e.trim().to_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect();
+        }
+        if let Some(v) = public_url {
+            c.public_url = v.trim_end_matches('/').to_string();
         }
     });
     Ok(())

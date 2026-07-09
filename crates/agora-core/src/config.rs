@@ -33,6 +33,14 @@ fn default_true() -> bool {
     true
 }
 
+/// Resolved Google OAuth client settings (see [`Config::google`]).
+#[derive(Clone)]
+pub struct GoogleConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    pub allowed_emails: Vec<String>,
+}
+
 fn default_username() -> String {
     "me".to_string()
 }
@@ -45,6 +53,10 @@ fn default_instance_name() -> String {
 pub struct ConfigData {
     #[serde(default)]
     pub owner_token: String,
+    /// Signs the short-lived session tokens minted by Google sign-in.
+    /// Generated once; rotating it signs every session out.
+    #[serde(default)]
+    pub session_secret: String,
     /// Stable identity this app declares to every linked Pantheo (an
     /// `identify` frame after connect), so an instance serving several Agoras
     /// can keep their sessions and channels apart. Generated once, kept for
@@ -68,6 +80,21 @@ pub struct ConfigData {
     /// Per-attachment upload cap, megabytes.
     #[serde(default = "default_max_file_mb")]
     pub max_file_mb: u64,
+    /// Google OAuth client (Web application type). Both must be set — and
+    /// `google_allowed_emails` non-empty — for Google sign-in to be offered.
+    #[serde(default)]
+    pub google_client_id: String,
+    #[serde(default)]
+    pub google_client_secret: String,
+    /// The only Google accounts allowed to sign in (lowercased). Empty means
+    /// Google sign-in stays disabled: this instance is single-user, so an
+    /// open list would hand the owner seat to any Google account.
+    #[serde(default)]
+    pub google_allowed_emails: Vec<String>,
+    /// Public base URL (https://agora.example.com) used to build the OAuth
+    /// redirect URI behind a proxy. When empty it is derived per request.
+    #[serde(default)]
+    pub public_url: String,
 }
 
 fn default_bind() -> String {
@@ -86,6 +113,7 @@ impl Default for ConfigData {
     fn default() -> Self {
         Self {
             owner_token: new_token(),
+            session_secret: new_token(),
             instance_id: new_token(),
             instance_name: default_instance_name(),
             username: default_username(),
@@ -94,6 +122,10 @@ impl Default for ConfigData {
             connections: Vec::new(),
             pairing_tokens: Vec::new(),
             max_file_mb: default_max_file_mb(),
+            google_client_id: String::new(),
+            google_client_secret: String::new(),
+            google_allowed_emails: Vec::new(),
+            public_url: String::new(),
         }
     }
 }
@@ -113,6 +145,9 @@ impl Config {
         };
         if data.owner_token.is_empty() {
             data.owner_token = new_token();
+        }
+        if data.session_secret.is_empty() {
+            data.session_secret = new_token();
         }
         if data.instance_id.is_empty() {
             data.instance_id = new_token();
@@ -168,6 +203,41 @@ impl Config {
         constant_time_eq(&self.data.lock().unwrap().owner_token, token)
     }
 
+    pub fn session_secret(&self) -> String {
+        self.data.lock().unwrap().session_secret.clone()
+    }
+
+    /// The Google OAuth client, when sign-in is fully configured (client id +
+    /// secret + a non-empty email allowlist).
+    pub fn google(&self) -> Option<GoogleConfig> {
+        let data = self.data.lock().unwrap();
+        if data.google_client_id.is_empty()
+            || data.google_client_secret.is_empty()
+            || data.google_allowed_emails.is_empty()
+        {
+            return None;
+        }
+        Some(GoogleConfig {
+            client_id: data.google_client_id.clone(),
+            client_secret: data.google_client_secret.clone(),
+            allowed_emails: data
+                .google_allowed_emails
+                .iter()
+                .map(|e| e.trim().to_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect(),
+        })
+    }
+
+    pub fn public_url(&self) -> String {
+        self.data
+            .lock()
+            .unwrap()
+            .public_url
+            .trim_end_matches('/')
+            .to_string()
+    }
+
     fn save(&self) {
         let data = self.data.lock().unwrap();
         if let Ok(text) = serde_json::to_string_pretty(&*data) {
@@ -201,6 +271,34 @@ mod tests {
         let cfg = Config::load(dir.path()).unwrap();
         assert_eq!(cfg.instance_id(), id);
         assert_eq!(cfg.instance_name(), "Home Agora");
+    }
+
+    #[test]
+    fn google_requires_full_config_and_normalizes_emails() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config::load(dir.path()).unwrap();
+        assert!(cfg.google().is_none());
+        cfg.update(|c| {
+            c.google_client_id = "cid".into();
+            c.google_client_secret = "shh".into();
+        });
+        // No allowlist -> still disabled: an open list would hand the single
+        // owner seat to any Google account.
+        assert!(cfg.google().is_none());
+        cfg.update(|c| c.google_allowed_emails = vec![" Tom@Example.COM ".into()]);
+        let gc = cfg.google().expect("fully configured");
+        assert_eq!(gc.allowed_emails, vec!["tom@example.com"]);
+    }
+
+    #[test]
+    fn session_secret_is_generated_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config::load(dir.path()).unwrap();
+        let secret = cfg.session_secret();
+        assert!(!secret.is_empty());
+        drop(cfg);
+        let cfg = Config::load(dir.path()).unwrap();
+        assert_eq!(cfg.session_secret(), secret);
     }
 
     #[test]

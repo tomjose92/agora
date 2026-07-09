@@ -4,6 +4,7 @@
    desktop shell appends it) and is kept in localStorage after that. */
 
 /* ---------- auth ---------- */
+let AUTH_ERROR = "";
 (function initToken() {
   const params = new URLSearchParams(location.search);
   const t = params.get("token");
@@ -11,6 +12,15 @@
     localStorage.setItem("agora_token", t);
     // Drop the token from the visible URL/history.
     history.replaceState(null, "", location.pathname);
+  }
+  // Google sign-in lands back here with the session token (or an error) in
+  // the URL fragment, so it never reaches server logs.
+  if (location.hash.length > 1) {
+    const frag = new URLSearchParams(location.hash.slice(1));
+    const session = frag.get("agora_session");
+    if (session) localStorage.setItem("agora_token", session);
+    AUTH_ERROR = frag.get("auth_error") || "";
+    if (session || AUTH_ERROR) history.replaceState(null, "", location.pathname);
   }
 })();
 function sessionToken() { return localStorage.getItem("agora_token") || ""; }
@@ -46,22 +56,42 @@ async function errDetail(res) {
 }
 
 /* No/bad token: ask for it (headless deployments paste it; the desktop app
-   never hits this because the shell always opens the UI with ?token=). */
+   never hits this because the shell always opens the UI with ?token=).
+   When the server has Google sign-in configured, offer that too. */
+const AUTH_ERROR_TEXT = {
+  no_access: "That Google account isn't allowed on this instance.",
+  google_access_denied: "Google sign-in was cancelled.",
+  state: "Sign-in expired — try again.",
+};
 function authGate() {
   if (document.getElementById("auth-gate")) return;
   const el = document.createElement("div");
   el.id = "auth-gate";
+  const errText = AUTH_ERROR
+    ? (AUTH_ERROR_TEXT[AUTH_ERROR] || "Google sign-in failed — try again.")
+    : "";
+  AUTH_ERROR = "";
   el.innerHTML = `<div class="auth-card">
     <div class="auth-brand">▣ Agora</div>
     <p>Paste this instance's owner token (shown in the server log or in
        <code>config.json</code>).</p>
     <input id="auth-token" placeholder="owner token" autocomplete="off">
     <button class="btn primary" onclick="authSubmit()">Connect</button>
+    <div id="auth-google" style="display:none">
+      <button class="btn" onclick="location.href='/api/auth/google/start'">
+        Sign in with Google</button>
+    </div>
+    <p id="auth-error" style="color:#f87171">${esc(errText)}</p>
   </div>`;
   document.body.appendChild(el);
   const input = document.getElementById("auth-token");
   input.focus();
   input.onkeydown = e => { if (e.key === "Enter") authSubmit(); };
+  fetch("/api/auth/config").then(r => r.json()).then(cfg => {
+    if (cfg.google && cfg.google.enabled) {
+      document.getElementById("auth-google").style.display = "";
+    }
+  }).catch(() => {});
 }
 async function authSubmit() {
   const t = (document.getElementById("auth-token").value || "").trim();
@@ -156,6 +186,7 @@ async function boot() {
   try {
     const me = await api("/api/me");
     CURRENT_USER = { username: me.username, owner: true };
+    _agoVoiceOK = !!me.voice;   // server has STT/TTS: show the voice controls
   } catch (e) {
     return;   // authGate is showing
   }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the bundle's Info.plist by Tauri (file next to tauri.conf.json).
+     Required for getUserMedia in the webview: without the usage description
+     macOS terminates the app on the first mic request. -->
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Agora uses the microphone for voice messages and live voice conversations with agents.</string>
+</dict>
+</plist>
