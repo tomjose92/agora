@@ -1,11 +1,34 @@
-import { ApiClient, ApiError, normalizeBaseUrl, wsUrl, fileUrl } from "../src/api/client";
+import {
+  ApiClient,
+  ApiError,
+  normalizeBaseUrl,
+  originOf,
+  wsUrl,
+  fileUrl,
+} from "../src/api/client";
 
 describe("normalizeBaseUrl", () => {
-  it("adds a scheme to bare host:port", () => {
+  it("defaults LAN/loopback hosts to http", () => {
     expect(normalizeBaseUrl("192.168.1.10:8890")).toBe("http://192.168.1.10:8890");
+    expect(normalizeBaseUrl("localhost:4470")).toBe("http://localhost:4470");
+    expect(normalizeBaseUrl("my-mac.local:4470")).toBe("http://my-mac.local:4470");
+  });
+  it("defaults public hosts to https (plain-http would break the ws upgrade)", () => {
+    expect(normalizeBaseUrl("agoras.up.railway.app")).toBe("https://agoras.up.railway.app");
   });
   it("strips trailing slashes and keeps https", () => {
     expect(normalizeBaseUrl("https://agora.example.com/")).toBe("https://agora.example.com");
+  });
+});
+
+describe("originOf", () => {
+  it("takes the origin of the final redirected URL", () => {
+    expect(originOf("https://agoras.up.railway.app/api/me", "http://x")).toBe(
+      "https://agoras.up.railway.app",
+    );
+  });
+  it("falls back when fetch reports no url", () => {
+    expect(originOf(undefined, "http://fallback")).toBe("http://fallback");
   });
 });
 

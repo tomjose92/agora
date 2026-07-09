@@ -14,11 +14,28 @@ export interface Session {
   token: string;
 }
 
-/** "host:port" or bare URLs become fully-qualified http(s) origins. */
+/** "host:port" or bare URLs become fully-qualified http(s) origins.
+    Schemeless input defaults to https — except LAN/loopback addresses, which
+    never have certificates. Getting this wrong breaks the live socket: hosts
+    like Railway 301 http→https, which fetch follows but WebSocket cannot. */
 export function normalizeBaseUrl(input: string): string {
   let url = input.trim().replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
+  if (!/^https?:\/\//i.test(url)) {
+    const host = url.replace(/[:/].*$/, "");
+    const isLan =
+      /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ||
+      host === "localhost" ||
+      host.endsWith(".local");
+    url = `${isLan ? "http" : "https"}://${url}`;
+  }
   return url;
+}
+
+/** The origin fetch actually ended up at (after redirects), so the stored
+    base URL matches the server's canonical scheme/host. */
+export function originOf(finalUrl: string | undefined, fallback: string): string {
+  const m = finalUrl?.match(/^https?:\/\/[^/]+/i);
+  return m ? m[0] : fallback;
 }
 
 export function wsUrl(session: Session): string {
@@ -34,7 +51,7 @@ export function authHeaders(session: Session): Record<string, string> {
   return { Authorization: `Bearer ${session.token}` };
 }
 
-async function parseError(res: Response): Promise<ApiError> {
+export async function parseError(res: Response): Promise<ApiError> {
   let detail = await res.text();
   try {
     detail = JSON.parse(detail).detail || detail;

@@ -4,7 +4,14 @@
 
 import * as SecureStore from "expo-secure-store";
 import { create } from "zustand";
-import { ApiClient, ApiError, normalizeBaseUrl, type Session } from "../api/client";
+import {
+  ApiClient,
+  ApiError,
+  normalizeBaseUrl,
+  originOf,
+  parseError,
+  type Session,
+} from "../api/client";
 import type { Me } from "../api/types";
 
 const KEY_URL = "agora_server_url";
@@ -50,11 +57,19 @@ export const useSession = create<SessionState>((set) => ({
   },
 
   async signIn(serverUrl, token) {
-    const baseUrl = normalizeBaseUrl(serverUrl);
-    const session: Session = { baseUrl, token: token.trim() };
-    const me = await new ApiClient(session).get<Me>("/api/me"); // throws on bad token
+    const guess = normalizeBaseUrl(serverUrl);
+    const trimmed = token.trim();
+    // Validate by hand (not via ApiClient) to see the *final* URL: hosts
+    // that 301 http->https would silently work for fetch but break the
+    // WebSocket, so store the canonical origin the server redirected to.
+    const res = await fetch(`${guess}/api/me`, {
+      headers: { Authorization: `Bearer ${trimmed}` },
+    });
+    if (!res.ok) throw await parseError(res);
+    const me = (await res.json()) as Me;
+    const session: Session = { baseUrl: originOf(res.url, guess), token: trimmed };
     await Promise.all([
-      SecureStore.setItemAsync(KEY_URL, baseUrl),
+      SecureStore.setItemAsync(KEY_URL, session.baseUrl),
       SecureStore.setItemAsync(KEY_TOKEN, session.token),
     ]);
     set({ status: "signedIn", session, username: me.username });
