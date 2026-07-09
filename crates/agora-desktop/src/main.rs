@@ -455,6 +455,9 @@ fn open_main(handle: &AppHandle, url: Url) {
         .title("Agora")
         .inner_size(1240.0, 840.0)
         .min_inner_size(480.0, 400.0)
+        // Tauri's native drag-drop handler swallows OS file drops before the
+        // webview sees them; the UI relies on HTML5 ondrop, so turn it off.
+        .disable_drag_drop_handler()
         .build();
     if let Err(e) = result {
         tracing::error!("window failed: {e}");

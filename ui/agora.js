@@ -1333,12 +1333,23 @@ function agoRemoveFile(threadId, idx) {
   agoRedrawComposer(threadId);
 }
 
+/* One persistent hidden input, reused across picks. A detached transient
+   input can be garbage-collected by WKWebView while the native file dialog
+   is open, in which case onchange never fires and the pick is lost. */
+let _agoFileInput = null;
 function agoPickFiles(threadId) {
-  const inp = document.createElement("input");
-  inp.type = "file";
-  inp.multiple = true;
-  inp.onchange = () => agoAddFiles(threadId, inp.files);
-  inp.click();
+  if (!_agoFileInput) {
+    _agoFileInput = document.createElement("input");
+    _agoFileInput.type = "file";
+    _agoFileInput.multiple = true;
+    _agoFileInput.style.display = "none";
+    document.body.appendChild(_agoFileInput);
+  }
+  _agoFileInput.onchange = () => {
+    agoAddFiles(threadId, _agoFileInput.files);
+    _agoFileInput.value = "";   // allow re-picking the same file
+  };
+  _agoFileInput.click();
 }
 
 function agoPaste(e, threadId) {
