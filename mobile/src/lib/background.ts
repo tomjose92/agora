@@ -1,0 +1,93 @@
+/* Background unread polling: iOS suspends the app (and its socket) shortly
+   after backgrounding, so a registered background task periodically fetches
+   /api/groups, diffs unread counts against the last snapshot, and fires one
+   local catch-up banner per channel with new activity. iOS schedules these
+   opportunistically (15-minute floor, no guarantee) — instant-while-suspended
+   delivery needs APNs, which the free signing profile can't carry.
+
+   The snapshot also gets refreshed from the foreground groups cache (see the
+   UnreadSync component), so reading messages in-app suppresses stale banners. */
+
+import * as FileSystem from "expo-file-system/legacy";
+import * as SecureStore from "expo-secure-store";
+import * as TaskManager from "expo-task-manager";
+import * as BackgroundTask from "expo-background-task";
+import type { Group } from "../api/types";
+import { KEY_TOKEN, KEY_URL } from "../state/session";
+import { notifyUnreadChannel } from "./notifications";
+import {
+  channelsToNotify,
+  snapshotOf,
+  unreadChannels,
+  type UnreadSnapshot,
+} from "./unread";
+
+const TASK_NAME = "agora-unread-poll";
+const SNAPSHOT_FILE = `${FileSystem.documentDirectory ?? ""}unread-snapshot.json`;
+
+async function readSnapshot(): Promise<UnreadSnapshot | null> {
+  try {
+    const text = await FileSystem.readAsStringAsync(SNAPSHOT_FILE);
+    return JSON.parse(text) as UnreadSnapshot;
+  } catch {
+    return null; // first run (or unreadable) — baseline, don't notify
+  }
+}
+
+async function writeSnapshot(snapshot: UnreadSnapshot): Promise<void> {
+  try {
+    await FileSystem.writeAsStringAsync(SNAPSHOT_FILE, JSON.stringify(snapshot));
+  } catch {
+    /* best-effort; worst case the next poll re-baselines */
+  }
+}
+
+/** Foreground path: keep the snapshot current from the groups query cache. */
+export function saveUnreadSnapshot(groups: Group[]): void {
+  void writeSnapshot(snapshotOf(unreadChannels(groups)));
+}
+
+async function pollOnce(): Promise<void> {
+  const [baseUrl, token] = await Promise.all([
+    SecureStore.getItemAsync(KEY_URL),
+    SecureStore.getItemAsync(KEY_TOKEN),
+  ]);
+  if (!baseUrl || !token) return; // signed out
+  const res = await fetch(`${baseUrl}/api/groups`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return;
+  const { groups } = (await res.json()) as { groups: Group[] };
+  const channels = unreadChannels(groups);
+  const prev = await readSnapshot();
+  for (const channel of channelsToNotify(prev, channels)) {
+    notifyUnreadChannel(channel, channel.unread - (prev?.[channel.id] ?? 0));
+  }
+  await writeSnapshot(snapshotOf(channels));
+}
+
+// Module scope so the definition exists when the OS launches the app headless.
+try {
+  TaskManager.defineTask(TASK_NAME, async () => {
+    try {
+      await pollOnce();
+      return BackgroundTask.BackgroundTaskResult.Success;
+    } catch {
+      return BackgroundTask.BackgroundTaskResult.Failed;
+    }
+  });
+} catch {
+  /* platforms without task-manager support (web) */
+}
+
+/** Idempotent; safe to call on every sign-in. No-op where unavailable
+    (web, simulators with Background App Refresh off, Expo Go). */
+export async function registerBackgroundPolling(): Promise<void> {
+  try {
+    const status = await BackgroundTask.getStatusAsync();
+    if (status !== BackgroundTask.BackgroundTaskStatus.Available) return;
+    await BackgroundTask.registerTaskAsync(TASK_NAME, { minimumInterval: 15 });
+  } catch {
+    /* unsupported platform — foreground notifications still work */
+  }
+}

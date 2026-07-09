@@ -13,8 +13,9 @@ import {
 } from "../api/client";
 import type { Me } from "../api/types";
 
-const KEY_URL = "agora_server_url";
-const KEY_TOKEN = "agora_owner_token";
+/* Shared with the background poller, which reads credentials without the store. */
+export const KEY_URL = "agora_server_url";
+export const KEY_TOKEN = "agora_owner_token";
 
 type Status = "loading" | "signedOut" | "signedIn";
 

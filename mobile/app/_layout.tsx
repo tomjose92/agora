@@ -6,6 +6,9 @@ import { ApiError } from "../src/api/client";
 import { onUnauthorized, useSession } from "../src/state/session";
 import { ToastHost } from "../src/components/Toast";
 import { colors } from "../src/lib/theme";
+// Side-effect import: defines the background unread task at module scope so
+// it exists when iOS launches the app headless to run it.
+import "../src/lib/background";
 
 function handleAuthError(error: unknown) {
   // A revoked/rotated owner token drops the app back to the connect screen.

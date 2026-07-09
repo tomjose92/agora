@@ -17,8 +17,13 @@ tokens. Markdown-lite rendering (bold/italic/code/links/tables) matches the
 desktop `mdLite`. Voice features stay stubbed, same as desktop v1.
 
 Notifications fire locally while the socket is alive (foreground / recently
-backgrounded). True push (APNs/FCM) needs a small server-side addition and is
-deliberately out of scope for v1.
+backgrounded); tapping one opens its channel or thread, and the app icon
+badge tracks total unread. While the app is suspended, a background task
+(`expo-background-task`) polls unread counts and posts per-channel catch-up
+banners — iOS runs it opportunistically (15-minute floor, no guarantee).
+True instant push (APNs/FCM) needs the paid Apple Developer Program plus a
+small server-side addition; see the root README's Notifications section for
+the upgrade path.
 
 ## Getting started
 
