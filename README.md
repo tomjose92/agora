@@ -45,6 +45,13 @@ First launch creates the data dir at
 `~/Library/Application Support/app.agora.desktop/` with a `config.json`
 (owner token, port — default `4470`) and the `agora.db` database.
 
+Coming from Pantheo's old in-process Agora? Its `data/agora.db` (and
+`data/agora_files/`) can be imported — groups, channels, messages, threads,
+pins, stars, read markers, attachments — with
+[`scripts/migrate_from_pantheo.py`](scripts/migrate_from_pantheo.py) (run it
+while the app is quit; see the script's docstring for flags like `--map-user`
+and `--dry-run`).
+
 The app keeps running when you close the window (agents keep processing and
 replies keep landing); Cmd-Q quits for real. Closed-window messages surface as
 desktop notifications — see [Notifications](#notifications-macos) for the
@@ -199,6 +206,32 @@ WantedBy=multi-user.target
 Then share `https://agora.example.com/?token=<owner-token>` (the token is in
 `/var/lib/agora/config.json`). **Caveat:** v1 is single-user — everyone with
 the owner token *is* the same "me". Real multi-user accounts are future work.
+
+### Deploying on Railway (or any Docker PaaS)
+
+The repo ships a [`Dockerfile`](Dockerfile) and [`railway.json`](railway.json)
+that build the headless server with the web UI bundled. The server honors the
+PaaS conventions: `PORT` (injected by Railway) and `AGORA_BIND` (the image
+defaults it to `0.0.0.0`) override `config.json` at boot.
+
+```bash
+railway init --name agora
+railway volume add --mount-path /data   # config.json + agora.db + uploads live here
+railway up --detach
+railway domain                          # get the public https URL
+railway logs                            # "Owner token: ..." is printed on first boot
+```
+
+Two things matter:
+
+- **The `/data` volume is mandatory.** Without it every deploy regenerates the
+  owner token and wipes messages and attachments.
+- **TLS comes free** with the Railway domain, so browsers, the mobile app
+  (`https://<app>.up.railway.app` + owner token), and dial-in bridges
+  (`wss://.../agent/ws?token=...`) all work with no reverse proxy. Outbound
+  Pantheo connections are unaffected — the server dials out from Railway the
+  same as anywhere else; the Pantheo instance just has to be reachable from
+  the internet, not your laptop's localhost.
 
 ## Configuration (`config.json` in the data dir)
 

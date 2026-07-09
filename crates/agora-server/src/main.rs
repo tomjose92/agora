@@ -3,6 +3,11 @@
 //! Usage: agora-server [--data-dir PATH] [--ui-dir PATH]
 //! Bind address/port and tokens live in <data-dir>/config.json (created on
 //! first run; the owner token is printed so a client can connect).
+//!
+//! PaaS-style env overrides (Railway injects `PORT`): `AGORA_BIND`, and
+//! `AGORA_PORT` / `PORT` (the former wins). They are persisted into
+//! config.json so dial-in bridges and printed URLs agree with what the
+//! platform routes to.
 
 use std::path::PathBuf;
 
@@ -40,11 +45,38 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    apply_env_overrides(&data_dir)?;
+
     let app = agora_core::run(data_dir, ui_dir).await?;
     let cfg = app.state.config.snapshot();
     println!("Agora ready at http://{}", app.addr);
     println!("Owner token: {}", cfg.owner_token);
     println!("Open http://{}/?token={} in a browser", app.addr, cfg.owner_token);
     tokio::signal::ctrl_c().await?;
+    Ok(())
+}
+
+/// Fold `AGORA_BIND` and `AGORA_PORT`/`PORT` into config.json before boot.
+fn apply_env_overrides(data_dir: &std::path::Path) -> anyhow::Result<()> {
+    let bind = std::env::var("AGORA_BIND").ok().filter(|v| !v.is_empty());
+    let port = ["AGORA_PORT", "PORT"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()));
+    if bind.is_none() && port.is_none() {
+        return Ok(());
+    }
+    let port: Option<u16> = match port {
+        Some(v) => Some(v.parse().map_err(|_| anyhow::anyhow!("invalid port: {v}"))?),
+        None => None,
+    };
+    let cfg = agora_core::config::Config::load(data_dir)?;
+    cfg.update(|c| {
+        if let Some(b) = bind {
+            c.bind = b;
+        }
+        if let Some(p) = port {
+            c.port = p;
+        }
+    });
     Ok(())
 }

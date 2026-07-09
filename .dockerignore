@@ -1,0 +1,9 @@
+target
+node_modules
+mobile
+bridges
+docs
+scripts
+data
+.git
+*.md

@@ -99,7 +99,13 @@ fn main() {
                             });
                         }
                         let token = core.state.config.owner_token();
-                        let url = format!("http://{}/?token={}", core.addr, token);
+                        // A wildcard bind (0.0.0.0, for LAN clients) is not a
+                        // navigable host; the window always loads via loopback.
+                        let mut window_addr = core.addr;
+                        if window_addr.ip().is_unspecified() {
+                            window_addr.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+                        }
+                        let url = format!("http://{}/?token={}", window_addr, token);
                         let result = WebviewWindowBuilder::new(
                             &handle,
                             "main",
