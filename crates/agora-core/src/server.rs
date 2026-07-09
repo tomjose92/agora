@@ -36,6 +36,11 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub connections: Arc<ConnectionManager>,
     pub ui_dir: Option<std::path::PathBuf>,
+    pub data_dir: std::path::PathBuf,
+    /// How to restart the process after an import is staged. The headless
+    /// server leaves this unset (the supervisor restarts it after exit 0);
+    /// the desktop shell installs a relaunch here.
+    pub restart_handler: Arc<std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>>,
 }
 
 type ApiError = (StatusCode, Json<Value>);
@@ -107,6 +112,11 @@ pub fn router(state: AppState) -> Router {
             put(update_connection).delete(remove_connection),
         )
         .route("/api/instance", put(update_instance))
+        .route("/api/export", get(export_data))
+        .route(
+            "/api/import",
+            post(import_data).layer(axum::extract::DefaultBodyLimit::max(1024 * 1024 * 1024)),
+        )
         .route("/api/pairing", get(list_pairing).post(create_pairing))
         .route("/api/pairing/{token}", delete(revoke_pairing))
         .route("/ws", get(ui_ws))
@@ -728,6 +738,91 @@ async fn update_instance(
     state.config.update(|c| c.instance_name = name);
     state.connections.restart();
     Ok(Json(json!({"ok": true})))
+}
+
+// -------------------------------------------------------- export / import
+
+async fn export_data(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let store = Arc::clone(&state.hub.store);
+    let (id, name) = (state.config.instance_id(), state.config.instance_name());
+    let bytes = tokio::task::spawn_blocking(move || crate::migrate::export_archive(&store, &id, &name))
+        .await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "export task failed"))?
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &format!("export failed: {e}")))?;
+    let filename = format!("agora-export-{}.tar.gz", crate::store::now() as u64);
+    Ok((
+        [
+            ("content-type", "application/gzip".to_string()),
+            (
+                "content-disposition",
+                format!("attachment; filename=\"{filename}\""),
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+async fn import_data(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let replace = matches!(
+        q.get("replace").map(String::as_str),
+        Some("1" | "true" | "yes")
+    );
+    if !replace && !state.hub.store.list_groups().is_empty() {
+        return Err(err(
+            StatusCode::CONFLICT,
+            "This Agora already has data; pass ?replace=true to overwrite it",
+        ));
+    }
+    let mut archive: Option<Vec<u8>> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid upload"))?
+    {
+        if field.name().unwrap_or("") == "archive" {
+            archive = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|_| err(StatusCode::BAD_REQUEST, "Upload interrupted"))?
+                    .to_vec(),
+            );
+        }
+    }
+    let archive = archive.ok_or_else(|| err(StatusCode::BAD_REQUEST, "archive field required"))?;
+    let data_dir = state.data_dir.clone();
+    let manifest = tokio::task::spawn_blocking(move || crate::migrate::stage_import(&data_dir, &archive))
+        .await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "import task failed"))?
+        .map_err(|e| err(StatusCode::BAD_REQUEST, &format!("invalid archive: {e}")))?;
+
+    // Give the response time to flush, then restart: the desktop shell
+    // relaunches itself; the headless server exits 0 for its supervisor.
+    let hook = Arc::clone(&state.restart_handler);
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        if let Some(restart) = hook.lock().unwrap().as_ref() {
+            restart();
+        }
+        std::process::exit(0);
+    });
+    Ok(Json(json!({
+        "staged": true,
+        "manifest": manifest,
+        "detail": "Import staged; restarting to apply it.",
+    })))
 }
 
 async fn add_connection(

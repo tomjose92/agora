@@ -233,6 +233,64 @@ Two things matter:
   same as anywhere else; the Pantheo instance just has to be reachable from
   the internet, not your laptop's localhost.
 
+## Desktop app: embedded or remote server
+
+The desktop app fronts one of two servers, chosen under **Server → Server
+Settings…** (stored in `desktop.json` next to the data dir):
+
+- **Embedded** (default) — boots the hub in-process, exactly as before. This
+  Mac *is* the Agora; closing the window keeps it running.
+- **Remote** — the app skips the local hub entirely and becomes a pure client
+  for a deployed `agora-server`: enter the server URL and its owner token,
+  the app validates them and loads the remote UI. The same server can serve
+  the mobile app and any browser simultaneously — one shared Agora, three
+  kinds of clients.
+
+In remote mode there is no local hub, so native desktop notifications don't
+fire (same as using a browser); the data lives wherever the server runs.
+
+## Moving between Agoras
+
+An Agora's data (groups, channels, messages, threads, pins, stars, reads,
+attachments) can be exported as one archive and imported into any other
+instance. Tokens, bind settings, and pairing credentials never migrate —
+each instance keeps its own `config.json`.
+
+- `GET /api/export` (owner token) downloads a `.tar.gz` snapshot — safe on a
+  live server, and handy as a periodic backup.
+- `POST /api/import` (owner token, multipart `archive` field) stages the
+  archive and restarts to apply it. It refuses if the target already has data
+  unless you pass `?replace=true`; the previous data is kept in a
+  `pre-import-<ts>/` folder inside the data dir.
+- `AGORA_IMPORT_URL=<url>` seeds a **fresh** data dir (no `agora.db` yet) by
+  downloading an archive on first boot — useful for a brand-new deployment.
+
+[`scripts/agora_migrate.py`](scripts/agora_migrate.py) composes those for
+every combination of local data dir and live server:
+
+```bash
+# laptop desktop app -> hosted Railway deployment
+scripts/agora_migrate.py \
+    --from "~/Library/Application Support/app.agora.desktop" \
+    --to https://agora.up.railway.app --to-token OWNERTOKEN
+
+# hosted -> hosted, overwriting the target (old data kept in pre-import-<ts>/)
+scripts/agora_migrate.py --from https://old.example --from-token AAA \
+                         --to https://new.example --to-token BBB --replace
+
+# hosted -> local desktop data dir (applied next app launch)
+scripts/agora_migrate.py --from https://agora.up.railway.app --from-token AAA \
+    --to "~/Library/Application Support/app.agora.desktop" --replace
+
+# just take a backup
+scripts/agora_migrate.py --from https://agora.up.railway.app --from-token AAA \
+    --save agora-backup.tar.gz
+```
+
+The typical "graduate my laptop Agora to the cloud" flow: deploy on Railway,
+run the first command above, then flip the desktop app to remote mode
+(Server → Server Settings…) and sign the mobile app into the same URL.
+
 ## Configuration (`config.json` in the data dir)
 
 | Key | Default | Meaning |

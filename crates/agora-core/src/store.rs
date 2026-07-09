@@ -176,6 +176,31 @@ impl Store {
         })
     }
 
+    /// Consistent snapshot of the live database into `dest` (SQLite online
+    /// backup — safe while the server keeps writing).
+    pub fn backup_to(&self, dest: &Path) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let mut dst = Connection::open(dest)?;
+        let backup = rusqlite::backup::Backup::new(&conn, &mut dst)?;
+        backup.run_to_completion(256, std::time::Duration::from_millis(2), None)?;
+        Ok(())
+    }
+
+    /// Row counts for the export manifest.
+    pub fn counts(&self) -> Value {
+        let conn = self.conn.lock().unwrap();
+        let count = |table: &str| -> i64 {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap_or(0)
+        };
+        json!({
+            "groups": count("groups"),
+            "channels": count("channels"),
+            "messages": count("messages"),
+            "files": count("files"),
+        })
+    }
+
     // ------------------------------------------------------------- groups
 
     pub fn create_group(&self, name: &str, description: &str, created_by: Option<&str>) -> Value {

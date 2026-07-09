@@ -8,6 +8,7 @@
 pub mod config;
 pub mod connections;
 pub mod hub;
+pub mod migrate;
 pub mod server;
 pub mod store;
 
@@ -23,6 +24,12 @@ pub struct App {
 /// Build the full application state from a data dir and start serving.
 /// Returns once the listener is bound; serving continues in the background.
 pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<App> {
+    std::fs::create_dir_all(&data_dir)?;
+    // Migration hooks run before anything opens the db: a staged import
+    // replaces the current data, AGORA_IMPORT_URL seeds a fresh dir.
+    migrate::apply_staged_import(&data_dir)?;
+    migrate::seed_from_env(&data_dir)?;
+
     let config = Arc::new(config::Config::load(&data_dir)?);
     let store = Arc::new(store::Store::open(&data_dir.join("agora.db"))?);
     let hub = Arc::new(hub::Hub::new(store));
@@ -35,6 +42,8 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
         config,
         connections,
         ui_dir,
+        data_dir,
+        restart_handler: Arc::new(std::sync::Mutex::new(None)),
     };
     let app = server::router(state.clone());
     let addr: SocketAddr = format!("{}:{}", snapshot.bind, snapshot.port).parse()?;

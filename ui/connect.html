@@ -1,0 +1,129 @@
+<!doctype html>
+<!-- Desktop-shell server picker. Loaded by the Tauri app over its app
+     protocol (works with no server running); talks to Rust via the global
+     Tauri IPC. Harmless if served by an agora-server — it just shows a note. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Agora — Server</title>
+<style>
+  :root {
+    --bg: #07090f; --panel: rgba(255, 255, 255, 0.04);
+    --border: rgba(255, 255, 255, 0.09); --text: #eceef4;
+    --dim: #8b91a5; --accent: #8b7cff; --red: #f87171; --green: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .card {
+    width: min(440px, 92vw); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 16px; padding: 28px;
+  }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  p.sub { margin: 0 0 20px; color: var(--dim); font-size: 13.5px; }
+  label { display: block; margin: 14px 0 6px; font-size: 13px; color: var(--dim); }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: rgba(255, 255, 255, 0.05);
+    color: var(--text); font-size: 14px; outline: none;
+  }
+  input:focus { border-color: var(--accent); }
+  button {
+    width: 100%; margin-top: 18px; padding: 11px; border: 0;
+    border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #0a0c14; }
+  button.ghost {
+    margin-top: 10px; background: transparent; color: var(--dim);
+    border: 1px solid var(--border);
+  }
+  button:disabled { opacity: 0.55; cursor: default; }
+  .status { margin-top: 14px; font-size: 13.5px; min-height: 1.4em; }
+  .status.error { color: var(--red); }
+  .status.ok { color: var(--green); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Agora</h1>
+    <p class="sub">Run everything on this Mac, or connect to an Agora server
+    deployed somewhere else.</p>
+
+    <div id="form">
+      <label for="url">Server URL</label>
+      <input id="url" placeholder="https://agora.up.railway.app" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <label for="token">Owner token</label>
+      <input id="token" placeholder="printed in the server log / config.json" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <button class="primary" id="connect">Connect to remote server</button>
+      <button class="ghost" id="embedded">Use the built-in local server</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+<script>
+  const tauri = window.__TAURI__;
+  const statusEl = document.getElementById("status");
+  const urlEl = document.getElementById("url");
+  const tokenEl = document.getElementById("token");
+  const buttons = () => document.querySelectorAll("button");
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text || "";
+    statusEl.className = "status" + (cls ? " " + cls : "");
+  }
+  function busy(on) { buttons().forEach((b) => (b.disabled = on)); }
+
+  if (!tauri) {
+    // Served by a plain agora-server rather than the desktop shell.
+    document.getElementById("form").style.display = "none";
+    setStatus("This page is part of the Agora desktop app. Open the app itself to switch servers.", "");
+  } else {
+    const invoke = tauri.core.invoke;
+    const editing = new URLSearchParams(location.search).has("edit");
+
+    invoke("get_server_settings").then(async (settings) => {
+      urlEl.value = settings.url || "";
+      tokenEl.value = settings.token || "";
+      // Fresh boot in remote mode: try the stored server before showing the form.
+      if (!editing && settings.mode === "remote" && settings.url) {
+        busy(true);
+        setStatus("Connecting to " + settings.url + "…", "ok");
+        try {
+          await invoke("connect_remote"); // navigates away on success
+        } catch (e) {
+          busy(false);
+          setStatus(String(e), "error");
+        }
+      }
+    });
+
+    document.getElementById("connect").addEventListener("click", async () => {
+      busy(true);
+      setStatus("Checking " + (urlEl.value || "server") + "…", "ok");
+      try {
+        await invoke("set_server_settings", {
+          settings: { mode: "remote", url: urlEl.value.trim(), token: tokenEl.value.trim() },
+        }); // navigates away on success
+      } catch (e) {
+        busy(false);
+        setStatus(String(e), "error");
+      }
+    });
+
+    document.getElementById("embedded").addEventListener("click", async () => {
+      busy(true);
+      setStatus("Starting the local server…", "ok");
+      try {
+        await invoke("set_server_settings", { settings: { mode: "embedded" } });
+      } catch (e) {
+        busy(false);
+        setStatus(String(e), "error");
+      }
+    });
+  }
+</script>
+</body>
+</html>
