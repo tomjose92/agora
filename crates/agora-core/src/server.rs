@@ -170,6 +170,17 @@ fn require_owner(
     }
 }
 
+/// Body cap for the multipart upload routes. Axum's default is 2 MB, which
+/// silently rejects any photo-sized attachment before the handler runs; size
+/// it to the configured per-file cap times the file count (plus slack for
+/// text fields and multipart framing). The handler still enforces the exact
+/// per-file limit. Computed at router build, so a runtime max_file_mb change
+/// applies after restart.
+fn upload_body_limit(state: &AppState) -> axum::extract::DefaultBodyLimit {
+    let per_file = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
+    axum::extract::DefaultBodyLimit::max(per_file * MAX_FILES_PER_MESSAGE + 1024 * 1024)
+}
+
 pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/api/me", get(me))
@@ -191,8 +202,14 @@ pub fn router(state: AppState) -> Router {
             "/api/channels/{channel_id}/messages",
             get(list_messages).post(post_message),
         )
-        .route("/api/channels/{channel_id}/messages/upload", post(post_message_upload))
-        .route("/api/channels/{channel_id}/voice", post(post_voice_message))
+        .route(
+            "/api/channels/{channel_id}/messages/upload",
+            post(post_message_upload).layer(upload_body_limit(&state)),
+        )
+        .route(
+            "/api/channels/{channel_id}/voice",
+            post(post_voice_message).layer(upload_body_limit(&state)),
+        )
         .route("/api/channels/{channel_id}/read", put(mark_read))
         .route("/api/messages/{message_id}", get(get_message))
         .route("/api/messages/{message_id}/speech", get(message_speech))
