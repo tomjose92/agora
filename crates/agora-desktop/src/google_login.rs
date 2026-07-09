@@ -72,12 +72,12 @@ fn wait_for_callback(listener: TcpListener) -> Result<String, String> {
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let request = String::from_utf8_lossy(&buf[..n]);
                 let Some(target) = request.split_whitespace().nth(1) else {
-                    respond(&mut stream, "Sign-in failed — no request seen.");
+                    respond_empty(&mut stream);
                     continue; // not an HTTP request; keep waiting
                 };
                 // Browsers also ask for /favicon.ico; only /callback counts.
                 if !target.starts_with("/callback") {
-                    respond(&mut stream, "");
+                    respond_empty(&mut stream);
                     continue;
                 }
                 let query: std::collections::HashMap<String, String> = target
@@ -93,7 +93,9 @@ fn wait_for_callback(listener: TcpListener) -> Result<String, String> {
                 if let Some(token) = query.get("token").filter(|t| !t.is_empty()) {
                     respond(
                         &mut stream,
-                        "Signed in. You can close this tab and return to Agora.",
+                        true,
+                        "You're signed in",
+                        "Agora is opening on your desktop — you can close this tab.",
                     );
                     return Ok(token.clone());
                 }
@@ -101,7 +103,12 @@ fn wait_for_callback(listener: TcpListener) -> Result<String, String> {
                     .get("error")
                     .cloned()
                     .unwrap_or_else(|| "unknown".to_string());
-                respond(&mut stream, "Sign-in failed. Return to Agora and try again.");
+                respond(
+                    &mut stream,
+                    false,
+                    "Sign-in didn't finish",
+                    &sign_in_error(&reason),
+                );
                 return Err(sign_in_error(&reason));
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -123,17 +130,42 @@ fn sign_in_error(reason: &str) -> String {
     }
 }
 
-fn respond(stream: &mut std::net::TcpStream, body: &str) {
+/// Branded landing page for the browser tab the OAuth dance ends in. The
+/// first thing it does is scrub the token from the address bar
+/// (history.replaceState), then it politely tries window.close() — most
+/// browsers refuse for tabs they didn't open via script, hence the message.
+fn respond(stream: &mut std::net::TcpStream, ok: bool, title: &str, detail: &str) {
+    let (badge_bg, badge) = if ok {
+        ("rgba(74,222,128,.12)", "&#10003;")
+    } else {
+        ("rgba(248,113,113,.12)", "&#10005;")
+    };
+    let badge_color = if ok { "#4ade80" } else { "#f87171" };
     let page = format!(
-        "<!doctype html><meta charset=\"utf-8\"><title>Agora</title>\
-         <body style=\"background:#07090f;color:#eceef4;font:15px -apple-system,sans-serif;\
-         display:flex;align-items:center;justify-content:center;height:100vh\">{body}</body>"
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Agora</title><style>\
+         body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;\
+         background:#07090f;color:#eceef4;font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}}\
+         .card{{width:min(400px,92vw);text-align:center;background:rgba(255,255,255,.04);\
+         border:1px solid rgba(255,255,255,.09);border-radius:18px;padding:40px 32px}}\
+         .badge{{width:56px;height:56px;border-radius:50%;margin:0 auto 18px;display:flex;\
+         align-items:center;justify-content:center;font-size:26px;background:{badge_bg};color:{badge_color}}}\
+         h1{{margin:0 0 8px;font-size:20px}}p{{margin:0;color:#8b91a5;font-size:14px}}\
+         </style></head><body><div class=\"card\">\
+         <div class=\"badge\">{badge}</div><h1>{title}</h1><p>{detail}</p></div>\
+         <script>history.replaceState(null,'','/done');setTimeout(function(){{window.close()}},1500);</script>\
+         </body></html>"
     );
     let _ = write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
         page.len()
     );
+    let _ = stream.flush();
+}
+
+/// Stray requests (favicon probes, non-HTTP noise) get an empty 204.
+fn respond_empty(stream: &mut std::net::TcpStream) {
+    let _ = write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
     let _ = stream.flush();
 }
 

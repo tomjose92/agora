@@ -574,7 +574,23 @@ a.btn { text-decoration: none; }
   width: min(380px, 92%); background: #0d1018; border: 1px solid var(--border-strong);
   border-radius: 20px; padding: 26px; display: flex; flex-direction: column; gap: 12px;
 }
-#auth-gate .auth-brand { font-size: 17px; font-weight: 800; }
+#auth-gate .auth-brand {
+  font-size: 20px; font-weight: 800; display: flex; flex-direction: column;
+  align-items: center; gap: 10px; margin-bottom: 2px;
+}
+#auth-gate .auth-brand img { width: 64px; height: 64px; border-radius: 16px; }
+#auth-gate .btn.google {
+  background: #fff; color: #1f1f1f; border: none; font-weight: 700;
+  padding: 10px 12px;
+}
+#auth-gate .btn.google:hover { filter: brightness(0.95); }
+#auth-gate #auth-token-form { display: flex; flex-direction: column; gap: 12px; }
+#auth-gate .auth-link {
+  background: rgba(255,255,255,.04); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text); font: inherit; font-size: 13px;
+  font-weight: 500; cursor: pointer; padding: 10px 12px;
+}
+#auth-gate .auth-link:hover { border-color: var(--border-strong); background: rgba(255,255,255,.07); }
 #auth-gate p { margin: 0; font-size: 12.5px; color: var(--dim); line-height: 1.5; }
 #auth-gate input {
   background: rgba(0,0,0,.25); border: 1px solid var(--border-strong); border-radius: 10px;

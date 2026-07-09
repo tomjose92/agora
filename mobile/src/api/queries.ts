@@ -7,6 +7,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { File as FSFile } from "expo-file-system";
 import { useEffect } from "react";
 import { keys } from "./keys";
 import { useApi } from "../state/session";
@@ -175,6 +176,14 @@ export interface OutgoingFile {
   type: string;
 }
 
+/** Expo's global fetch (SDK 54+) only serializes real Blob/File multipart
+    parts — RN's {uri, name, type} descriptors throw "Unsupported
+    FormDataPart implementation". expo-file-system's File wraps the local
+    uri as a Blob and carries the filename the server needs. */
+function formFile(f: OutgoingFile): Blob {
+  return new FSFile(f.uri) as unknown as Blob;
+}
+
 export function useSendMessage(channelId: string) {
   const api = useApi();
   const qc = useQueryClient();
@@ -189,8 +198,7 @@ export function useSendMessage(channelId: string) {
         form.append("text", v.text);
         if (v.threadId != null) form.append("thread_id", String(v.threadId));
         for (const f of v.files) {
-          // RN's FormData takes {uri, name, type} descriptors for files.
-          form.append("files", f as unknown as Blob);
+          form.append("files", formFile(f));
         }
         return api.upload<Message>(`/api/channels/${channelId}/messages/upload`, form);
       }
@@ -225,7 +233,7 @@ export function useSendVoice(channelId: string) {
       live?: boolean;
     }) => {
       const form = new FormData();
-      form.append("file", v.file as unknown as Blob);
+      form.append("file", formFile(v.file));
       if (v.threadId != null) form.append("thread_id", String(v.threadId));
       if (v.live) form.append("live", "true");
       return api.upload<Message>(`/api/channels/${channelId}/voice`, form);

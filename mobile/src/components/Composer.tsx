@@ -5,6 +5,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -52,6 +53,8 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<OutgoingFile[]>([]);
+  const [focused, setFocused] = useState(false);
+  const [attachSheet, setAttachSheet] = useState(false);
   const selection = useRef({ start: 0, end: 0 });
   const inputRef = useRef<TextInput>(null);
 
@@ -252,23 +255,24 @@ export function Composer({
           ))}
         </ScrollView>
       ) : null}
-      <View style={styles.row}>
-        <Pressable onPress={pickDocuments} hitSlop={8} style={styles.iconBtn}>
-          <Text style={styles.icon}>📎</Text>
-        </Pressable>
-        <Pressable onPress={pickPhotos} hitSlop={8} style={styles.iconBtn}>
-          <Text style={styles.icon}>🖼️</Text>
-        </Pressable>
-        {onSendVoice ? (
-          <Pressable onPress={startRec} hitSlop={8} style={styles.iconBtn}>
-            <Text style={styles.icon}>🎤</Text>
+      {/* Slack-style: collapsed = one pill row (+ | input | 🎤); focused =
+          full-width input with a toolbar row underneath. The TextInput keeps
+          a stable key so refocusing/layout swaps never remount it (which
+          would drop the keyboard). */}
+      <View style={focused ? styles.colFocused : styles.row}>
+        {!focused ? (
+          <Pressable onPress={() => setAttachSheet(true)} hitSlop={8} style={styles.plusBtn}>
+            <Text style={styles.plusText}>+</Text>
           </Pressable>
         ) : null}
         <TextInput
+          key="composer-input"
           ref={inputRef}
-          style={styles.input}
+          style={focused ? styles.inputFocused : styles.input}
           value={text}
           onChangeText={setText}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onSelectionChange={(e) => {
             selection.current = e.nativeEvent.selection;
           }}
@@ -277,18 +281,65 @@ export function Composer({
           multiline
           maxLength={20_000}
         />
-        <Pressable
-          onPress={send}
-          disabled={sending || (!text.trim() && files.length === 0)}
-          style={[styles.sendBtn, (sending || (!text.trim() && files.length === 0)) && styles.sendOff]}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color={colors.onAccent} />
-          ) : (
-            <Text style={styles.sendText}>↑</Text>
-          )}
-        </Pressable>
+        {!focused && onSendVoice ? (
+          <Pressable onPress={startRec} hitSlop={8} style={styles.iconBtn}>
+            <Text style={styles.icon}>🎤</Text>
+          </Pressable>
+        ) : null}
       </View>
+      {focused ? (
+        <View style={styles.toolbar}>
+          <Pressable onPress={() => setAttachSheet(true)} hitSlop={8} style={styles.plusBtn}>
+            <Text style={styles.plusText}>+</Text>
+          </Pressable>
+          <Pressable onPress={pickPhotos} hitSlop={8} style={styles.toolBtn}>
+            <Text style={styles.icon}>🖼️</Text>
+          </Pressable>
+          {onSendVoice ? (
+            <Pressable onPress={startRec} hitSlop={8} style={styles.toolBtn}>
+              <Text style={styles.icon}>🎤</Text>
+            </Pressable>
+          ) : null}
+          <View style={{ flex: 1 }} />
+          <Pressable
+            onPress={send}
+            disabled={sending || (!text.trim() && files.length === 0)}
+            style={[styles.sendBtn, (sending || (!text.trim() && files.length === 0)) && styles.sendOff]}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color={colors.onAccent} />
+            ) : (
+              <Text style={styles.sendText}>↑</Text>
+            )}
+          </Pressable>
+        </View>
+      ) : null}
+      {attachSheet ? (
+        <Modal transparent animationType="fade" onRequestClose={() => setAttachSheet(false)}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setAttachSheet(false)}>
+            <View style={styles.sheet}>
+              <Pressable
+                style={styles.sheetBtn}
+                onPress={() => {
+                  setAttachSheet(false);
+                  void pickPhotos();
+                }}
+              >
+                <Text style={styles.sheetText}>🖼️ Photo library</Text>
+              </Pressable>
+              <Pressable
+                style={styles.sheetBtn}
+                onPress={() => {
+                  setAttachSheet(false);
+                  void pickDocuments();
+                }}
+              >
+                <Text style={styles.sheetText}>📎 Document</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Modal>
+      ) : null}
     </View>
   );
 }
@@ -319,6 +370,7 @@ const styles = StyleSheet.create({
   },
   fileText: { color: colors.dim, fontSize: 12.5 },
   row: { flexDirection: "row", alignItems: "flex-end", padding: 10, gap: 8 },
+  colFocused: { paddingHorizontal: 12, paddingTop: 8 },
   iconBtn: { paddingBottom: 9 },
   icon: { fontSize: 20 },
   input: {
@@ -329,11 +381,59 @@ const styles = StyleSheet.create({
     backgroundColor: colors.panel,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    borderRadius: 20,
+    paddingHorizontal: 14,
     paddingTop: 9,
     paddingBottom: 9,
   },
+  /* Focused: the input sheds its pill and spans the full width; the actions
+     move into the toolbar row below (Slack's expanded composer). */
+  inputFocused: {
+    color: colors.text,
+    fontSize: 15.5,
+    minHeight: 40,
+    maxHeight: 150,
+    paddingHorizontal: 4,
+    paddingTop: 6,
+    paddingBottom: 6,
+  },
+  toolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    paddingBottom: 8,
+  },
+  toolBtn: { padding: 2 },
+  plusBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.panelStrong,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "flex-end",
+    marginBottom: 2,
+  },
+  plusText: { color: colors.dim, fontSize: 20, fontWeight: "600", lineHeight: 24 },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "#14161d",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 16,
+    gap: 4,
+    paddingBottom: 34,
+  },
+  sheetBtn: { paddingVertical: 13 },
+  sheetText: { color: colors.text, fontSize: 15.5 },
   sendBtn: {
     width: 38,
     height: 38,

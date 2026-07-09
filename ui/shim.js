@@ -55,9 +55,9 @@ async function errDetail(res) {
   return detail;
 }
 
-/* No/bad token: ask for it (headless deployments paste it; the desktop app
-   never hits this because the shell always opens the UI with ?token=).
-   When the server has Google sign-in configured, offer that too. */
+/* No/bad token: the sign-in card (headless deployments land here; the desktop
+   app rarely does because the shell opens the UI with ?token=). Google leads
+   when the server offers it; the owner token is always available. */
 const AUTH_ERROR_TEXT = {
   no_access: "That Google account isn't allowed on this instance.",
   google_access_denied: "Google sign-in was cancelled.",
@@ -72,24 +72,37 @@ function authGate() {
     : "";
   AUTH_ERROR = "";
   el.innerHTML = `<div class="auth-card">
-    <div class="auth-brand">▣ Agora</div>
-    <p>Paste this instance's owner token (shown in the server log or in
-       <code>config.json</code>).</p>
-    <input id="auth-token" placeholder="owner token" autocomplete="off">
-    <button class="btn primary" onclick="authSubmit()">Connect</button>
-    <div id="auth-google" style="display:none">
-      <button class="btn" onclick="location.href='/api/auth/google/start'">
-        Sign in with Google</button>
+    <div class="auth-brand"><img src="/icon.png" alt="">Agora</div>
+    <p id="auth-hint">Paste this instance's owner token (shown in the server
+       log or in <code>config.json</code>).</p>
+    <button class="btn google" id="auth-google" style="display:none"
+            onclick="location.href='/api/auth/google/start'">
+      Continue with Google</button>
+    <div id="auth-token-form">
+      <input id="auth-token" placeholder="owner token" autocomplete="off">
+      <button class="btn primary" onclick="authSubmit()">Connect</button>
     </div>
+    <button class="auth-link" id="auth-token-toggle" style="display:none">
+      Use the owner token instead</button>
     <p id="auth-error" style="color:#f87171">${esc(errText)}</p>
   </div>`;
   document.body.appendChild(el);
   const input = document.getElementById("auth-token");
   input.focus();
   input.onkeydown = e => { if (e.key === "Enter") authSubmit(); };
+  document.getElementById("auth-token-toggle").onclick = () => {
+    document.getElementById("auth-token-form").style.display = "";
+    document.getElementById("auth-token-toggle").style.display = "none";
+    input.focus();
+  };
   fetch("/api/auth/config").then(r => r.json()).then(cfg => {
     if (cfg.google && cfg.google.enabled) {
+      // Google-first: tuck the token form behind a link.
       document.getElementById("auth-google").style.display = "";
+      document.getElementById("auth-token-form").style.display = "none";
+      document.getElementById("auth-token-toggle").style.display = "";
+      document.getElementById("auth-hint").textContent =
+        "Sign in with an allowed Google account.";
     }
   }).catch(() => {});
 }

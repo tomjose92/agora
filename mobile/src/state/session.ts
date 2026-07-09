@@ -25,9 +25,15 @@ interface SessionState {
   username: string;
   /** Server-side STT/TTS available (me.voice) — gates all voice UI. */
   voiceOk: boolean;
+  /** Last known server URL. Survives a sign-out (an expired Google session
+      should ask for credentials again, not for the server address), cleared
+      only by forgetServer. */
+  savedUrl: string;
   load: () => Promise<void>;
   signIn: (serverUrl: string, token: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Sign out AND drop the stored server URL (switching instances). */
+  forgetServer: () => Promise<void>;
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -35,6 +41,7 @@ export const useSession = create<SessionState>((set) => ({
   session: null,
   username: "",
   voiceOk: false,
+  savedUrl: "",
 
   async load() {
     const [baseUrl, token] = await Promise.all([
@@ -42,13 +49,13 @@ export const useSession = create<SessionState>((set) => ({
       SecureStore.getItemAsync(KEY_TOKEN),
     ]);
     if (!baseUrl || !token) {
-      set({ status: "signedOut", session: null });
+      set({ status: "signedOut", session: null, savedUrl: baseUrl || "" });
       return;
     }
     // Trust stored credentials without a network round-trip so the app opens
     // offline; a 401 later drops back to the connect screen via onUnauthorized.
     const session: Session = { baseUrl, token };
-    set({ status: "signedIn", session });
+    set({ status: "signedIn", session, savedUrl: baseUrl });
     // Background /api/me: resolves the username (the WS reducer needs it for
     // unread bookkeeping) and heals a stale scheme — sessions stored before
     // redirect canonicalization keep http:// for hosts that are really
@@ -90,15 +97,27 @@ export const useSession = create<SessionState>((set) => ({
       SecureStore.setItemAsync(KEY_URL, session.baseUrl),
       SecureStore.setItemAsync(KEY_TOKEN, session.token),
     ]);
-    set({ status: "signedIn", session, username: me.username, voiceOk: !!me.voice });
+    set({
+      status: "signedIn",
+      session,
+      username: me.username,
+      voiceOk: !!me.voice,
+      savedUrl: session.baseUrl,
+    });
   },
 
   async signOut() {
+    // Keep KEY_URL: the login screen should only ask for credentials again.
+    await SecureStore.deleteItemAsync(KEY_TOKEN);
+    set({ status: "signedOut", session: null, username: "", voiceOk: false });
+  },
+
+  async forgetServer() {
     await Promise.all([
       SecureStore.deleteItemAsync(KEY_URL),
       SecureStore.deleteItemAsync(KEY_TOKEN),
     ]);
-    set({ status: "signedOut", session: null, username: "", voiceOk: false });
+    set({ status: "signedOut", session: null, username: "", voiceOk: false, savedUrl: "" });
   },
 }));
 

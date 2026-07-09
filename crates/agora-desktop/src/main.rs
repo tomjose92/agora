@@ -77,20 +77,23 @@ fn main() {
             set_server_settings,
             connect_remote,
             open_current_server,
-            google_sign_in
+            google_sign_in,
+            probe_server
         ])
         .menu(|handle| {
             let menu = Menu::default(handle)?;
             let server = SubmenuBuilder::new(handle, "Server")
                 .text("server-settings", "Server Settings…")
+                .separator()
+                .text("sign-out", "Sign Out")
                 .build()?;
             menu.append(&server)?;
             Ok(menu)
         })
-        .on_menu_event(|app, event| {
-            if event.id().as_ref() == "server-settings" {
-                open_main(app, connect_page_url(true));
-            }
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "server-settings" => open_main(app, connect_page_url(true)),
+            "sign-out" => sign_out(app),
+            _ => {}
         })
         .on_window_event(|window, event| {
             match event {
@@ -284,6 +287,59 @@ async fn open_current_server(app: AppHandle) -> Result<(), String> {
     }
     sync_remote_notifier(&app, &stored);
     Ok(())
+}
+
+/// Menu sign-out. Remote mode: drop the stored session/owner token (the
+/// server URL stays, so the connect page lands on its sign-in step) and stop
+/// the notifier socket that was using it. Embedded mode has no credential to
+/// drop — the local owner token *is* the server — so just open the picker.
+fn sign_out(app: &AppHandle) {
+    let Ok(data_dir) = app.path().app_data_dir() else { return };
+    let mut stored = settings::load(&data_dir);
+    match stored.mode {
+        Mode::Remote => {
+            stored.token = None;
+            if let Err(e) = settings::save(&data_dir, &stored) {
+                tracing::warn!("sign-out failed to save settings: {e}");
+                return;
+            }
+            sync_remote_notifier(app, &stored);
+            open_main(app, connect_page_url(false));
+        }
+        Mode::Embedded => open_main(app, connect_page_url(true)),
+    }
+}
+
+/// What sign-in methods a server offers. The connect page calls this before
+/// showing its sign-in step (the webview can't fetch a remote origin itself —
+/// CORS). Unreachable hosts are an Err; a reachable host that doesn't answer
+/// the probe as expected still allows owner-token sign-in.
+#[tauri::command]
+async fn probe_server(url: String) -> Result<serde_json::Value, String> {
+    let base = url.trim().trim_end_matches('/').to_string();
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        return Err("Server URL must start with http:// or https://".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let response = ureq::get(&format!("{base}/api/auth/config"))
+            .timeout(std::time::Duration::from_secs(10))
+            .call();
+        match response {
+            Ok(r) => {
+                let google = r
+                    .into_string()
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                    .map(|v| v["google"]["enabled"] == serde_json::Value::Bool(true))
+                    .unwrap_or(false);
+                Ok(serde_json::json!({"google": google}))
+            }
+            Err(ureq::Error::Status(_, _)) => Ok(serde_json::json!({"google": false})),
+            Err(e) => Err(format!("Could not reach the server: {e}")),
+        }
+    })
+    .await
+    .map_err(|_| "probe task failed".to_string())?
 }
 
 /// Google sign-in against a remote server: run the loopback OAuth dance in

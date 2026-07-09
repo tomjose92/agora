@@ -111,6 +111,7 @@ export default function SettingsScreen() {
   const api = useApi();
   const session = useSession((s) => s.session)!;
   const signOut = useSession((s) => s.signOut);
+  const forgetServer = useSession((s) => s.forgetServer);
   const me = useQuery({ queryKey: keys.me, queryFn: () => api.get<Me>("/api/me") });
   const connections = useConnections(true); // poll while this screen is open
   const { update, remove } = useConnectionMutations();
@@ -237,7 +238,15 @@ export default function SettingsScreen() {
                     : "…"}
               </Text>
             </View>
+            {/* Sign out keeps the server; next launch asks only to sign in. */}
             <ArmedButton label="Sign out" onConfirm={() => void signOut()} />
+          </View>
+          {/* Switching instances forgets the URL too — full onboarding next time. */}
+          <View style={styles.row}>
+            <Text style={[styles.meta, { flex: 1 }]}>
+              Connect this app to a different Agora server.
+            </Text>
+            <ArmedButton label="Switch server" onConfirm={() => void forgetServer()} />
           </View>
         </Section>
       </ScrollView>
