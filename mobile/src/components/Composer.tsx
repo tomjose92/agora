@@ -6,6 +6,7 @@ import React, { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -57,6 +58,26 @@ export function Composer({
   const [attachSheet, setAttachSheet] = useState(false);
   const selection = useRef({ start: 0, end: 0 });
   const inputRef = useRef<TextInput>(null);
+
+  /* iOS can't present the native picker while the attach-sheet Modal is
+     still dismissing — the launch is silently dropped. Stash the action and
+     run it from the Modal's onDismiss (fires after dismissal completes).
+     Android has no such race, so run immediately there. */
+  const pendingPick = useRef<(() => void) | null>(null);
+  const closeSheet = (action?: () => void) => {
+    setAttachSheet(false);
+    if (!action) return;
+    if (Platform.OS === "ios") {
+      pendingPick.current = action;
+    } else {
+      action();
+    }
+  };
+  const onSheetDismissed = () => {
+    const action = pendingPick.current;
+    pendingPick.current = null;
+    action?.();
+  };
 
   /* Voice note recording. The recorder hook is unconditional (hooks rule);
      nothing touches the mic until the 🎤 tap. */
@@ -187,6 +208,27 @@ export function Composer({
     }
   };
 
+  const takePhoto = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        toast("Camera access is needed to take photos", "warn");
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.9 });
+      if (res.canceled) return;
+      addFiles(
+        res.assets.map((a, i) => ({
+          uri: a.uri,
+          name: a.fileName ?? `photo-${Date.now()}-${i}.jpg`,
+          type: a.mimeType ?? "image/jpeg",
+        })),
+      );
+    } catch (e) {
+      toastErr("Camera failed", e);
+    }
+  };
+
   const send = async () => {
     const body = text.trim();
     if (!body && files.length === 0) return;
@@ -281,7 +323,21 @@ export function Composer({
           multiline
           maxLength={20_000}
         />
-        {!focused && onSendVoice ? (
+        {/* Collapsed with a draft pending (e.g. after the picker stole focus):
+            swap the mic for a send button so the draft isn't stranded. */}
+        {!focused && (text.trim() || files.length > 0) ? (
+          <Pressable
+            onPress={send}
+            disabled={sending}
+            style={[styles.sendBtn, sending && styles.sendOff]}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color={colors.onAccent} />
+            ) : (
+              <Text style={styles.sendText}>↑</Text>
+            )}
+          </Pressable>
+        ) : !focused && onSendVoice ? (
           <Pressable onPress={startRec} hitSlop={8} style={styles.iconBtn}>
             <Text style={styles.icon}>🎤</Text>
           </Pressable>
@@ -315,25 +371,21 @@ export function Composer({
         </View>
       ) : null}
       {attachSheet ? (
-        <Modal transparent animationType="fade" onRequestClose={() => setAttachSheet(false)}>
-          <Pressable style={styles.sheetBackdrop} onPress={() => setAttachSheet(false)}>
+        <Modal
+          transparent
+          animationType="fade"
+          onRequestClose={() => closeSheet()}
+          onDismiss={onSheetDismissed}
+        >
+          <Pressable style={styles.sheetBackdrop} onPress={() => closeSheet()}>
             <View style={styles.sheet}>
-              <Pressable
-                style={styles.sheetBtn}
-                onPress={() => {
-                  setAttachSheet(false);
-                  void pickPhotos();
-                }}
-              >
+              <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickPhotos())}>
                 <Text style={styles.sheetText}>🖼️ Photo library</Text>
               </Pressable>
-              <Pressable
-                style={styles.sheetBtn}
-                onPress={() => {
-                  setAttachSheet(false);
-                  void pickDocuments();
-                }}
-              >
+              <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void takePhoto())}>
+                <Text style={styles.sheetText}>📷 Camera</Text>
+              </Pressable>
+              <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickDocuments())}>
                 <Text style={styles.sheetText}>📎 Document</Text>
               </Pressable>
             </View>

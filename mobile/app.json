@@ -48,6 +48,13 @@
         {
           "microphonePermission": "Agora uses the microphone for voice messages and live voice conversations with agents."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Agora needs photo library access so you can attach images to messages.",
+          "cameraPermission": "Agora uses the camera to take photos to attach to messages."
+        }
       ]
     ]
   }

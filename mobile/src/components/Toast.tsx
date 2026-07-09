@@ -1,8 +1,8 @@
 /* Toasts, ported from the desktop shim: transient, dismissible, warn
    variant. A zustand store so any hook/mutation can raise one. */
 
-import React, { useEffect, useRef } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { Animated, Keyboard, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { create } from "zustand";
 import { colors } from "../lib/theme";
 
@@ -62,11 +62,29 @@ function ToastCard({ item }: { item: ToastItem }) {
   );
 }
 
+/* The host is absolutely positioned at the screen bottom, which the software
+   keyboard covers — an error toast raised while typing would be invisible. */
+function useKeyboardHeight(): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const show = Keyboard.addListener(showEvent, (e) => setHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener(hideEvent, () => setHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return height;
+}
+
 export function ToastHost() {
   const items = useToasts((s) => s.items);
+  const keyboardHeight = useKeyboardHeight();
   if (items.length === 0) return null;
   return (
-    <View style={styles.host} pointerEvents="box-none">
+    <View style={[styles.host, { bottom: 90 + keyboardHeight }]} pointerEvents="box-none">
       {items.map((t) => (
         <ToastCard key={t.id} item={t} />
       ))}
