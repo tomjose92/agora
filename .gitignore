@@ -15,5 +15,8 @@ mobile/ios/
 mobile/android/
 mobile/.expo/
 
+# Local environment (secrets); .env.example is the committed template
+.env
+
 # OS noise
 .DS_Store
