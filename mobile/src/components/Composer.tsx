@@ -13,8 +13,10 @@ import {
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "../api/queries";
 import { slugify } from "../lib/format";
+import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
 import { toast, toastErr } from "./Toast";
 
@@ -40,6 +42,12 @@ export function Composer({
   const [files, setFiles] = useState<OutgoingFile[]>([]);
   const selection = useRef({ start: 0, end: 0 });
   const inputRef = useRef<TextInput>(null);
+
+  /* Clear the home indicator when the keyboard is down; sit flush against
+     the keyboard when it's up (the KeyboardAvoidingView handles the lift). */
+  const insets = useSafeAreaInsets();
+  const keyboardVisible = useKeyboardVisible();
+  const bottomPad = keyboardVisible ? 6 : Math.max(insets.bottom, 6);
 
   /* @mention autocomplete: active while the token before the cursor looks
      like a partial mention. */
@@ -119,7 +127,7 @@ export function Composer({
   };
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { paddingBottom: bottomPad }]}>
       {candidates.length > 0 ? (
         <ScrollView horizontal keyboardShouldPersistTaps="always" style={styles.mentionBar}>
           {candidates.map((c) => (
@@ -185,7 +193,6 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
     backgroundColor: colors.bg,
-    paddingBottom: 6,
   },
   mentionBar: { paddingHorizontal: 12, paddingTop: 8 },
   mentionChip: {

@@ -36,6 +36,7 @@ import { ProgressBubbles, TypingRow } from "../../../src/components/LiveRows";
 import { MessageItem } from "../../../src/components/MessageItem";
 import { toastErr } from "../../../src/components/Toast";
 import { fmtTs } from "../../../src/lib/format";
+import { useHeaderKeyboardOffset } from "../../../src/lib/keyboard";
 import { colors } from "../../../src/lib/theme";
 import { useChannelLive } from "../../../src/state/live";
 import { useSession } from "../../../src/state/session";
@@ -162,6 +163,7 @@ export default function ChannelScreen() {
   const params = useLocalSearchParams<{ id: string; name?: string; groupId?: string }>();
   const channelId = params.id;
   const session = useSession((s) => s.session)!;
+  const keyboardOffset = useHeaderKeyboardOffset();
 
   const groups = useGroups();
   const channelMeta = useMemo(() => {
@@ -239,6 +241,25 @@ export default function ChannelScreen() {
   const starredIds = useMemo(() => new Set((stars.data ?? []).map((s) => s.id)), [stars.data]);
   const pinnedIds = useMemo(() => new Set((pins.data ?? []).map((p) => p.id)), [pins.data]);
 
+  const groupName = channelMeta?.group.name;
+  const openMembers = useCallback(() => {
+    if (!groupId) return;
+    router.push({
+      pathname: "/(app)/members/[groupId]",
+      params: { groupId, name: groupName ?? "" },
+    });
+  }, [groupId, groupName]);
+
+  /* Desktop's "no agents are listening" nudge: any member agent (group-wide
+     or scoped to this channel) counts, even if it's currently offline. */
+  const noAgents =
+    channelAgents.isSuccess &&
+    members.isSuccess &&
+    (channelAgents.data ?? []).length === 0 &&
+    !(members.data ?? []).some(
+      (m) => m.member_type === "agent" && (!m.channel_id || m.channel_id === channelId),
+    );
+
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
   const [sheet, setSheet] = useState<"pins" | "stars" | null>(null);
 
@@ -281,6 +302,11 @@ export default function ChannelScreen() {
               <Pressable onPress={() => setSheet("stars")} hitSlop={8}>
                 <Text style={styles.headerBtn}>⭐</Text>
               </Pressable>
+              {groupId ? (
+                <Pressable onPress={openMembers} hitSlop={8}>
+                  <Text style={styles.headerBtn}>👥</Text>
+                </Pressable>
+              ) : null}
             </View>
           ),
         }}
@@ -288,8 +314,15 @@ export default function ChannelScreen() {
       <KeyboardAvoidingView
         style={styles.root}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+        keyboardVerticalOffset={keyboardOffset}
       >
+        {noAgents && groupId ? (
+          <Pressable style={styles.noAgents} onPress={openMembers}>
+            <Text style={styles.noAgentsText}>
+              No agents are listening in this channel yet — tap to add one under Members.
+            </Text>
+          </Pressable>
+        ) : null}
         <FlashList
           ref={listRef}
           data={rows}
@@ -394,6 +427,14 @@ const styles = StyleSheet.create({
   headerBtns: { flexDirection: "row", gap: 16 },
   headerBtn: { fontSize: 17 },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 40 },
+  noAgents: {
+    backgroundColor: "rgba(251,191,36,0.08)",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(251,191,36,0.35)",
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+  },
+  noAgentsText: { color: colors.amber, fontSize: 12.5, lineHeight: 17 },
   divider: {
     flexDirection: "row",
     alignItems: "center",

@@ -97,7 +97,11 @@ export function useAddMember(groupId: string) {
       role?: string;
       channel_id?: string;
     }) => api.post(`/api/groups/${groupId}/members`, v),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.members(groupId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.members(groupId) });
+      // Mention chips + "no agents" banners key off the per-channel agent list.
+      void qc.invalidateQueries({ queryKey: ["channelAgents"] });
+    },
   });
 }
 
@@ -110,7 +114,10 @@ export function useRemoveMember(groupId: string) {
         `/api/groups/${groupId}/members/${v.member_type}/${encodeURIComponent(v.member_id)}` +
           (v.channel_id ? `?channel_id=${encodeURIComponent(v.channel_id)}` : ""),
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: keys.members(groupId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.members(groupId) });
+      void qc.invalidateQueries({ queryKey: ["channelAgents"] });
+    },
   });
 }
 

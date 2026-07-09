@@ -22,6 +22,7 @@ import {
 import { Composer } from "../../../../src/components/Composer";
 import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows";
 import { MessageItem } from "../../../../src/components/MessageItem";
+import { useHeaderKeyboardOffset } from "../../../../src/lib/keyboard";
 import { colors } from "../../../../src/lib/theme";
 import { useChannelLive } from "../../../../src/state/live";
 import { useSession } from "../../../../src/state/session";
@@ -35,6 +36,7 @@ export default function ThreadScreen() {
   const channelId = params.channelId;
   const rootId = Number(params.rootId);
   const session = useSession((s) => s.session)!;
+  const keyboardOffset = useHeaderKeyboardOffset();
 
   const replies = useMessages(channelId, rootId);
   const topLevel = useMessages(channelId, null);
@@ -60,7 +62,7 @@ export default function ThreadScreen() {
       <KeyboardAvoidingView
         style={styles.root}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+        keyboardVerticalOffset={keyboardOffset}
       >
         <ScrollView contentContainerStyle={styles.scroll}>
           {root ? (
