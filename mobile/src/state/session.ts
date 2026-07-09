@@ -6,7 +6,6 @@ import * as SecureStore from "expo-secure-store";
 import { create } from "zustand";
 import {
   ApiClient,
-  ApiError,
   normalizeBaseUrl,
   originOf,
   parseError,
@@ -46,13 +45,28 @@ export const useSession = create<SessionState>((set) => ({
     // offline; a 401 later drops back to the connect screen via onUnauthorized.
     const session: Session = { baseUrl, token };
     set({ status: "signedIn", session });
-    // Resolve the username in the background (the WS reducer needs it for
-    // unread bookkeeping). Best-effort: offline is fine, 401 signs out.
-    new ApiClient(session)
-      .get<Me>("/api/me")
-      .then((me) => set({ username: me.username }))
-      .catch((e) => {
-        if (e instanceof ApiError && e.status === 401) void useSession.getState().signOut();
+    // Background /api/me: resolves the username (the WS reducer needs it for
+    // unread bookkeeping) and heals a stale scheme — sessions stored before
+    // redirect canonicalization keep http:// for hosts that are really
+    // https, which silently kills the live socket. Best-effort: offline is
+    // fine, 401 signs out.
+    fetch(`${baseUrl}/api/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (res) => {
+        if (res.status === 401) {
+          void useSession.getState().signOut();
+          return;
+        }
+        if (!res.ok) return;
+        const me = (await res.json()) as Me;
+        const canonical = originOf(res.url, baseUrl);
+        if (canonical !== baseUrl) {
+          await SecureStore.setItemAsync(KEY_URL, canonical);
+          set({ session: { baseUrl: canonical, token } });
+        }
+        set({ username: me.username });
+      })
+      .catch(() => {
+        /* offline — keep the stored session */
       });
   },
 
