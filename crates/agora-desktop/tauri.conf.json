@@ -21,7 +21,7 @@
       "../../ui": "ui"
     },
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "Apple Development: Tom Jose (U36YWR75H6)"
     }
   }
 }
