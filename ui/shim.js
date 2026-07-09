@@ -194,8 +194,29 @@ function toast(message, { actionLabel, onAction, variant } = {}) {
   setTimeout(dismiss, 8000);
 }
 
+/* ---------- server badge ---------- */
+/* Topbar pill answering "where is this Agora?": a loopback host means the
+   server runs inside this app (or on this machine) and the data lives here;
+   anything else is a remote deployment we're a client of. */
+function renderServerBadge() {
+  const el = document.getElementById("server-badge");
+  if (!el) return;
+  const host = location.hostname;
+  const local = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  if (local) {
+    el.innerHTML = '<span class="srv-dot local"></span>Local server';
+    el.title = "This Agora runs on this computer — messages and data are stored here.";
+  } else {
+    el.innerHTML = '<span class="srv-dot remote"></span>Remote · <b>' + esc(host) + "</b>";
+    el.title = "Connected to " + location.origin +
+      " — messages and data live on that server.";
+  }
+  document.title = local ? "Agora — Local" : "Agora — " + host;
+}
+
 /* ---------- boot ---------- */
 async function boot() {
+  renderServerBadge();
   try {
     const me = await api("/api/me");
     CURRENT_USER = { username: me.username, owner: true };
