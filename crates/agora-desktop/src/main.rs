@@ -15,7 +15,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::menu::{Menu, SubmenuBuilder};
 use tauri::path::BaseDirectory;
@@ -25,6 +26,7 @@ use tauri_plugin_notification::NotificationExt;
 
 #[cfg(target_os = "macos")]
 mod notify;
+mod remote_notify;
 mod settings;
 
 use settings::{DesktopSettings, Mode};
@@ -35,6 +37,10 @@ static HUB: OnceLock<Arc<agora_core::hub::Hub>> = OnceLock::new();
 
 /// The embedded server, booted at most once per process.
 static EMBEDDED: tokio::sync::OnceCell<Embedded> = tokio::sync::OnceCell::const_new();
+
+/// The remote-mode notifier task, if one is running. Replaced (old one
+/// aborted) on every mode/settings change so at most one socket is live.
+static REMOTE_NOTIFIER: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
 
 struct Embedded {
     addr: std::net::SocketAddr,
@@ -87,6 +93,7 @@ fn main() {
         .on_window_event(|window, event| {
             match event {
                 WindowEvent::Focused(focused) => {
+                    remote_notify::UI_FOCUSED.store(*focused, Ordering::Relaxed);
                     if let Some(hub) = HUB.get() {
                         hub.set_ui_active(*focused);
                     }
@@ -96,6 +103,7 @@ fn main() {
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     let _ = window.hide();
+                    remote_notify::UI_FOCUSED.store(false, Ordering::Relaxed);
                     if let Some(hub) = HUB.get() {
                         hub.set_ui_active(false);
                     }
@@ -112,6 +120,7 @@ fn main() {
             let handle = app.handle().clone();
             let data_dir = app.path().app_data_dir()?;
             let desktop = settings::load(&data_dir);
+            sync_remote_notifier(&handle, &desktop);
             tauri::async_runtime::spawn(async move {
                 match desktop.mode {
                     // Remote: open the connect page; it validates the stored
@@ -235,6 +244,7 @@ async fn set_server_settings(app: AppHandle, settings: DesktopSettings) -> Resul
             open_main(&app, embedded.url());
         }
     }
+    sync_remote_notifier(&app, &settings);
     Ok(())
 }
 
@@ -249,6 +259,7 @@ async fn connect_remote(app: AppHandle) -> Result<(), String> {
         .ok_or("No remote server configured yet")?;
     validate_remote(&stored).await?;
     open_main(&app, url.parse().map_err(|_| "Invalid server URL")?);
+    sync_remote_notifier(&app, &stored);
     Ok(())
 }
 
@@ -269,6 +280,7 @@ async fn open_current_server(app: AppHandle) -> Result<(), String> {
             open_main(&app, embedded.url());
         }
     }
+    sync_remote_notifier(&app, &stored);
     Ok(())
 }
 
@@ -300,6 +312,43 @@ async fn validate_remote(settings: &DesktopSettings) -> Result<(), String> {
     })
     .await
     .map_err(|_| "validation task failed".to_string())?
+}
+
+// ------------------------------------------------------------ notifications
+
+/// Deliver a banner through the platform path (shared with embedded mode).
+#[cfg_attr(target_os = "macos", allow(unused_variables))]
+fn deliver_notification(handle: &AppHandle, title: &str, body: &str) {
+    #[cfg(target_os = "macos")]
+    notify::notify(title, body);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let result = handle.notification().builder().title(title).body(body).show();
+        if let Err(e) = result {
+            tracing::warn!("notification failed: {e}");
+        }
+    }
+}
+
+/// Reconcile the remote-notifier task with the given settings: the old task
+/// (if any) is aborted, and a fresh one starts iff we're in remote mode with
+/// a full URL + token. Embedded mode keeps using the in-process hub notifier.
+fn sync_remote_notifier(handle: &AppHandle, settings: &DesktopSettings) {
+    let mut guard = REMOTE_NOTIFIER.lock().unwrap();
+    if let Some(task) = guard.take() {
+        task.abort();
+    }
+    if settings.mode != Mode::Remote || settings.remote_url().is_none() {
+        return;
+    }
+    let (url, token) = (
+        settings.url.clone().unwrap_or_default().trim_end_matches('/').to_string(),
+        settings.token.clone().unwrap_or_default(),
+    );
+    let handle = handle.clone();
+    let deliver: remote_notify::Deliver =
+        Arc::new(move |title, body| deliver_notification(&handle, title, body));
+    *guard = Some(tauri::async_runtime::spawn(remote_notify::run(deliver, url, token)));
 }
 
 // ------------------------------------------------------------------- window

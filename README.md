@@ -54,7 +54,7 @@ and `--dry-run`).
 
 The app keeps running when you close the window (agents keep processing and
 replies keep landing); Cmd-Q quits for real. Closed-window messages surface as
-desktop notifications — see [Notifications](#notifications-macos) for the
+desktop notifications — see [Notifications](#notifications) for the
 signing requirement.
 
 ## Quick start (headless server)
@@ -246,8 +246,10 @@ Settings…** (stored in `desktop.json` next to the data dir):
   the mobile app and any browser simultaneously — one shared Agora, three
   kinds of clients.
 
-In remote mode there is no local hub, so native desktop notifications don't
-fire (same as using a browser); the data lives wherever the server runs.
+In remote mode there is no local hub — the data lives wherever the server
+runs — but native desktop notifications still fire: the shell keeps its own
+event socket to the remote server and posts banners for agent replies that
+land while the window is unfocused (see [Notifications](#notifications)).
 
 ## Moving between Agoras
 
@@ -303,15 +305,36 @@ run the first command above, then flip the desktop app to remote mode
 | `pairing_tokens` | `[]` | Dial-in bridge credentials (managed from the UI). |
 | `max_file_mb` | `10` | Per-attachment upload cap. |
 
-## Notifications (macOS)
+## Notifications
 
-Agent replies that land while the window is unfocused (or hidden) pop native
-banners, posted through the modern `UNUserNotificationCenter` framework.
-macOS only delivers those for apps with a **stable code signature** — a plain
-ad-hoc build gets "notifications are not allowed for this application". For
-local development, sign the bundle with a self-signed code-signing certificate
-(create one in Keychain Access, then
-`codesign --force --deep --sign "Agora Dev" /Applications/Agora.app`);
+Agent replies that land while nobody is looking pop native banners. What
+"looking" and "instant" mean depends on the client:
+
+| Client | While the app is open | While it's backgrounded / closed |
+| --- | --- | --- |
+| Desktop, embedded mode | Banner when the window is unfocused or hidden (in-process hub notifier). | Same — the hub keeps running after the window closes; Cmd-Q stops it. |
+| Desktop, remote mode | Banner when unfocused, via the shell's own event socket to the remote server (per-channel throttle, same title shape). | Same, as long as the app is running (closing the window only hides it). |
+| iOS app | Banner while the app process is alive and the socket is connected (foregrounded or briefly backgrounded). | Periodic catch-up: a background task polls unread counts and posts "N new messages in Group / #channel" banners. iOS schedules it opportunistically (15-minute floor, no guarantee) — expect "within a while", not instant. |
+| Browser tab | Nothing (no notification path). | Nothing. |
+
+Tapping an iOS banner opens the channel (or thread) it came from, and the
+app icon badge tracks total unread across devices.
+
+**Instant push while the iPhone app is suspended** is the one gap, and it's
+an Apple-credentials problem, not a code one: APNs requires the push
+entitlement, which free personal signing teams can't carry (the paid
+Developer Program, $99/yr, can). The upgrade path when enrolled: drop the
+`withNoPushEntitlement` plugin from `mobile/app.json`, register Expo push
+tokens with the server (new `POST /api/push-tokens`), and have `agora-server`
+POST to Expo's push API for agent messages when no UI socket is connected.
+Until then the background poll above is the honest fallback.
+
+**macOS signing requirement:** banners post through the modern
+`UNUserNotificationCenter` framework, and macOS only delivers those for apps
+with a **stable code signature** — a plain ad-hoc build gets "notifications
+are not allowed for this application". For local development, sign the bundle
+with a self-signed code-signing certificate (create one in Keychain Access,
+then `codesign --force --deep --sign "Agora Dev" /Applications/Agora.app`);
 for distribution, the Developer ID signature covers it. On first properly
 signed launch, macOS shows the usual "allow notifications?" prompt.
 
