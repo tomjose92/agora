@@ -5,6 +5,7 @@ import React from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Stack } from "expo-router";
 import { useAgents, useForgetAgent } from "../../src/api/queries";
+import { AgentAvatar } from "../../src/components/AgentAvatar";
 import { ArmedButton } from "../../src/components/ArmedButton";
 import { toastErr } from "../../src/components/Toast";
 import { fmtTs } from "../../src/lib/format";
@@ -30,6 +31,7 @@ export default function AgentsScreen() {
       >
         {(agents.data ?? []).map((a) => (
           <View key={a.id} style={styles.row}>
+            <AgentAvatar agentId={a.id} size={30} />
             <View style={[styles.dot, a.live ? styles.dotOn : styles.dotOff]} />
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{a.name}</Text>

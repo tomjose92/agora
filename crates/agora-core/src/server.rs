@@ -229,6 +229,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/channels/{channel_id}/activity", get(channel_activity))
         .route("/api/agents", get(available_agents))
         .route("/api/agents/{agent_id}", delete(forget_agent))
+        .route("/api/agents/{agent_id}/avatar", get(agent_avatar))
         .route("/api/files/{file_id}", get(get_file))
         .route("/api/connections", get(list_connections).post(add_connection))
         .route(
@@ -1107,11 +1108,110 @@ async fn available_agents(
         .map(|mut a| {
             let id = a["id"].as_str().unwrap_or_default().to_string();
             a["live"] = json!(live.contains(&id));
-            a["avatar"] = Value::Null;
+            a["avatar"] = agent_avatar_path(&a);
             a
         })
         .collect();
     Ok(Json(json!({"agents": agents})))
+}
+
+/// The same-origin proxy path for an agent's picture (the browser can't reach
+/// the agent's home instance directly), or null when it has none. ?v= busts
+/// caches when the picture changes upstream.
+fn agent_avatar_path(agent: &Value) -> Value {
+    if !agent["has_avatar"].as_bool().unwrap_or(false) {
+        return Value::Null;
+    }
+    json!(format!(
+        "/api/agents/{}/avatar?v={}",
+        agent["id"].as_str().unwrap_or_default(),
+        agent["avatar_v"].as_i64().unwrap_or(0)
+    ))
+}
+
+/// Ceiling on proxied avatar bytes (Pantheo caps uploads at 2 MB).
+const MAX_AVATAR_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Derive a Pantheo instance's HTTP(S) base from its dial-out websocket URL:
+/// `wss://host[:port][/prefix]/agora/connect` → `https://host[:port][/prefix]`.
+fn pantheo_http_base(ws_url: &str) -> Option<String> {
+    let trimmed = ws_url.trim().trim_end_matches('/');
+    let base = trimmed.strip_suffix("/agora/connect")?;
+    if let Some(rest) = base.strip_prefix("wss://") {
+        Some(format!("https://{rest}"))
+    } else if let Some(rest) = base.strip_prefix("ws://") {
+        Some(format!("http://{rest}"))
+    } else if base.starts_with("https://") || base.starts_with("http://") {
+        Some(base.to_string())
+    } else {
+        None
+    }
+}
+
+/// Blocking GET of the avatar bytes from the agent's home instance
+/// (call via `spawn_blocking`).
+fn fetch_avatar(url: &str, token: &str) -> anyhow::Result<(String, Vec<u8>)> {
+    use std::io::Read;
+
+    let response = ureq::get(url)
+        .timeout(Duration::from_secs(10))
+        .set("Authorization", &format!("Bearer {token}"))
+        .call()
+        .map_err(|e| anyhow::anyhow!("avatar fetch failed: {e}"))?;
+    let mime = response.content_type().to_string();
+    let mut data = Vec::new();
+    response.into_reader().take(MAX_AVATAR_BYTES).read_to_end(&mut data)?;
+    anyhow::ensure!(!data.is_empty(), "empty avatar response");
+    Ok((mime, data))
+}
+
+/// Proxy an agent's profile picture from its home instance. The browser can't
+/// fetch it directly — the instance may be private and the connection token
+/// must never reach the client — but the connection that carried the agent
+/// knows both the origin and the token. Misses return 404 so the UI's onerror
+/// handler falls back to the robot emoji.
+async fn agent_avatar(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let agent = state
+        .hub
+        .store
+        .agent(&agent_id)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown agent"))?;
+    if !agent["has_avatar"].as_bool().unwrap_or(false) {
+        return Err(err(StatusCode::NOT_FOUND, "No profile picture"));
+    }
+    let source = agent["source"].as_str().unwrap_or_default().to_string();
+    let conn = state
+        .config
+        .snapshot()
+        .connections
+        .into_iter()
+        .find(|c| c.name == source)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Agent's connection is not configured"))?;
+    let base = pantheo_http_base(&conn.url)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "No HTTP address for the agent's instance"))?;
+    let url = format!("{base}/admin/api/agents/{agent_id}/avatar");
+    let (mime, data) = tokio::task::spawn_blocking(move || fetch_avatar(&url, &conn.token))
+        .await
+        .map_err(|_| err(StatusCode::BAD_GATEWAY, "Avatar fetch failed"))?
+        .map_err(|e| {
+            tracing::debug!("avatar proxy for {agent_id}: {e}");
+            err(StatusCode::NOT_FOUND, "No profile picture")
+        })?;
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(
+        "content-type",
+        mime.parse()
+            .unwrap_or_else(|_| "application/octet-stream".parse().unwrap()),
+    );
+    // The URL carries a version stamp (?v=), so long client caching is safe.
+    resp_headers.insert("cache-control", "private, max-age=86400".parse().unwrap());
+    Ok((resp_headers, data).into_response())
 }
 
 async fn forget_agent(
@@ -1664,6 +1764,10 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
                                     agent_id: id.to_string(),
                                     agent_name: a["name"].as_str().unwrap_or(id).to_string(),
                                     requires_mention: a["requires_mention"].as_bool().unwrap_or(false),
+                                    // Dial-in bridges have no HTTP origin to proxy
+                                    // an avatar from; they stay on the emoji.
+                                    has_avatar: false,
+                                    avatar_v: 0,
                                     source: format!("pairing:{source}"),
                                     conn_id,
                                     tx: tx.clone(),
@@ -1687,6 +1791,36 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_avatar_path_maps_flag_to_proxy_url() {
+        let with = json!({"id": "mimir", "has_avatar": true, "avatar_v": 1234});
+        assert_eq!(agent_avatar_path(&with), json!("/api/agents/mimir/avatar?v=1234"));
+        let without = json!({"id": "mimir", "has_avatar": false, "avatar_v": 0});
+        assert_eq!(agent_avatar_path(&without), Value::Null);
+        // Third-party bots that never sent the field stay on the emoji.
+        let legacy = json!({"id": "claw-1"});
+        assert_eq!(agent_avatar_path(&legacy), Value::Null);
+    }
+
+    #[test]
+    fn pantheo_http_base_derives_from_connect_url() {
+        assert_eq!(
+            pantheo_http_base("wss://x.example:8765/agora/connect"),
+            Some("https://x.example:8765".into())
+        );
+        assert_eq!(
+            pantheo_http_base("ws://localhost:8765/agora/connect/"),
+            Some("http://localhost:8765".into())
+        );
+        assert_eq!(
+            pantheo_http_base("wss://host/prefix/agora/connect"),
+            Some("https://host/prefix".into())
+        );
+        // Not a connect URL, or not a websocket/http scheme.
+        assert_eq!(pantheo_http_base("wss://host/other"), None);
+        assert_eq!(pantheo_http_base("ftp://host/agora/connect"), None);
+    }
 
     #[test]
     fn sniff_recognizes_classic_web_formats() {

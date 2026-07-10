@@ -13,6 +13,7 @@ import {
   useRemoveMember,
 } from "../../../src/api/queries";
 import type { AgentInfo, Member } from "../../../src/api/types";
+import { AgentAvatar } from "../../../src/components/AgentAvatar";
 import { ArmedButton } from "../../../src/components/ArmedButton";
 import { toast, toastErr } from "../../../src/components/Toast";
 import { colors } from "../../../src/lib/theme";
@@ -36,7 +37,11 @@ function MemberRow({
 }) {
   return (
     <View style={styles.row}>
-      <Text style={styles.icon}>{member.member_type === "agent" ? "🤖" : "👤"}</Text>
+      {member.member_type === "agent" ? (
+        <AgentAvatar agentId={member.member_id} size={26} />
+      ) : (
+        <Text style={styles.icon}>👤</Text>
+      )}
       <View style={{ flex: 1 }}>
         <Text style={styles.name}>{member.name || member.member_id}</Text>
         <Text style={styles.meta}>
@@ -72,6 +77,7 @@ function AddAgent({
         <Text style={styles.addTitle}>Pick an agent</Text>
         {agents.map((a) => (
           <Pressable key={a.id} style={styles.row} onPress={() => setPicked(a)}>
+            <AgentAvatar agentId={a.id} size={26} />
             <LiveDot live={a.live} />
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{a.name}</Text>

@@ -81,6 +81,10 @@ pub struct AgentHandle {
     pub agent_id: String,
     pub agent_name: String,
     pub requires_mention: bool,
+    /// Whether the agent's home instance has a profile picture for it, plus
+    /// a cache-busting stamp; the bytes are proxied via /api/agents/{id}/avatar.
+    pub has_avatar: bool,
+    pub avatar_v: i64,
     /// Label of the connection ("pantheo-home", "pairing:xyz", ...).
     pub source: String,
     /// Internal id of the carrying connection (one connection may carry
@@ -218,6 +222,8 @@ impl Hub {
             &handle.agent_name,
             &handle.source,
             handle.requires_mention,
+            handle.has_avatar,
+            handle.avatar_v,
         );
         let mut st = self.state.lock().unwrap();
         st.agents.insert(handle.agent_id.clone(), handle);
@@ -820,6 +826,8 @@ mod tests {
             agent_id: id.into(),
             agent_name: name.into(),
             requires_mention,
+            has_avatar: false,
+            avatar_v: 0,
             source: "test".into(),
             conn_id,
             tx,
@@ -993,6 +1001,8 @@ mod tests {
             agent_id: "bot-a".into(),
             agent_name: "Bot A".into(),
             requires_mention: false,
+            has_avatar: false,
+            avatar_v: 0,
             source: "test".into(),
             conn_id,
             tx,

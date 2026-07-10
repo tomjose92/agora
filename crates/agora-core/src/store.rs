@@ -111,7 +111,11 @@ CREATE TABLE IF NOT EXISTS agents (
     name TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT '',
     requires_mention INTEGER NOT NULL DEFAULT 0,
-    last_seen REAL NOT NULL
+    last_seen REAL NOT NULL,
+    -- Whether the agent's home instance offers a profile picture, plus a
+    -- cache-busting stamp (file mtime there); the bytes are proxied on demand.
+    has_avatar INTEGER NOT NULL DEFAULT 0,
+    avatar_v INTEGER NOT NULL DEFAULT 0
 );
 "#;
 
@@ -131,6 +135,15 @@ fn migrate(conn: &Connection) {
         if !has_column(table, "position") {
             conn.execute(
                 &format!("ALTER TABLE {table} ADD COLUMN position INTEGER NOT NULL DEFAULT 0"),
+                [],
+            )
+            .unwrap();
+        }
+    }
+    for column in ["has_avatar", "avatar_v"] {
+        if !has_column("agents", column) {
+            conn.execute(
+                &format!("ALTER TABLE agents ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"),
                 [],
             )
             .unwrap();
@@ -1122,14 +1135,23 @@ impl Store {
     // ------------------------------------------------------------- agents
 
     /// Remember an agent seen on a connection (upsert; refreshes name/flags).
-    pub fn upsert_agent(&self, id: &str, name: &str, source: &str, requires_mention: bool) {
+    pub fn upsert_agent(
+        &self,
+        id: &str,
+        name: &str,
+        source: &str,
+        requires_mention: bool,
+        has_avatar: bool,
+        avatar_v: i64,
+    ) {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO agents (id, name, source, requires_mention, last_seen) \
-             VALUES (?1, ?2, ?3, ?4, ?5) \
+            "INSERT INTO agents (id, name, source, requires_mention, last_seen, has_avatar, avatar_v) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
              ON CONFLICT(id) DO UPDATE SET name = excluded.name, source = excluded.source, \
-             requires_mention = excluded.requires_mention, last_seen = excluded.last_seen",
-            params![id, name, source, requires_mention as i64, now()],
+             requires_mention = excluded.requires_mention, last_seen = excluded.last_seen, \
+             has_avatar = excluded.has_avatar, avatar_v = excluded.avatar_v",
+            params![id, name, source, requires_mention as i64, now(), has_avatar as i64, avatar_v],
         )
         .unwrap();
     }
@@ -1137,7 +1159,10 @@ impl Store {
     pub fn known_agents(&self) -> Vec<Value> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, source, requires_mention, last_seen FROM agents ORDER BY name")
+            .prepare(
+                "SELECT id, name, source, requires_mention, last_seen, has_avatar, avatar_v \
+                 FROM agents ORDER BY name",
+            )
             .unwrap();
         stmt.query_map([], |r| {
             Ok(json!({
@@ -1145,6 +1170,8 @@ impl Store {
                 "source": r.get::<_, String>(2)?,
                 "requires_mention": r.get::<_, i64>(3)? != 0,
                 "last_seen": r.get::<_, f64>(4)?,
+                "has_avatar": r.get::<_, i64>(5)? != 0,
+                "avatar_v": r.get::<_, i64>(6)?,
             }))
         })
         .unwrap()
@@ -1454,12 +1481,14 @@ mod tests {
     #[test]
     fn agents_registry() {
         let s = store();
-        s.upsert_agent("mimir", "Mimir", "pantheo-local", false);
-        s.upsert_agent("mimir", "Mimir 2", "pantheo-local", true);
+        s.upsert_agent("mimir", "Mimir", "pantheo-local", false, false, 0);
+        s.upsert_agent("mimir", "Mimir 2", "pantheo-local", true, true, 1234);
         let agents = s.known_agents();
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0]["name"], "Mimir 2");
         assert_eq!(agents[0]["requires_mention"], true);
+        assert_eq!(agents[0]["has_avatar"], true);
+        assert_eq!(agents[0]["avatar_v"], 1234);
         assert!(s.remove_agent("mimir"));
         assert!(s.known_agents().is_empty());
     }
