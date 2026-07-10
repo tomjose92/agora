@@ -9,16 +9,13 @@ import type { Message } from "../api/types";
 import { fmtTs } from "../lib/format";
 import { colors } from "../lib/theme";
 import { useSession } from "../state/session";
+import { AgentAvatar } from "./AgentAvatar";
 import { Attachments } from "./Attachments";
 import { MdText } from "./MdText";
 
 export function Avatar({ message }: { message: Message }) {
   if (message.author_type === "agent") {
-    return (
-      <View style={[styles.avatar, styles.avatarAgent]}>
-        <Text style={styles.avatarEmoji}>🤖</Text>
-      </View>
-    );
+    return <AgentAvatar agentId={message.author_id} size={30} />;
   }
   const initial = (message.author_name || message.author_id || "?")[0].toUpperCase();
   return (
@@ -120,8 +117,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarAgent: { backgroundColor: "rgba(139,124,255,0.15)" },
-  avatarEmoji: { fontSize: 15 },
   avatarInitial: { color: colors.a2, fontSize: 14, fontWeight: "700" },
   bubble: {
     maxWidth: "78%",

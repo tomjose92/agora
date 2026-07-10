@@ -111,12 +111,17 @@ function agoArm(key, redraw) {
 }
 function agoDisarm() { _agoConfirm = null; clearTimeout(_agoConfirmTimer); }
 
-/* Agent avatar (bot emoji fallback; the standalone app has no avatars yet). */
+/* Agent avatar: the picture proxied from the agent's home instance
+   (/api/agents/{id}/avatar), with the bot emoji as fallback when the agent
+   has none or the fetch fails. <img> can't send the auth header, so the
+   session token rides the URL like agoFileUrl. */
 function agoAgentAvatarHTML(agentId, cls) {
   const meta = _agoAvailAgents.find(a => a.id === agentId);
   const av = meta && meta.avatar;
   if (av) {
-    return `<span class="ago-av ${cls || ""} has-avatar"><img src="${esc(av)}" alt=""
+    const t = sessionToken();
+    const src = av + (t ? (av.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : "");
+    return `<span class="ago-av ${cls || ""} has-avatar"><img src="${esc(src)}" alt=""
       onerror="this.parentElement.classList.remove('has-avatar');this.parentElement.textContent='🤖'"></span>`;
   }
   return `<span class="ago-av ${cls || ""}">🤖</span>`;
