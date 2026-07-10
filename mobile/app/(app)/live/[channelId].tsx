@@ -21,8 +21,10 @@ import {
   useAudioRecorderState,
 } from "expo-audio";
 import { useKeepAwake } from "expo-keep-awake";
+import { Headphones } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSendVoice } from "../../../src/api/queries";
+import { Icon } from "../../../src/components/Icon";
 import { toast } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
 import {
@@ -232,7 +234,7 @@ export default function LiveScreen() {
         {threadId != null ? (
           <>
             <Text style={styles.channel}>
-              🧵 Thread · # {params.channelName || channelId}
+              Thread · # {params.channelName || channelId}
             </Text>
             {params.rootSnippet ? (
               <Text style={styles.rootSnippet} numberOfLines={2}>
@@ -241,7 +243,10 @@ export default function LiveScreen() {
             ) : null}
           </>
         ) : (
-          <Text style={styles.channel}>🎧 # {params.channelName || channelId}</Text>
+          <View style={styles.channelRow}>
+            <Icon icon={Headphones} size={16} />
+            <Text style={styles.channel}># {params.channelName || channelId}</Text>
+          </View>
         )}
         <View style={styles.center}>
           <View
@@ -273,6 +278,7 @@ export default function LiveScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg, alignItems: "center" },
+  channelRow: { flexDirection: "row", alignItems: "center", gap: 7 },
   channel: { color: colors.dim, fontSize: 14.5, fontWeight: "700" },
   rootSnippet: {
     color: colors.dim,

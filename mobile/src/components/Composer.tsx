@@ -25,6 +25,7 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
+import { ArrowUp, Bot, Camera, Check, Image as ImageIcon, Mic, Paperclip, X } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "../api/queries";
 import { slugify } from "../lib/format";
@@ -32,6 +33,7 @@ import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
 import { useAddressed } from "../state/addressed";
 import { AgentAvatar } from "./AgentAvatar";
+import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
 
 const NONE_ADDRESSED: string[] = [];
@@ -310,7 +312,7 @@ export function Composer({
             {recPhase === "uploading" ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
-              <Text style={styles.sendText}>↑</Text>
+              <Icon icon={ArrowUp} size={20} color={colors.onAccent} strokeWidth={2.4} />
             )}
           </Pressable>
         </View>
@@ -331,7 +333,7 @@ export function Composer({
               <Text style={styles.addrChipText} numberOfLines={1}>
                 {a.name}
               </Text>
-              <Text style={styles.addrChipX}>✕</Text>
+              <Icon icon={X} size={11} />
             </Pressable>
           ))}
         </ScrollView>
@@ -354,8 +356,9 @@ export function Composer({
               onPress={() => setFiles(files.filter((_, j) => j !== i))}
             >
               <Text style={styles.fileText} numberOfLines={1}>
-                {f.name} ✕
+                {f.name}
               </Text>
+              <Icon icon={X} size={11} />
             </Pressable>
           ))}
         </ScrollView>
@@ -397,12 +400,12 @@ export function Composer({
             {sending ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
-              <Text style={styles.sendText}>↑</Text>
+              <Icon icon={ArrowUp} size={20} color={colors.onAccent} strokeWidth={2.4} />
             )}
           </Pressable>
         ) : !focused && onSendVoice ? (
           <Pressable onPress={startRec} hitSlop={8} style={styles.iconBtn}>
-            <Text style={styles.icon}>🎤</Text>
+            <Icon icon={Mic} size={22} />
           </Pressable>
         ) : null}
       </View>
@@ -414,9 +417,9 @@ export function Composer({
           {agents.length > 0 && addressKey ? (
             <Pressable onPress={() => setAddrSheet(true)} hitSlop={8} style={styles.toolBtn}>
               <View style={styles.addrBtn}>
-                <Text style={[styles.icon, addressedAgents.length === 0 && styles.addrIdle]}>
-                  🤖
-                </Text>
+                <View style={addressedAgents.length === 0 && styles.addrIdle}>
+                  <Icon icon={Bot} size={22} color={addressedAgents.length > 0 ? colors.a1 : colors.dim} />
+                </View>
                 {addressedAgents.length > 0 ? (
                   <View style={styles.addrBadge}>
                     <Text style={styles.addrBadgeText}>{addressedAgents.length}</Text>
@@ -426,11 +429,11 @@ export function Composer({
             </Pressable>
           ) : null}
           <Pressable onPress={pickPhotos} hitSlop={8} style={styles.toolBtn}>
-            <Text style={styles.icon}>🖼️</Text>
+            <Icon icon={ImageIcon} size={22} />
           </Pressable>
           {onSendVoice ? (
             <Pressable onPress={startRec} hitSlop={8} style={styles.toolBtn}>
-              <Text style={styles.icon}>🎤</Text>
+              <Icon icon={Mic} size={22} />
             </Pressable>
           ) : null}
           <View style={{ flex: 1 }} />
@@ -442,7 +445,7 @@ export function Composer({
             {sending ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
-              <Text style={styles.sendText}>↑</Text>
+              <Icon icon={ArrowUp} size={20} color={colors.onAccent} strokeWidth={2.4} />
             )}
           </Pressable>
         </View>
@@ -469,7 +472,7 @@ export function Composer({
                         {a.name}
                       </Text>
                       <View style={[styles.addrCheck, on && styles.addrCheckOn]}>
-                        {on ? <Text style={styles.addrCheckMark}>✓</Text> : null}
+                        {on ? <Icon icon={Check} size={14} color={colors.onAccent} strokeWidth={2.6} /> : null}
                       </View>
                     </Pressable>
                   );
@@ -492,13 +495,16 @@ export function Composer({
           <Pressable style={styles.sheetBackdrop} onPress={() => closeSheet()}>
             <View style={styles.sheet}>
               <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickPhotos())}>
-                <Text style={styles.sheetText}>🖼️ Photo library</Text>
+                <Icon icon={ImageIcon} size={19} color={colors.text} />
+                <Text style={styles.sheetText}>Photo library</Text>
               </Pressable>
               <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void takePhoto())}>
-                <Text style={styles.sheetText}>📷 Camera</Text>
+                <Icon icon={Camera} size={19} color={colors.text} />
+                <Text style={styles.sheetText}>Camera</Text>
               </Pressable>
               <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickDocuments())}>
-                <Text style={styles.sheetText}>📎 Document</Text>
+                <Icon icon={Paperclip} size={19} color={colors.text} />
+                <Text style={styles.sheetText}>Document</Text>
               </Pressable>
             </View>
           </Pressable>
@@ -538,7 +544,6 @@ const styles = StyleSheet.create({
     maxWidth: 180,
   },
   addrChipText: { color: "#cfc8ff", fontSize: 12.5, fontWeight: "600", flexShrink: 1 },
-  addrChipX: { color: colors.dim, fontSize: 10.5 },
   addrBtn: { flexDirection: "row", alignItems: "flex-start" },
   addrIdle: { opacity: 0.6 },
   addrBadge: {
@@ -581,7 +586,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   addrCheckOn: { backgroundColor: colors.accent, borderColor: colors.accent },
-  addrCheckMark: { color: colors.onAccent, fontSize: 13, fontWeight: "800" },
   addrDone: {
     marginTop: 12,
     backgroundColor: colors.accent,
@@ -601,6 +605,9 @@ const styles = StyleSheet.create({
   mentionText: { color: colors.a1, fontSize: 13, fontWeight: "600" },
   fileBar: { paddingHorizontal: 12, paddingTop: 8 },
   fileChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     backgroundColor: colors.panelStrong,
     borderRadius: 8,
     paddingVertical: 5,
@@ -608,11 +615,10 @@ const styles = StyleSheet.create({
     marginRight: 6,
     maxWidth: 180,
   },
-  fileText: { color: colors.dim, fontSize: 12.5 },
+  fileText: { color: colors.dim, fontSize: 12.5, flexShrink: 1 },
   row: { flexDirection: "row", alignItems: "flex-end", padding: 10, gap: 8 },
   colFocused: { paddingHorizontal: 12, paddingTop: 8 },
   iconBtn: { paddingBottom: 9 },
-  icon: { fontSize: 20 },
   input: {
     flex: 1,
     color: colors.text,
@@ -672,7 +678,7 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingBottom: 34,
   },
-  sheetBtn: { paddingVertical: 13 },
+  sheetBtn: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
   sheetText: { color: colors.text, fontSize: 15.5 },
   sendBtn: {
     width: 38,
@@ -683,7 +689,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sendOff: { opacity: 0.4 },
-  sendText: { color: colors.onAccent, fontSize: 18, fontWeight: "800" },
   recDot: {
     width: 10,
     height: 10,

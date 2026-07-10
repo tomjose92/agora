@@ -5,6 +5,7 @@
 import React, { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Link, Stack, useLocalSearchParams } from "expo-router";
+import { ChevronLeft, ChevronRight, User } from "lucide-react-native";
 import {
   useAddMember,
   useAgents,
@@ -15,6 +16,7 @@ import {
 import type { AgentInfo, Member } from "../../../src/api/types";
 import { AgentAvatar } from "../../../src/components/AgentAvatar";
 import { ArmedButton } from "../../../src/components/ArmedButton";
+import { Icon } from "../../../src/components/Icon";
 import { toast, toastErr } from "../../../src/components/Toast";
 import { colors } from "../../../src/lib/theme";
 
@@ -40,7 +42,7 @@ function MemberRow({
       {member.member_type === "agent" ? (
         <AgentAvatar agentId={member.member_id} size={26} />
       ) : (
-        <Text style={styles.icon}>👤</Text>
+        <Icon icon={User} size={20} />
       )}
       <View style={{ flex: 1 }}>
         <Text style={styles.name}>{member.name || member.member_id}</Text>
@@ -83,7 +85,7 @@ function AddAgent({
               <Text style={styles.name}>{a.name}</Text>
               <Text style={styles.meta}>{a.live ? "online" : "offline"}</Text>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Icon icon={ChevronRight} size={17} color={colors.faint} />
           </Pressable>
         ))}
         {agents.length === 0 ? (
@@ -128,7 +130,10 @@ function AddAgent({
         ))}
       </View>
       <Pressable style={styles.cancelBtn} onPress={() => setPicked(null)}>
-        <Text style={styles.cancelText}>‹ Back</Text>
+        <View style={styles.cancelRow}>
+          <Icon icon={ChevronLeft} size={15} />
+          <Text style={styles.cancelText}>Back</Text>
+        </View>
       </Pressable>
     </View>
   );
@@ -280,12 +285,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
   },
-  icon: { fontSize: 18 },
   dot: { width: 9, height: 9, borderRadius: 5 },
   name: { color: colors.text, fontSize: 14.5, fontWeight: "600" },
   meta: { color: colors.dim, fontSize: 12 },
   offline: { color: colors.amber },
-  chevron: { color: colors.faint, fontSize: 18 },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 14 },
   addBtn: { alignItems: "center", paddingVertical: 12 },
   addBtnText: { color: colors.a1, fontSize: 14.5, fontWeight: "700" },
@@ -310,6 +313,7 @@ const styles = StyleSheet.create({
   },
   scopeText: { color: colors.a1, fontSize: 13.5, fontWeight: "600" },
   cancelBtn: { alignItems: "center", paddingVertical: 8 },
+  cancelRow: { flexDirection: "row", alignItems: "center", gap: 3 },
   cancelText: { color: colors.dim, fontSize: 13.5, fontWeight: "600" },
   hint: { color: colors.faint, fontSize: 12.5, lineHeight: 18, paddingHorizontal: 2 },
   hintLink: { color: colors.a2, textDecorationLine: "underline" },

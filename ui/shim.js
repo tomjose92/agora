@@ -192,7 +192,7 @@ function toast(message, { actionLabel, onAction, variant } = {}) {
   const x = document.createElement("button");
   x.className = "toast-x";
   x.setAttribute("aria-label", "Dismiss");
-  x.textContent = "✕";
+  x.innerHTML = icon("x");
   x.onclick = dismiss;
   el.appendChild(x);
   host.appendChild(el);

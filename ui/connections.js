@@ -107,7 +107,7 @@ function connDraw() {
   panel.innerHTML = `
     <div class="conn-head">
       <b>Connections</b>
-      <button class="btn sm" onclick="connToggle()">✕</button>
+      <button class="btn sm" onclick="connToggle()">${icon("x")}</button>
     </div>
     <div class="conn-body">
       ${_connInstance ? `

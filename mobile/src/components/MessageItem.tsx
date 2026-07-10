@@ -4,6 +4,7 @@
 
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pin, Star } from "lucide-react-native";
 import type { Session } from "../api/client";
 import { useSelectOption } from "../api/queries";
 import type { Message } from "../api/types";
@@ -12,6 +13,7 @@ import { colors } from "../lib/theme";
 import { useSession } from "../state/session";
 import { AgentAvatar } from "./AgentAvatar";
 import { Attachments } from "./Attachments";
+import { Icon } from "./Icon";
 import { MdText } from "./MdText";
 
 export function Avatar({ message }: { message: Message }) {
@@ -97,8 +99,8 @@ export function MessageItem({
 
   const flags = (
     <>
-      {pinned ? <Text style={styles.flag}>📌</Text> : null}
-      {starred ? <Text style={styles.flag}>⭐</Text> : null}
+      {pinned ? <Icon icon={Pin} size={11} color={colors.a1} /> : null}
+      {starred ? <Icon icon={Star} size={11} color={colors.amber} fill={colors.amber} /> : null}
     </>
   );
 
@@ -202,7 +204,6 @@ const styles = StyleSheet.create({
   author: { color: colors.text, fontSize: 13, fontWeight: "700", flexShrink: 1 },
   agentTag: { color: colors.faint, fontSize: 11, fontWeight: "600" },
   ts: { color: colors.faint, fontSize: 10.5 },
-  flag: { fontSize: 10.5 },
   replies: { color: colors.a1, fontSize: 12.5, fontWeight: "600", marginTop: 4 },
   options: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   optionBtn: {

@@ -1,14 +1,16 @@
 /* Agent avatar shared by messages, members, and the agents list: the picture
    proxied from the agent's home instance (AgentInfo.avatar from /api/agents),
-   falling back to the robot emoji when the agent has none or the load fails. */
+   falling back to the bot icon when the agent has none or the load fails. */
 
 import React, { useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { Image } from "expo-image";
+import { Bot } from "lucide-react-native";
 import { authHeaders } from "../api/client";
 import { useAgents } from "../api/queries";
 import { useSession } from "../state/session";
 import { colors } from "../lib/theme";
+import { Icon } from "./Icon";
 
 export function AgentAvatar({ agentId, size = 30 }: { agentId: string; size?: number }) {
   const session = useSession((s) => s.session);
@@ -30,7 +32,7 @@ export function AgentAvatar({ agentId, size = 30 }: { agentId: string; size?: nu
   }
   return (
     <View style={[styles.fallback, box]}>
-      <Text style={{ fontSize: size * 0.5 }}>🤖</Text>
+      <Icon icon={Bot} size={size * 0.55} color={colors.a1} />
     </View>
   );
 }

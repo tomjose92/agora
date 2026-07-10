@@ -1,10 +1,12 @@
 /* Home: groups with collapsible channel lists and unread badges — the
    mobile take on the desktop sidebar (drill-down instead of split pane).
    Red badges mean @you; muted badges are plain traffic (Slack convention).
-   The Threads row is the inbox entry; the filter chip hides read channels. */
+   The Threads row is the inbox entry; the filter chip hides read channels.
+   Long-press a group or channel name for manage/delete actions. */
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -14,6 +16,7 @@ import {
   View,
 } from "react-native";
 import { Link, Stack, router } from "expo-router";
+import { Bot, ChevronDown, ChevronRight, MessagesSquare, Settings } from "lucide-react-native";
 import {
   useCreateChannel,
   useCreateGroup,
@@ -24,11 +27,15 @@ import {
   useUpdateChannel,
 } from "../../src/api/queries";
 import type { Channel, Group } from "../../src/api/types";
-import { ArmedButton } from "../../src/components/ArmedButton";
+import { Icon } from "../../src/components/Icon";
 import { toastErr } from "../../src/components/Toast";
 import { totalThreadUnread } from "../../src/lib/unread";
 import { colors } from "../../src/lib/theme";
 import { usePrefs } from "../../src/state/prefs";
+
+function isGroupAdmin(group: Group): boolean {
+  return group.role === "admin";
+}
 
 export function UnreadBadge({
   count,
@@ -90,6 +97,42 @@ function ChannelRow({ group, channel }: { group: Group; channel: Channel }) {
   const [editing, setEditing] = useState<"name" | "topic" | null>(null);
   const deleteChannel = useDeleteChannel();
   const updateChannel = useUpdateChannel();
+  const admin = isGroupAdmin(group);
+
+  const confirmDelete = () => {
+    Alert.alert(
+      `Delete #${channel.name}?`,
+      "This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteChannel.mutate(
+              { groupId: group.id, channelId: channel.id },
+              { onError: (e) => toastErr("Delete failed", e) },
+            ),
+        },
+      ],
+    );
+  };
+
+  const onLongPress = () => {
+    if (!admin) return;
+    const buttons: {
+      text: string;
+      style?: "cancel" | "destructive" | "default";
+      onPress?: () => void;
+    }[] = [
+      { text: "Rename", onPress: () => { setManaging(true); setEditing("name"); } },
+      { text: "Edit topic", onPress: () => { setManaging(true); setEditing("topic"); } },
+      { text: "Delete channel", style: "destructive", onPress: confirmDelete },
+      { text: "Cancel", style: "cancel" },
+    ];
+    Alert.alert(`#${channel.name}`, undefined, buttons);
+  };
+
   return (
     <View>
       <Pressable
@@ -100,7 +143,8 @@ function ChannelRow({ group, channel }: { group: Group; channel: Channel }) {
             params: { id: channel.id, name: channel.name, groupId: group.id },
           })
         }
-        onLongPress={() => setManaging((m) => !m)}
+        onLongPress={onLongPress}
+        delayLongPress={350}
       >
         <Text style={styles.hash}>#</Text>
         <Text style={styles.channelName} numberOfLines={1}>
@@ -108,31 +152,15 @@ function ChannelRow({ group, channel }: { group: Group; channel: Channel }) {
         </Text>
         <UnreadBadge count={channel.unread ?? 0} mentions={channel.mentions ?? 0} />
       </Pressable>
-      {managing && !editing ? (
-        <View style={styles.manageRow}>
-          <Pressable style={styles.manageBtn} onPress={() => setEditing("name")}>
-            <Text style={styles.manageBtnText}>Rename</Text>
-          </Pressable>
-          <Pressable style={styles.manageBtn} onPress={() => setEditing("topic")}>
-            <Text style={styles.manageBtnText}>Topic</Text>
-          </Pressable>
-          <ArmedButton
-            label="Delete channel"
-            onConfirm={() =>
-              deleteChannel.mutate(
-                { groupId: group.id, channelId: channel.id },
-                { onError: (e) => toastErr("Delete failed", e), onSettled: () => setManaging(false) },
-              )
-            }
-          />
-        </View>
-      ) : null}
-      {editing ? (
+      {managing && editing ? (
         <InlineCreate
           placeholder={editing === "name" ? "channel name" : "topic"}
           initial={editing === "name" ? channel.name : channel.topic}
           submitLabel="Save"
-          onCancel={() => setEditing(null)}
+          onCancel={() => {
+            setEditing(null);
+            setManaging(false);
+          }}
           onSubmit={(value) =>
             updateChannel.mutate(
               {
@@ -158,16 +186,56 @@ function ChannelRow({ group, channel }: { group: Group; channel: Channel }) {
 function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean }) {
   const collapsed = usePrefs((s) => !!s.collapsedGroups[group.id]);
   const toggleGroup = usePrefs((s) => s.toggleGroup);
-  const [managing, setManaging] = useState(false);
   const [creating, setCreating] = useState(false);
   const createChannel = useCreateChannel();
   const deleteGroup = useDeleteGroup();
+  const admin = isGroupAdmin(group);
   const unread = group.channels.reduce((n, c) => n + (c.unread ?? 0), 0);
   const mentions = group.channels.reduce((n, c) => n + (c.mentions ?? 0), 0);
   const expanded = !collapsed;
   const visibleChannels = unreadsOnly
     ? group.channels.filter((c) => (c.unread ?? 0) > 0 || (c.mentions ?? 0) > 0)
     : group.channels;
+
+  const confirmDelete = () => {
+    Alert.alert(
+      `Delete ${group.name}?`,
+      "This deletes the group and everything in it.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteGroup.mutate(group.id, {
+              onError: (e) => toastErr("Delete failed", e),
+            }),
+        },
+      ],
+    );
+  };
+
+  const onLongPress = () => {
+    const buttons: {
+      text: string;
+      style?: "cancel" | "destructive" | "default";
+      onPress?: () => void;
+    }[] = [
+      {
+        text: "Members",
+        onPress: () =>
+          router.push({
+            pathname: "/(app)/members/[groupId]",
+            params: { groupId: group.id, name: group.name },
+          }),
+      },
+    ];
+    if (admin) {
+      buttons.push({ text: "Delete group", style: "destructive", onPress: confirmDelete });
+    }
+    buttons.push({ text: "Cancel", style: "cancel" });
+    Alert.alert(group.name, undefined, buttons);
+  };
 
   if (unreadsOnly && visibleChannels.length === 0) return null;
 
@@ -176,9 +244,12 @@ function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean 
       <Pressable
         style={styles.groupHead}
         onPress={() => toggleGroup(group.id)}
-        onLongPress={() => setManaging((m) => !m)}
+        onLongPress={onLongPress}
+        delayLongPress={350}
       >
-        <Text style={styles.chevron}>{expanded ? "▾" : "▸"}</Text>
+        <View style={styles.chevron}>
+          <Icon icon={expanded ? ChevronDown : ChevronRight} size={14} color={colors.faint} />
+        </View>
         <Text style={styles.groupName} numberOfLines={1}>
           {group.name}
         </Text>
@@ -187,27 +258,6 @@ function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean 
           <Text style={styles.plus}>＋</Text>
         </Pressable>
       </Pressable>
-      {managing ? (
-        <View style={styles.manageRow}>
-          <Link
-            href={{ pathname: "/(app)/members/[groupId]", params: { groupId: group.id, name: group.name } }}
-            asChild
-          >
-            <Pressable style={styles.manageBtn}>
-              <Text style={styles.manageBtnText}>Members</Text>
-            </Pressable>
-          </Link>
-          <ArmedButton
-            label="Delete group"
-            onConfirm={() =>
-              deleteGroup.mutate(group.id, {
-                onError: (e) => toastErr("Delete failed", e),
-                onSettled: () => setManaging(false),
-              })
-            }
-          />
-        </View>
-      ) : null}
       {creating ? (
         <InlineCreate
           placeholder="new channel name"
@@ -256,12 +306,12 @@ export default function Home() {
         <View style={styles.headerBtns}>
           <Link href="/(app)/agents" asChild>
             <Pressable hitSlop={8}>
-              <Text style={styles.headerBtn}>🤖</Text>
+              <Icon icon={Bot} size={21} color={colors.text} />
             </Pressable>
           </Link>
           <Link href="/(app)/settings" asChild>
             <Pressable hitSlop={8}>
-              <Text style={styles.headerBtn}>⚙️</Text>
+              <Icon icon={Settings} size={21} color={colors.text} />
             </Pressable>
           </Link>
         </View>
@@ -292,7 +342,7 @@ export default function Home() {
             style={styles.threadsRow}
             onPress={() => router.push("/(app)/threads")}
           >
-            <Text style={styles.threadsIcon}>🧵</Text>
+            <Icon icon={MessagesSquare} size={17} color={colors.a1} />
             <Text style={styles.threadsLabel}>Threads</Text>
             {threadUnread > 0 ? (
               <View style={[styles.badge, styles.badgeThread]}>
@@ -352,7 +402,6 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 14, gap: 12, paddingBottom: 40 },
   headerBtns: { flexDirection: "row", gap: 16 },
-  headerBtn: { fontSize: 19 },
   topRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   threadsRow: {
     flex: 1,
@@ -366,7 +415,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  threadsIcon: { fontSize: 15 },
   threadsLabel: { color: colors.text, fontSize: 15, fontWeight: "700", flex: 1 },
   filterChip: {
     borderWidth: 1,
@@ -393,7 +441,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
-  chevron: { color: colors.faint, fontSize: 13, width: 14 },
+  chevron: { width: 14, alignItems: "center" },
   groupName: { color: colors.text, fontSize: 15.5, fontWeight: "700", flex: 1 },
   plusBtn: { paddingLeft: 8 },
   plus: { color: colors.dim, fontSize: 17 },
@@ -419,22 +467,6 @@ const styles = StyleSheet.create({
   badgeMention: { backgroundColor: colors.red },
   badgeMentionText: { color: "#fff", fontSize: 11.5, fontWeight: "800" },
   badgeThread: { backgroundColor: "rgba(139,124,255,0.35)" },
-  manageRow: {
-    flexDirection: "row",
-    gap: 10,
-    paddingLeft: 34,
-    paddingRight: 14,
-    paddingVertical: 6,
-    alignItems: "center",
-  },
-  manageBtn: {
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  manageBtnText: { color: colors.text, fontSize: 12.5, fontWeight: "600" },
   inlineCreate: {
     flexDirection: "row",
     alignItems: "center",

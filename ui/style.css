@@ -44,6 +44,23 @@ a:hover { text-decoration: underline; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes blink { 50% { opacity: .35; } }
 
+/* ---------- inline SVG icons (ui/icons.js) ---------- */
+svg.ico {
+  width: 1em; height: 1em; flex-shrink: 0;
+  vertical-align: -0.15em;
+}
+svg.ico.fill { fill: currentColor; }
+.btn svg.ico { width: 14px; height: 14px; }
+.btn.sm svg.ico { width: 13px; height: 13px; }
+.ago-x svg.ico { width: 12px; height: 12px; }
+.ago-caret svg.ico { width: 12px; height: 12px; }
+.ago-side-toggle svg.ico { width: 15px; height: 15px; display: block; }
+.empty .glyph svg.ico { width: 34px; height: 34px; }
+.ago-av svg.ico { width: 60%; height: 60%; color: var(--dim); }
+.toast-x svg.ico { width: 13px; height: 13px; display: block; }
+@keyframes ico-spin { to { transform: rotate(360deg); } }
+svg.ico.spin { animation: ico-spin 1s linear infinite; transform-origin: center; }
+
 /* ---------- topbar ---------- */
 .topbar {
   display: flex; align-items: center; gap: 14px; flex-shrink: 0;
