@@ -212,6 +212,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/channels/{channel_id}/read", put(mark_read))
         .route("/api/messages/{message_id}", get(get_message))
+        .route("/api/messages/{message_id}/select", post(select_message_option))
         .route("/api/messages/{message_id}/speech", get(message_speech))
         .route("/api/threads", get(list_threads))
         .route("/api/threads/{thread_id}/read", put(mark_thread_read))
@@ -927,6 +928,25 @@ async fn get_message(
         message["reply_count"] = json!(state.hub.store.thread_size(message_id));
     }
     Ok(Json(message))
+}
+
+async fn select_message_option(
+    State(state): State<AppState>,
+    Path(message_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    let option_id = payload["option_id"].as_str().unwrap_or("").trim();
+    if option_id.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "option_id required"));
+    }
+    match state.hub.select_option(message_id, option_id, &user) {
+        Ok(message) => Ok(Json(message)),
+        Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
+        Err(msg) => Err(err(StatusCode::CONFLICT, msg)),
+    }
 }
 
 /// Threads inbox: every thread the user participates in, newest first.

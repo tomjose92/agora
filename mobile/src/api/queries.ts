@@ -12,7 +12,7 @@ import { useEffect } from "react";
 import { keys } from "./keys";
 import { useApi } from "../state/session";
 import { useLive } from "../state/live";
-import { appendMessage, applyMessageToGroups, type MessagePages } from "../ws/reducer";
+import { appendMessage, applyMessageToGroups, replaceMessage, type MessagePages } from "../ws/reducer";
 import type {
   AgentInfo,
   ChannelActivity,
@@ -215,6 +215,23 @@ export function useSendMessage(channelId: string) {
       );
       qc.setQueryData<Group[]>(keys.groups, (groups) =>
         applyMessageToGroups(groups, message, message.author_id),
+      );
+    },
+  });
+}
+
+export function useSelectOption() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { messageId: number; optionId: string }) =>
+      api.post<Message>(`/api/messages/${v.messageId}/select`, {
+        option_id: v.optionId,
+      }),
+    onSuccess: (message) => {
+      qc.setQueryData<MessagePages>(
+        keys.messages(message.channel_id, message.thread_id),
+        (data) => replaceMessage(data, message),
       );
     },
   });

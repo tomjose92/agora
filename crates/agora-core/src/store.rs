@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS messages (
     author_id TEXT NOT NULL,
     author_name TEXT,
     text TEXT NOT NULL,
-    ts REAL NOT NULL
+    ts REAL NOT NULL,
+    meta TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, id);
@@ -149,6 +150,9 @@ fn migrate(conn: &Connection) {
             .unwrap();
         }
     }
+    if !has_column("messages", "meta") {
+        conn.execute("ALTER TABLE messages ADD COLUMN meta TEXT", []).unwrap();
+    }
 }
 
 pub fn now() -> f64 {
@@ -183,6 +187,11 @@ pub fn new_token() -> String {
 }
 
 fn message_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Value> {
+    let meta_raw: Option<String> = row.get(offset + 8)?;
+    let meta = meta_raw
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+        .unwrap_or(Value::Null);
     Ok(json!({
         "id": row.get::<_, i64>(offset)?,
         "channel_id": row.get::<_, String>(offset + 1)?,
@@ -192,10 +201,12 @@ fn message_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Value
         "author_name": row.get::<_, Option<String>>(offset + 5)?,
         "text": row.get::<_, String>(offset + 6)?,
         "ts": row.get::<_, f64>(offset + 7)?,
+        "meta": meta,
     }))
 }
 
-const MSG_COLS: &str = "id, channel_id, thread_id, author_type, author_id, author_name, text, ts";
+const MSG_COLS: &str =
+    "id, channel_id, thread_id, author_type, author_id, author_name, text, ts, meta";
 
 /// An uploaded attachment on its way into `add_message`.
 pub struct NewAttachment {
@@ -643,15 +654,50 @@ impl Store {
         thread_id: Option<i64>,
         attachments: &[NewAttachment],
     ) -> Value {
+        self.add_message_with_meta(
+            channel_id,
+            text,
+            author_type,
+            author_id,
+            author_name,
+            thread_id,
+            attachments,
+            None,
+        )
+    }
+
+    pub fn add_message_with_meta(
+        &self,
+        channel_id: &str,
+        text: &str,
+        author_type: &str,
+        author_id: &str,
+        author_name: Option<&str>,
+        thread_id: Option<i64>,
+        attachments: &[NewAttachment],
+        meta: Option<&Value>,
+    ) -> Value {
         let ts = now();
+        let meta_json = meta
+            .filter(|m| !m.is_null())
+            .map(|m| m.to_string());
         let mut stored_files = Vec::new();
         let message_id;
         {
             let conn = self.conn.lock().unwrap();
             conn.execute(
-                "INSERT INTO messages (channel_id, thread_id, author_type, author_id, author_name, text, ts) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![channel_id, thread_id, author_type, author_id, author_name, text, ts],
+                "INSERT INTO messages (channel_id, thread_id, author_type, author_id, author_name, text, ts, meta) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    channel_id,
+                    thread_id,
+                    author_type,
+                    author_id,
+                    author_name,
+                    text,
+                    ts,
+                    meta_json
+                ],
             )
             .unwrap();
             message_id = conn.last_insert_rowid();
@@ -680,8 +726,49 @@ impl Store {
             "author_name": author_name,
             "text": text,
             "ts": ts,
+            "meta": meta.cloned().unwrap_or(Value::Null),
             "attachments": stored_files,
         })
+    }
+
+    /// Merge ``patch`` into a message's ``meta`` JSON and return the updated message.
+    pub fn update_message_meta(&self, message_id: i64, patch: &Value) -> Option<Value> {
+        let existing = self.message(message_id)?;
+        let mut meta = existing.get("meta").cloned().unwrap_or(Value::Null);
+        if !meta.is_object() {
+            meta = json!({});
+        }
+        if let (Some(obj), Some(patch_obj)) = (meta.as_object_mut(), patch.as_object()) {
+            for (k, v) in patch_obj {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE messages SET meta = ?1 WHERE id = ?2",
+                params![meta.to_string(), message_id],
+            )
+            .ok()?;
+        }
+        self.message(message_id)
+    }
+
+    /// Find a message whose meta.options_id matches (for agent-side resolve).
+    pub fn find_message_by_options_id(&self, options_id: &str) -> Option<i64> {
+        if options_id.is_empty() {
+            return None;
+        }
+        let conn = self.conn.lock().unwrap();
+        // SQLite json1: meta is a JSON text column.
+        conn.query_row(
+            "SELECT id FROM messages WHERE meta IS NOT NULL \
+             AND json_extract(meta, '$.options_id') = ?1 \
+             ORDER BY id DESC LIMIT 1",
+            params![options_id],
+            |r| r.get(0),
+        )
+        .ok()
     }
 
     pub fn message(&self, message_id: i64) -> Option<Value> {
@@ -861,9 +948,9 @@ impl Store {
             let mut stmt = conn
                 .prepare(
                     "SELECT m.id, m.channel_id, m.thread_id, m.author_type, m.author_id, \
-                     m.author_name, m.text, m.ts, s.starred_at, \
+                     m.author_name, m.text, m.ts, m.meta, s.starred_at, \
                      r.id, r.channel_id, r.thread_id, r.author_type, r.author_id, \
-                     r.author_name, r.text, r.ts \
+                     r.author_name, r.text, r.ts, r.meta \
                      FROM stars s JOIN messages m ON m.id = s.message_id \
                      LEFT JOIN messages r ON r.id = m.thread_id \
                      WHERE s.username = ?1 AND s.channel_id = ?2 ORDER BY s.starred_at DESC",
@@ -871,9 +958,9 @@ impl Store {
                 .unwrap();
             stmt.query_map(params![username, channel_id], |r| {
                 let mut star = message_row(r, 0)?;
-                star["starred_at"] = json!(r.get::<_, f64>(8)?);
-                star["root"] = match r.get::<_, Option<i64>>(9)? {
-                    Some(_) => message_row(r, 9)?,
+                star["starred_at"] = json!(r.get::<_, f64>(9)?);
+                star["root"] = match r.get::<_, Option<i64>>(10)? {
+                    Some(_) => message_row(r, 10)?,
                     None => Value::Null,
                 };
                 Ok(star)
@@ -1031,7 +1118,7 @@ impl Store {
             let mut stmt = conn
                 .prepare(
                     "SELECT r.id, r.channel_id, r.thread_id, r.author_type, r.author_id, \
-                       r.author_name, r.text, r.ts, \
+                       r.author_name, r.text, r.ts, r.meta, \
                        c.name, c.group_id, COALESCE(g.name, ''), \
                        COUNT(m.id), MAX(m.id), MAX(m.ts), \
                        COALESCE(tr.last_read_id, 0), \
@@ -1052,18 +1139,18 @@ impl Store {
                 .unwrap();
             stmt.query_map(params![username, limit as i64], |r| {
                 let mut root = message_row(r, 0)?;
-                root["reply_count"] = json!(r.get::<_, i64>(11)?);
+                root["reply_count"] = json!(r.get::<_, i64>(12)?);
                 Ok(json!({
                     "root": root,
                     "channel_id": r.get::<_, String>(1)?,
-                    "channel_name": r.get::<_, String>(8)?,
-                    "group_id": r.get::<_, String>(9)?,
-                    "group_name": r.get::<_, String>(10)?,
-                    "reply_count": r.get::<_, i64>(11)?,
-                    "last_reply_id": r.get::<_, i64>(12)?,
-                    "last_reply_ts": r.get::<_, f64>(13)?,
-                    "last_read_id": r.get::<_, i64>(14)?,
-                    "unread": r.get::<_, i64>(15)?,
+                    "channel_name": r.get::<_, String>(9)?,
+                    "group_id": r.get::<_, String>(10)?,
+                    "group_name": r.get::<_, String>(11)?,
+                    "reply_count": r.get::<_, i64>(12)?,
+                    "last_reply_id": r.get::<_, i64>(13)?,
+                    "last_reply_ts": r.get::<_, f64>(14)?,
+                    "last_read_id": r.get::<_, i64>(15)?,
+                    "unread": r.get::<_, i64>(16)?,
                 }))
             })
             .unwrap()
@@ -1112,7 +1199,7 @@ impl Store {
             let mut stmt = conn
                 .prepare(
                     "SELECT m.id, m.channel_id, m.thread_id, m.author_type, m.author_id, \
-                     m.author_name, m.text, m.ts, p.pinned_by, p.pinned_at, \
+                     m.author_name, m.text, m.ts, m.meta, p.pinned_by, p.pinned_at, \
                      (SELECT COUNT(*) FROM messages r WHERE r.thread_id = m.id) \
                      FROM pins p JOIN messages m ON m.id = p.message_id \
                      WHERE p.channel_id = ?1 ORDER BY p.pinned_at DESC",
@@ -1120,9 +1207,9 @@ impl Store {
                 .unwrap();
             stmt.query_map(params![channel_id], |r| {
                 let mut msg = message_row(r, 0)?;
-                msg["pinned_by"] = json!(r.get::<_, Option<String>>(8)?);
-                msg["pinned_at"] = json!(r.get::<_, f64>(9)?);
-                msg["reply_count"] = json!(r.get::<_, i64>(10)?);
+                msg["pinned_by"] = json!(r.get::<_, Option<String>>(9)?);
+                msg["pinned_at"] = json!(r.get::<_, f64>(10)?);
+                msg["reply_count"] = json!(r.get::<_, i64>(11)?);
                 Ok(msg)
             })
             .unwrap()

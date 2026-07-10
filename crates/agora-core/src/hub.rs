@@ -451,6 +451,10 @@ impl Hub {
 
     /// An agent's outbound message. Broadcast to viewers; relayed to *other*
     /// member agents only when @mentioned, under the bot-loop cap.
+    ///
+    /// ``options`` (optional) is a list of ``{id, label, style?}`` buttons the
+    /// UI renders on the message; ``options_id`` ties a click back to the
+    /// agent's pending approval.
     pub fn post_agent_message(
         &self,
         agent_id: &str,
@@ -459,7 +463,28 @@ impl Hub {
         text: &str,
         thread_id: Option<i64>,
     ) -> Value {
-        let message = self.store.add_message(
+        self.post_agent_message_with_options(agent_id, agent_name, channel_id, text, thread_id, None, None)
+    }
+
+    pub fn post_agent_message_with_options(
+        &self,
+        agent_id: &str,
+        agent_name: &str,
+        channel_id: &str,
+        text: &str,
+        thread_id: Option<i64>,
+        options: Option<&Value>,
+        options_id: Option<&str>,
+    ) -> Value {
+        let meta = match options {
+            Some(opts) if opts.as_array().map(|a| !a.is_empty()).unwrap_or(false) => Some(json!({
+                "options": opts,
+                "options_id": options_id.unwrap_or(""),
+                "resolved": Value::Null,
+            })),
+            _ => None,
+        };
+        let message = self.store.add_message_with_meta(
             channel_id,
             text,
             "agent",
@@ -467,6 +492,7 @@ impl Hub {
             Some(agent_name),
             thread_id,
             &[],
+            meta.as_ref(),
         );
         let streak = {
             let mut st = self.state.lock().unwrap();
@@ -477,8 +503,6 @@ impl Hub {
         };
         self.record_mentions(&message);
         self.broadcast(channel_id, &json!({"type": "message", "message": message}));
-        // Agent replies are the only messages not authored by the (single)
-        // local user, so they're the ones worth a notification.
         self.maybe_notify(&message);
         if streak <= BOT_LOOP_LIMIT {
             self.fan_out(&message, true, Some(agent_id), true, false);
@@ -486,6 +510,59 @@ impl Hub {
             tracing::info!("bot-loop limit hit in {channel_id} (thread {thread_id:?})");
         }
         message
+    }
+
+    /// Resolve an interactive option on a message: persist the choice, update
+    /// all UIs, and notify the owning agent via an ``option_select`` frame.
+    pub fn select_option(
+        &self,
+        message_id: i64,
+        option_id: &str,
+        user: &str,
+    ) -> Result<Value, &'static str> {
+        let message = self.store.message(message_id).ok_or("Message not found")?;
+        let meta = message.get("meta").cloned().unwrap_or(Value::Null);
+        let options = meta
+            .get("options")
+            .and_then(|o| o.as_array())
+            .ok_or("Message has no options")?;
+        if meta.get("resolved").map(|r| !r.is_null()).unwrap_or(false) {
+            return Err("Options already resolved");
+        }
+        if !options.iter().any(|o| o["id"].as_str() == Some(option_id)) {
+            return Err("Unknown option");
+        }
+        let options_id = meta["options_id"].as_str().unwrap_or("").to_string();
+        let resolved = json!({
+            "option_id": option_id,
+            "by": user,
+            "ts": crate::store::now(),
+        });
+        let updated = self
+            .store
+            .update_message_meta(message_id, &json!({"resolved": resolved}))
+            .ok_or("Failed to update message")?;
+        let channel_id = updated["channel_id"].as_str().unwrap_or_default();
+        self.broadcast(
+            channel_id,
+            &json!({"type": "message_update", "message": updated}),
+        );
+        // Notify the agent that authored the options message.
+        let agent_id = updated["author_id"].as_str().unwrap_or_default();
+        if let Some(handle) = self.agent_handle(agent_id) {
+            let frame = json!({
+                "type": "option_select",
+                "agent_id": agent_id,
+                "options_id": options_id,
+                "option_id": option_id,
+                "message_id": message_id,
+                "channel_id": channel_id,
+                "thread_id": updated["thread_id"],
+                "user": {"id": user, "name": user},
+            });
+            let _ = handle.tx.send(frame);
+        }
+        Ok(updated)
     }
 
     /// Broadcast a non-persisted event (typing, progress, pin) to viewers.
@@ -767,7 +844,17 @@ impl Hub {
             Some("post") => {
                 let text = frame["text"].as_str().unwrap_or_default();
                 if !text.is_empty() {
-                    self.post_agent_message(&agent_id, &agent_name, &channel_id, text, thread_id);
+                    let options = frame.get("options");
+                    let options_id = frame["options_id"].as_str();
+                    self.post_agent_message_with_options(
+                        &agent_id,
+                        &agent_name,
+                        &channel_id,
+                        text,
+                        thread_id,
+                        options,
+                        options_id,
+                    );
                 }
             }
             Some("typing") => {
@@ -790,8 +877,39 @@ impl Hub {
                     }),
                 );
             }
+            Some("options_resolve") => {
+                let options_id = frame["options_id"].as_str().unwrap_or_default();
+                let text = frame["text"].as_str().unwrap_or("Resolved.");
+                if let Some(message_id) = self.store.find_message_by_options_id(options_id) {
+                    let _ = self.resolve_options_by_agent(message_id, text);
+                }
+            }
             _ => {}
         }
+    }
+
+    fn resolve_options_by_agent(&self, message_id: i64, text: &str) -> Result<Value, &'static str> {
+        let message = self.store.message(message_id).ok_or("Message not found")?;
+        let meta = message.get("meta").cloned().unwrap_or(Value::Null);
+        if meta.get("resolved").map(|r| !r.is_null()).unwrap_or(false) {
+            return Err("Options already resolved");
+        }
+        let resolved = json!({
+            "option_id": "",
+            "by": "agent",
+            "label": text,
+            "ts": crate::store::now(),
+        });
+        let updated = self
+            .store
+            .update_message_meta(message_id, &json!({"resolved": resolved}))
+            .ok_or("Failed to update message")?;
+        let channel_id = updated["channel_id"].as_str().unwrap_or_default();
+        self.broadcast(
+            channel_id,
+            &json!({"type": "message_update", "message": updated}),
+        );
+        Ok(updated)
     }
 }
 
