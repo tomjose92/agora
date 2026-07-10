@@ -50,8 +50,8 @@ a:hover { text-decoration: underline; }
   padding: 4px 4px 0;
 }
 .brand { font-size: 15px; font-weight: 800; letter-spacing: .02em; display: flex; align-items: center; gap: 8px; }
-.brand-mark { display: inline-flex; align-items: center; color: var(--a1); }
-.brand-mark svg { width: 18px; height: 18px; display: block; }
+.brand-mark { display: inline-flex; align-items: center; }
+.brand-mark img { width: 22px; height: 22px; border-radius: 6px; display: block; }
 .server-badge {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
   border-radius: 999px; border: 1px solid var(--border-strong); background: var(--panel);
