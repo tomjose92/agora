@@ -530,10 +530,6 @@ a.btn { text-decoration: none; }
 }
 .ago-addr-opt.selected .ago-addr-check { background: var(--a1); border-color: var(--a1); }
 .ago-addr-empty { padding: 10px 9px; color: var(--dim); font-size: 12px; white-space: normal; }
-.ago-addr-pop-foot {
-  padding: 7px 9px 5px; border-top: 1px solid var(--border); margin-top: 4px;
-  color: var(--faint); font-size: 11px; line-height: 1.4; white-space: normal;
-}
 
 /* ---------- file attachments ---------- */
 .chat-input .ago-attach { flex-shrink: 0; }

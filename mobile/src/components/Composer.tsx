@@ -414,10 +414,8 @@ export function Composer({
           {agents.length > 0 && addressKey ? (
             <Pressable onPress={() => setAddrSheet(true)} hitSlop={8} style={styles.toolBtn}>
               <View style={styles.addrBtn}>
-                <Text
-                  style={[styles.addrAt, addressedAgents.length > 0 && styles.addrAtActive]}
-                >
-                  @
+                <Text style={[styles.icon, addressedAgents.length === 0 && styles.addrIdle]}>
+                  🤖
                 </Text>
                 {addressedAgents.length > 0 ? (
                   <View style={styles.addrBadge}>
@@ -477,11 +475,6 @@ export function Composer({
                   );
                 })}
               </ScrollView>
-              <Text style={styles.addrHint}>
-                {addressed.length > 0
-                  ? "Their names are prepended to every message you send here."
-                  : "No selection — everyone in the channel is addressed."}
-              </Text>
               <Pressable style={styles.addrDone} onPress={() => setAddrSheet(false)}>
                 <Text style={styles.addrDoneText}>Done</Text>
               </Pressable>
@@ -547,8 +540,7 @@ const styles = StyleSheet.create({
   addrChipText: { color: "#cfc8ff", fontSize: 12.5, fontWeight: "600", flexShrink: 1 },
   addrChipX: { color: colors.dim, fontSize: 10.5 },
   addrBtn: { flexDirection: "row", alignItems: "flex-start" },
-  addrAt: { color: colors.dim, fontSize: 19, fontWeight: "700", lineHeight: 22 },
-  addrAtActive: { color: colors.a1 },
+  addrIdle: { opacity: 0.6 },
   addrBadge: {
     minWidth: 15,
     height: 15,
@@ -590,7 +582,6 @@ const styles = StyleSheet.create({
   },
   addrCheckOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   addrCheckMark: { color: colors.onAccent, fontSize: 13, fontWeight: "800" },
-  addrHint: { color: colors.faint, fontSize: 12, lineHeight: 16.5, marginTop: 10 },
   addrDone: {
     marginTop: 12,
     backgroundColor: colors.accent,

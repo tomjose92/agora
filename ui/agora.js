@@ -1499,7 +1499,7 @@ function agoAddrBtnHTML(threadId) {
   const n = agoAddrList(threadId).length;
   return `<button class="btn ago-addr-btn ${n ? "active" : ""}"
     title="Choose which agents you're talking to"
-    onclick="agoAddrTogglePop(${arg})">@${n ? `<span class="ago-addr-count">${n}</span>` : ""}</button>`;
+    onclick="agoAddrTogglePop(${arg})">🤖${n ? `<span class="ago-addr-count">${n}</span>` : ""}</button>`;
 }
 
 function agoAddrChipsHTML(threadId) {
@@ -1540,9 +1540,6 @@ function agoAddrPopHTML(threadId) {
       ${sel.length ? `<button class="ago-addr-clear" onclick="agoAddrClear(${arg})">Clear</button>` : ""}
     </div>
     ${rows || `<div class="ago-addr-empty">No agents in this channel yet.</div>`}
-    <div class="ago-addr-pop-foot">${sel.length
-      ? "Their names are prepended to every message you send here."
-      : "No selection — everyone in the channel is addressed."}</div>
   </div>`;
 }
 
