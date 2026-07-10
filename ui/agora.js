@@ -594,6 +594,12 @@ function agoDrawSide() {
            <button class="btn sm" onclick="agoCreateChannel()">Add</button></div>`
         : `<button class="ago-add" onclick="agoOpenCreate('channel','${esc(g.id)}')">+ channel</button>`)
       : "";
+    const groupArmed = agoArmed("group:" + g.id);
+    const groupDel = (g.role === "admin" || isOwner())
+      ? `<button class="ago-x ${groupArmed ? "armed" : ""}" title="${groupArmed
+          ? "Click again to delete " + esc(g.name) + " and everything in it" : "Delete group"}"
+           onclick="event.stopPropagation(); agoDeleteGroup('${esc(g.id)}')">${groupArmed ? "Sure?" : "✕"}</button>`
+      : "";
     return `<div class="ago-group ${open ? "open" : ""} ${sel ? "sel" : ""}">
       <div class="ago-group-head ${groupUnread || groupMentions ? "unread" : ""}"
            draggable="true"
@@ -606,6 +612,7 @@ function agoDrawSide() {
         <span class="nm">${esc(g.name)}</span>
         ${open ? "" : agoBadgeHTML(groupUnread, groupMentions)}
         <span class="role">${esc(g.role || "")}</span>
+        ${groupDel}
       </div>
       ${channels}${addChan}
     </div>`;
@@ -760,21 +767,23 @@ async function agoDeleteChannel(gid, cid) {
     toast("Channel deleted", { variant: "ok" });
   } catch (e) { agoErr("Delete failed", e); agoDrawSide(); }
 }
-async function agoDeleteGroup() {
-  const g = agoSelGroup();
+async function agoDeleteGroup(gid) {
+  // Called from the channel header (no gid: the selected group) or from a
+  // sidebar row's ✕ (explicit gid) — arm/confirm must redraw the right pane.
+  const fromSide = !!gid;
+  const g = fromSide ? _agoGroups.find(x => x.id === gid) : agoSelGroup();
   if (!g) return;
-  if (!agoArmed("group:" + g.id)) { agoArm("group:" + g.id, agoDrawMain); return; }
+  const redraw = fromSide ? agoDrawSide : agoDrawMain;
+  if (!agoArmed("group:" + g.id)) { agoArm("group:" + g.id, redraw); return; }
   agoDisarm();
   try {
     await apiPost(`/api/groups/${encodeURIComponent(g.id)}`, {}, "DELETE");
-    _agoSel = {};
-    _agoMembers = null;
-    agoSaveSel();
+    if (_agoSel.g === g.id) { _agoSel = {}; _agoMembers = null; agoSaveSel(); }
     await agoLoadGroups();
     agoDrawSide();
     agoLoadChannel().catch(console.error);
     toast(`Group "${g.name}" deleted`, { variant: "ok" });
-  } catch (e) { agoErr("Delete failed", e); agoDrawMain(); }
+  } catch (e) { agoErr("Delete failed", e); redraw(); }
 }
 
 /* ---------- main column (messages + composer) ---------- */

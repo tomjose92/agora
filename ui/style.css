@@ -226,7 +226,7 @@ a.btn { text-decoration: none; }
   color: var(--dim); cursor: pointer; opacity: 0; transition: opacity .15s ease;
   font-size: 11px; line-height: 1; padding: 0 3px;
 }
-.ago-chan:hover .ago-x, .ago-member:hover .ago-x { opacity: 1; }
+.ago-chan:hover .ago-x, .ago-member:hover .ago-x, .ago-group-head:hover .ago-x { opacity: 1; }
 .ago-x:hover { color: #f87171; background: rgba(248,113,113,.12); }
 .ago-x.armed { opacity: 1; color: #f87171; background: rgba(248,113,113,.14); font-weight: 700; }
 .ago-add {
@@ -692,7 +692,7 @@ a.btn { text-decoration: none; }
   .ago-inbox-item { padding: 11px 10px; }
   .ago-side-thread { padding-top: 9px; padding-bottom: 9px; }
   .ago-chan { padding-top: 9px; padding-bottom: 9px; }
-  .ago-chan .ago-x { opacity: 1; }
+  .ago-chan .ago-x, .ago-group-head .ago-x { opacity: 1; }
   .ago-chan-edit { flex-wrap: wrap; }
   .ago-chan-edit #ago-edit-name, .ago-chan-edit #ago-edit-topic {
     font-size: 16px;                      /* iOS anti-zoom */
