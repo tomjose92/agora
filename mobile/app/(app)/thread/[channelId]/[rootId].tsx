@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
+import { Headphones, Star, Volume2 } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../../../src/api/keys";
 import {
@@ -38,6 +39,7 @@ import {
 } from "../../../../src/api/queries";
 import type { Message, ThreadRow } from "../../../../src/api/types";
 import { Composer, type MentionCandidate } from "../../../../src/components/Composer";
+import { Icon } from "../../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows";
 import { MessageItem } from "../../../../src/components/MessageItem";
 import { toastErr } from "../../../../src/components/Toast";
@@ -205,10 +207,12 @@ export default function ThreadScreen() {
                   }}
                   hitSlop={8}
                 >
-                  <Text style={[styles.headerBtn, !speakAloud && styles.headerBtnOff]}>🔊</Text>
+                  <View style={!speakAloud && styles.headerBtnOff}>
+                    <Icon icon={Volume2} size={20} color={colors.text} />
+                  </View>
                 </Pressable>
                 <Pressable onPress={openLive} hitSlop={8}>
-                  <Text style={styles.headerBtn}>🎧</Text>
+                  <Icon icon={Headphones} size={20} color={colors.text} />
                 </Pressable>
               </View>
             ) : null,
@@ -288,8 +292,14 @@ export default function ThreadScreen() {
                   setActionsFor(null);
                 }}
               >
+                <Icon
+                  icon={Star}
+                  size={18}
+                  color={starredIds.has(actionsFor.id) ? colors.amber : colors.text}
+                  fill={starredIds.has(actionsFor.id) ? colors.amber : "none"}
+                />
                 <Text style={styles.sheetText}>
-                  {starredIds.has(actionsFor.id) ? "★ Unstar" : "☆ Star"}
+                  {starredIds.has(actionsFor.id) ? "Unstar" : "Star"}
                 </Text>
               </Pressable>
             </View>
@@ -303,7 +313,6 @@ export default function ThreadScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   headerBtns: { flexDirection: "row", gap: 16 },
-  headerBtn: { fontSize: 17 },
   headerBtnOff: { opacity: 0.35 },
   rootMsg: {
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -326,6 +335,6 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingBottom: 34,
   },
-  sheetBtn: { paddingVertical: 13 },
+  sheetBtn: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
   sheetText: { color: colors.text, fontSize: 15.5 },
 });

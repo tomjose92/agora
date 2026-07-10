@@ -17,6 +17,14 @@ import {
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import {
+  Headphones,
+  MessageCircle,
+  Pin,
+  Star,
+  Users,
+  Volume2,
+} from "lucide-react-native";
+import {
   flattenMessages,
   useChannelAgents,
   useGroups,
@@ -33,6 +41,7 @@ import {
 } from "../../../src/api/queries";
 import type { Message, PinnedMessage, StarredMessage } from "../../../src/api/types";
 import { Composer, type MentionCandidate } from "../../../src/components/Composer";
+import { Icon } from "../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../src/components/LiveRows";
 import { MessageItem } from "../../../src/components/MessageItem";
 import { toastErr } from "../../../src/components/Toast";
@@ -86,7 +95,8 @@ function MessageActions({
               style={styles.sheetBtn}
               onPress={() => act(() => openThread(channelId, message, channelName))}
             >
-              <Text style={styles.sheetText}>💬 Reply in thread</Text>
+              <Icon icon={MessageCircle} size={18} color={colors.text} />
+              <Text style={styles.sheetText}>Reply in thread</Text>
             </Pressable>
           ) : null}
           <Pressable
@@ -100,7 +110,13 @@ function MessageActions({
               )
             }
           >
-            <Text style={styles.sheetText}>{starred ? "★ Unstar" : "☆ Star"}</Text>
+            <Icon
+              icon={Star}
+              size={18}
+              color={starred ? colors.amber : colors.text}
+              fill={starred ? colors.amber : "none"}
+            />
+            <Text style={styles.sheetText}>{starred ? "Unstar" : "Star"}</Text>
           </Pressable>
           {isRoot ? (
             <Pressable
@@ -114,7 +130,8 @@ function MessageActions({
                 )
               }
             >
-              <Text style={styles.sheetText}>{pinned ? "📌 Unpin" : "📌 Pin"}</Text>
+              <Icon icon={Pin} size={18} color={pinned ? colors.a1 : colors.text} />
+              <Text style={styles.sheetText}>{pinned ? "Unpin" : "Pin"}</Text>
             </Pressable>
           ) : null}
         </View>
@@ -353,23 +370,25 @@ export default function ChannelScreen() {
                   }}
                   hitSlop={8}
                 >
-                  <Text style={[styles.headerBtn, !speakAloud && styles.headerBtnOff]}>🔊</Text>
+                  <View style={!speakAloud && styles.headerBtnOff}>
+                    <Icon icon={Volume2} size={20} color={colors.text} />
+                  </View>
                 </Pressable>
               ) : null}
               {voiceOk ? (
                 <Pressable onPress={openLive} hitSlop={8}>
-                  <Text style={styles.headerBtn}>🎧</Text>
+                  <Icon icon={Headphones} size={20} color={colors.text} />
                 </Pressable>
               ) : null}
               <Pressable onPress={() => setSheet("pins")} hitSlop={8}>
-                <Text style={styles.headerBtn}>📌</Text>
+                <Icon icon={Pin} size={20} color={colors.text} />
               </Pressable>
               <Pressable onPress={() => setSheet("stars")} hitSlop={8}>
-                <Text style={styles.headerBtn}>⭐</Text>
+                <Icon icon={Star} size={20} color={colors.text} />
               </Pressable>
               {groupId ? (
                 <Pressable onPress={openMembers} hitSlop={8}>
-                  <Text style={styles.headerBtn}>👥</Text>
+                  <Icon icon={Users} size={20} color={colors.text} />
                 </Pressable>
               ) : null}
             </View>
@@ -499,7 +518,6 @@ export default function ChannelScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   headerBtns: { flexDirection: "row", gap: 16 },
-  headerBtn: { fontSize: 17 },
   headerBtnOff: { opacity: 0.35 },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 40 },
   noAgents: {
@@ -544,7 +562,7 @@ const styles = StyleSheet.create({
   },
   listSheet: { maxHeight: "70%" },
   sheetTitle: { color: colors.text, fontSize: 16, fontWeight: "800", marginBottom: 8 },
-  sheetBtn: { paddingVertical: 13 },
+  sheetBtn: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
   sheetText: { color: colors.text, fontSize: 15.5 },
   sheetEmpty: { color: colors.dim, paddingVertical: 20, textAlign: "center" },
   sheetItem: {

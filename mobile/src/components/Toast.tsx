@@ -3,8 +3,10 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Animated, Keyboard, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { X } from "lucide-react-native";
 import { create } from "zustand";
 import { colors } from "../lib/theme";
+import { Icon } from "./Icon";
 
 interface ToastItem {
   id: number;
@@ -56,7 +58,7 @@ function ToastCard({ item }: { item: ToastItem }) {
         {item.message}
       </Text>
       <Pressable onPress={() => dismiss(item.id)} hitSlop={8}>
-        <Text style={styles.x}>✕</Text>
+        <Icon icon={X} size={14} />
       </Pressable>
     </Animated.View>
   );
@@ -115,5 +117,4 @@ const styles = StyleSheet.create({
   },
   warn: { borderColor: "rgba(248,113,113,0.5)" },
   msg: { color: colors.text, fontSize: 13.5, flexShrink: 1 },
-  x: { color: colors.dim, fontSize: 13 },
 });

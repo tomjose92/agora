@@ -116,7 +116,7 @@ function agoArm(key, redraw) {
 function agoDisarm() { _agoConfirm = null; clearTimeout(_agoConfirmTimer); }
 
 /* Agent avatar: the picture proxied from the agent's home instance
-   (/api/agents/{id}/avatar), with the bot emoji as fallback when the agent
+   (/api/agents/{id}/avatar), with the bot icon as fallback when the agent
    has none or the fetch fails. <img> can't send the auth header, so the
    session token rides the URL like agoFileUrl. */
 function agoAgentAvatarHTML(agentId, cls) {
@@ -126,9 +126,14 @@ function agoAgentAvatarHTML(agentId, cls) {
     const t = sessionToken();
     const src = av + (t ? (av.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : "");
     return `<span class="ago-av ${cls || ""} has-avatar"><img src="${esc(src)}" alt=""
-      onerror="this.parentElement.classList.remove('has-avatar');this.parentElement.textContent='🤖'"></span>`;
+      onerror="agoAvatarFallback(this)"></span>`;
   }
-  return `<span class="ago-av ${cls || ""}">🤖</span>`;
+  return `<span class="ago-av ${cls || ""}">${icon("bot")}</span>`;
+}
+function agoAvatarFallback(img) {
+  const wrap = img.parentElement;
+  wrap.classList.remove("has-avatar");
+  wrap.innerHTML = icon("bot");
 }
 
 /* Slack-style drill-down on phones. */
@@ -359,7 +364,7 @@ function agoDrawUnreadBar() {
   bar.style.display = "";
   bar.innerHTML = `
     <span class="ago-unread-n">${n} new message${n === 1 ? "" : "s"}</span>
-    <button class="lnk" onclick="agoJumpToLatest()">Jump to latest ↓</button>
+    <button class="lnk" onclick="agoJumpToLatest()">Jump to latest ${icon("arrow-down")}</button>
     <button class="lnk dim" onclick="agoMarkReadNow()">Mark as read</button>`;
 }
 
@@ -524,18 +529,18 @@ function agoDrawInbox(box) {
   const rows = _agoThreads.map(agoThreadRowHTML).join("");
   box.innerHTML = `
     <div class="ago-head">
-      <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">‹</button>
+      <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">${icon("chevron-left")}</button>
       <div class="ago-head-text">
-        <span class="ago-chan-name">🧵 Threads</span>
+        <span class="ago-chan-name">${icon("messages-square")} Threads</span>
         <span class="dim">conversations you're part of</span>
       </div>
       <div class="ago-head-actions">
         <button class="btn sm" title="Refresh"
-          onclick="agoScheduleThreadsRefresh()">↻</button>
+          onclick="agoScheduleThreadsRefresh()">${icon("refresh-cw")}</button>
       </div>
     </div>
     <div class="ago-log ago-inbox-list">${rows
-      || `<div class="empty"><div class="glyph">🧵</div><div>No threads yet</div>
+      || `<div class="empty"><div class="glyph">${icon("messages-square")}</div><div>No threads yet</div>
           <div class="hint">Threads you start or reply in show up here, with unread counts as replies land.</div></div>`}
     </div>`;
 }
@@ -567,7 +572,7 @@ function agoDrawSide() {
       if (_agoUnreadsOnly && !unread && !mentions && !threadUnread && !active) return "";
       const del = (g.role === "admin" || isOwner())
         ? `<button class="ago-x ${armed ? "armed" : ""}" title="${armed ? "Click again to delete #" + esc(c.name) : "Delete channel"}"
-             onclick="event.stopPropagation(); agoDeleteChannel('${esc(g.id)}','${esc(c.id)}')">${armed ? "Sure?" : "✕"}</button>`
+             onclick="event.stopPropagation(); agoDeleteChannel('${esc(g.id)}','${esc(c.id)}')">${armed ? "Sure?" : icon("x")}</button>`
         : "";
       const threadRows = threads
         .filter(t => !_agoUnreadsOnly || (t.unread || 0) > 0)
@@ -575,7 +580,7 @@ function agoDrawSide() {
         <div class="ago-side-thread ${t.unread ? "unread" : ""}"
              title="${esc(agoPinSnippet(t.root || {}))}"
              onclick="event.stopPropagation(); agoGoToThread('${esc(g.id)}','${esc(c.id)}',${t.root.id})">
-          <span class="tico">↳</span>
+          <span class="tico">${icon("corner-down-right")}</span>
           <span class="nm">${esc(agoPinSnippet(t.root || {}))}</span>
           ${agoBadgeHTML(t.unread || 0, 0)}
         </div>`).join("");
@@ -602,7 +607,7 @@ function agoDrawSide() {
     const groupDel = (g.role === "admin" || isOwner())
       ? `<button class="ago-x ago-group-del ${groupArmed ? "armed" : ""}" title="${groupArmed
           ? "Click again to delete " + esc(g.name) + " and everything in it" : "Delete group"}"
-           onclick="event.stopPropagation(); agoDeleteGroup('${esc(g.id)}')">${groupArmed ? "Sure?" : "✕"}</button>`
+           onclick="event.stopPropagation(); agoDeleteGroup('${esc(g.id)}')">${groupArmed ? "Sure?" : icon("x")}</button>`
       : "";
     return `<div class="ago-group ${open ? "open" : ""} ${sel ? "sel" : ""}">
       <div class="ago-group-head ${groupUnread || groupMentions ? "unread" : ""}"
@@ -612,7 +617,7 @@ function agoDrawSide() {
            ondrop="agoDropRow(event,'group','${esc(g.id)}')"
            onclick="agoToggleGroup('${esc(g.id)}')"
            title="${open ? "Collapse" : "Expand"} ${esc(g.name)}">
-        <span class="ago-caret ${open ? "open" : ""}">▸</span>
+        <span class="ago-caret ${open ? "open" : ""}">${icon("chevron-right")}</span>
         <span class="ago-group-title">
           <span class="nm">${esc(g.name)}</span>
           ${groupDel}
@@ -635,14 +640,14 @@ function agoDrawSide() {
       <span class="side-title-actions">
         <button class="ago-side-toggle filter ${_agoUnreadsOnly ? "on" : ""}"
           title="${_agoUnreadsOnly ? "Show all channels" : "Show unreads only"}"
-          onclick="agoToggleUnreadsOnly()">◐</button>
-        <button class="ago-side-toggle collapse" title="Collapse groups" onclick="agoToggleSide()">«</button>
+          onclick="agoToggleUnreadsOnly()">${icon("circle-dot")}</button>
+        <button class="ago-side-toggle collapse" title="Collapse groups" onclick="agoToggleSide()">${icon("chevrons-left")}</button>
       </span></div>
-    <button class="ago-side-toggle expand" title="Show groups" onclick="agoToggleSide()">»</button>
+    <button class="ago-side-toggle expand" title="Show groups" onclick="agoToggleSide()">${icon("chevrons-right")}</button>
     ${anyUnread ? `<span class="ago-side-dot ${anyMention ? "mention" : ""}" title="Unread messages"></span>` : ""}
     <div class="ago-inbox-item ${_agoInboxOpen ? "active" : ""} ${threadTotal ? "unread" : ""}"
          onclick="agoOpenInbox()">
-      <span class="tico">🧵</span><span class="nm">Threads</span>
+      <span class="tico">${icon("messages-square")}</span><span class="nm">Threads</span>
       ${agoBadgeHTML(threadTotal, 0)}
     </div>
     <div class="ago-groups">${groupRows ||
@@ -803,10 +808,10 @@ function agoDrawMain() {
   if (!channel) {
     box.innerHTML = `
       <div class="ago-head ago-head-empty">
-        <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">‹</button>
+        <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">${icon("chevron-left")}</button>
         <div class="ago-head-text"><span class="ago-chan-name">Agora</span></div>
       </div>
-      <div class="empty"><div class="glyph">▣</div>
+      <div class="empty"><div class="glyph">${icon("layout-grid")}</div>
       <div>${group ? "No channel selected" : "Welcome to Agora"}</div>
       <div class="hint">${group
         ? "Pick or create a channel in this group to start chatting."
@@ -833,12 +838,12 @@ function agoDrawMain() {
         <span class="dim" title="${esc(channel.topic || "")}">${esc(channel.topic || group.name)}</span>
         ${agoIsAdmin()
           ? `<button class="ago-edit-btn" title="Rename #${esc(channel.name)} / edit topic"
-               onclick="agoStartChanEdit()">✎</button>`
+               onclick="agoStartChanEdit()">${icon("pencil")}</button>`
           : ""}
       </div>`;
   box.innerHTML = `
     <div class="ago-head">
-      <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">‹</button>
+      <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">${icon("chevron-left")}</button>
       ${headText}
       <div class="ago-head-actions">
         ${_agoVoiceOK ? `
@@ -846,15 +851,15 @@ function agoDrawMain() {
           title="${_agoSpeakAll
             ? "Stop speaking agent replies aloud"
             : "Speak agent replies aloud (applies to every channel)"}"
-          onclick="agoSpeakToggle()">${_agoSpeakAll ? "🔊" : "🔇"}</button>
+          onclick="agoSpeakToggle()">${_agoSpeakAll ? icon("volume-2") : icon("volume-x")}</button>
         <button class="btn sm ago-live-btn ${agoLiveScopeActive(null) ? "active" : ""}"
           title="${agoLiveScopeActive(null)
             ? "End the live voice conversation"
             : "Live voice: talk hands-free and hear the replies"}"
-          onclick="agoLiveToggle(null)">🎧 Live</button>` : ""}
+          onclick="agoLiveToggle(null)">${icon("headphones")} Live</button>` : ""}
         <button class="btn sm ago-star-toggle ${_agoStarsOpen ? "active" : ""}"
           title="Starred messages in #${esc(channel.name)}"
-          onclick="agoToggleStarList()">${_agoStars.length ? "★ " + _agoStars.length : "☆"}</button>
+          onclick="agoToggleStarList()">${_agoStars.length ? icon("star", "fill") + " " + _agoStars.length : icon("star")}</button>
         <button class="btn sm ${_agoMembers ? "active" : ""}" onclick="agoToggleMembers()">Members</button>
         ${agoIsAdmin()
           ? `<button class="btn sm danger ${agoArmed("group:" + group.id) ? "armed" : ""}" onclick="agoDeleteGroup()">
@@ -935,17 +940,17 @@ function agoPinBarHTML() {
           </div>
           <span class="ago-pin-meta">${p.reply_count ? p.reply_count + " repl" + (p.reply_count === 1 ? "y" : "ies") + " · " : ""}${esc(fmtTs(p.ts))}</span>
           <button class="ago-x" title="Unpin"
-            onclick="event.stopPropagation(); agoTogglePin(${p.id})">✕</button>
+            onclick="event.stopPropagation(); agoTogglePin(${p.id})">${icon("x")}</button>
         </div>`).join("")}
     </div>` : "";
   return `
     <div class="ago-pin-wrap">
       <button class="ago-pinbar ${_agoPinsOpen ? "open" : ""}" onclick="agoTogglePinList()"
         title="${_agoPinsOpen ? "Hide pinned threads" : "Show pinned threads"}">
-        <span class="ago-pin-ico">📌</span>
+        <span class="ago-pin-ico">${icon("pin")}</span>
         <span class="ago-pin-count">${_agoPins.length} pinned</span>
         ${!_agoPinsOpen ? `<span class="ago-pin-preview">${esc(agoPinSnippet(first))}</span>` : ""}
-        <span class="ago-pin-caret">${_agoPinsOpen ? "▴" : "▾"}</span>
+        <span class="ago-pin-caret">${_agoPinsOpen ? icon("chevron-up") : icon("chevron-down")}</span>
       </button>
       ${rows}
     </div>`;
@@ -1005,10 +1010,10 @@ function agoStarPopHTML() {
       </div>
       <span class="ago-pin-meta">${s.thread_id != null ? "in thread · " : ""}${esc(fmtTs(s.ts))}</span>
       <button class="ago-x" title="Unstar"
-        onclick="event.stopPropagation(); agoToggleStar(${s.id})">✕</button>
+        onclick="event.stopPropagation(); agoToggleStar(${s.id})">${icon("x")}</button>
     </div>`).join("")
     : `<div class="dim" style="padding:10px 12px;font-size:12px">
-         Nothing starred in this channel yet — hover a message and hit ☆ star.</div>`;
+         Nothing starred in this channel yet — hover a message and hit ${icon("star")} star.</div>`;
   return `<div class="ago-pin-wrap"><div class="ago-pin-pop">${rows}</div></div>`;
 }
 
@@ -1107,22 +1112,22 @@ function agoBubble(m, inThread) {
     ? `<button class="ago-replies" onclick="agoOpenThread(${m.id})">${m.reply_count} repl${m.reply_count === 1 ? "y" : "ies"} →</button>`
     : "";
   const threadBtn = !inThread
-    ? `<button class="ago-thread-btn" title="Reply in thread" onclick="agoOpenThread(${m.id})">↳ thread</button>`
+    ? `<button class="ago-thread-btn" title="Reply in thread" onclick="agoOpenThread(${m.id})">${icon("corner-down-right")} thread</button>`
     : "";
   const pinnable = m.thread_id == null;
   const pinned = pinnable && agoIsPinned(m.id);
   const pinBtn = pinnable
     ? `<button class="ago-thread-btn ago-pin-btn ${pinned ? "pinned" : ""}"
          title="${pinned ? "Unpin this thread" : "Pin this thread for quick access"}"
-         onclick="agoTogglePin(${m.id})">${pinned ? "📌 unpin" : "⚲ pin"}</button>`
+         onclick="agoTogglePin(${m.id})">${pinned ? icon("pin-off") + " unpin" : icon("pin") + " pin"}</button>`
     : "";
   const starred = agoIsStarred(m.id);
   const starBtn = `<button class="ago-thread-btn ago-star-btn ${starred ? "starred" : ""}"
        title="${starred ? "Remove from your starred messages" : "Star this message"}"
-       onclick="agoToggleStar(${m.id})">${starred ? "★ starred" : "☆ star"}</button>`;
+       onclick="agoToggleStar(${m.id})">${starred ? icon("star", "fill") + " starred" : icon("star") + " star"}</button>`;
   const foot = `<div class="ago-bubble-foot">${replies}${threadBtn}${pinBtn}${starBtn}</div>`;
-  const mark = (pinned ? '<span class="ago-pinned-mark" title="Pinned">📌</span>' : "")
-    + (starred ? '<span class="ago-starred-mark" title="Starred by you">★</span>' : "");
+  const mark = (pinned ? `<span class="ago-pinned-mark" title="Pinned">${icon("pin")}</span>` : "")
+    + (starred ? `<span class="ago-starred-mark" title="Starred by you">${icon("star", "fill")}</span>` : "");
   return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(m.text)}${agoAttachmentsHTML(m)}${agoOptionsHTML(m)}${foot}</div>`;
 }
 function agoOptionsHTML(m) {
@@ -1170,7 +1175,7 @@ function agoDrawMessages() {
     html += agoMsgHTML(m, false);
   }
   box.innerHTML = html
-    || `<div class="empty"><div class="glyph">◍</div><div>No messages yet</div>
+    || `<div class="empty"><div class="glyph">${icon("message-circle")}</div><div>No messages yet</div>
        <div class="hint">Say something — member agents will answer here. Use the Members button to invite an agent.</div></div>`;
   const divider = dividerPlaced && document.getElementById("ago-new-divider");
   if (_agoLandOnDivider && divider) {
@@ -1187,7 +1192,7 @@ function agoDrawMessages() {
 
 function agoStatusHTML(progress, typing) {
   const parts = progress.map(p =>
-    `<div class="ago-progress">⚙ <b>${esc(p.agent_name)}</b> ${esc(p.text)}</div>`);
+    `<div class="ago-progress">${icon("loader", "spin")} <b>${esc(p.agent_name)}</b> ${esc(p.text)}</div>`);
   if (typing.length) {
     const names = typing.map(t => esc(t.name));
     parts.push(`<div class="ago-typing">${names.join(", ")} typing<span class="dots">…</span></div>`);
@@ -1266,7 +1271,7 @@ function agoDrawMention() {
   pop.innerHTML = _agoMention.items.map((c, i) => `
     <div class="ago-mention-opt ${i === _agoMention.active ? "active" : ""}"
          onmousedown="event.preventDefault(); agoPickMention(${i})">
-      ${c.type === "agent" ? agoAgentAvatarHTML(c.id, "sm") : '<span class="ago-av sm">👤</span>'}
+      ${c.type === "agent" ? agoAgentAvatarHTML(c.id, "sm") : `<span class="ago-av sm">${icon("user")}</span>`}
       <span class="mname">${esc(c.name)}</span>
       <span class="mmeta">${c.type}</span>
     </div>`).join("");
@@ -1430,7 +1435,7 @@ function agoHumanSize(n) {
 function agoAttachBtnHTML(threadId) {
   const arg = threadId != null ? threadId : "null";
   return `<button class="btn ago-attach" title="Attach files (or paste / drop them)"
-    onclick="agoPickFiles(${arg})">📎</button>`;
+    onclick="agoPickFiles(${arg})">${icon("paperclip")}</button>`;
 }
 
 function agoFileChipsHTML(threadId) {
@@ -1439,10 +1444,10 @@ function agoFileChipsHTML(threadId) {
   const arg = threadId != null ? threadId : "null";
   return `<div class="ago-pending">${files.map((f, i) => `
     <span class="ago-pending-chip" title="${esc(f.name)}">
-      ${(f.type || "").startsWith("image/") ? "🖼" : "📄"}
+      ${(f.type || "").startsWith("image/") ? icon("image") : icon("file-text")}
       <span class="fname">${esc(f.name)}</span>
       <span class="fsize">${agoHumanSize(f.size)}</span>
-      <button class="ago-x" title="Remove" onclick="agoRemoveFile(${arg}, ${i})">✕</button>
+      <button class="ago-x" title="Remove" onclick="agoRemoveFile(${arg}, ${i})">${icon("x")}</button>
     </span>`).join("")}</div>`;
 }
 
@@ -1524,7 +1529,7 @@ function agoAddrBtnHTML(threadId) {
   const n = agoAddrList(threadId).length;
   return `<button class="btn ago-addr-btn ${n ? "active" : ""}"
     title="Choose which agents you're talking to"
-    onclick="agoAddrTogglePop(${arg})">🤖${n ? `<span class="ago-addr-count">${n}</span>` : ""}</button>`;
+    onclick="agoAddrTogglePop(${arg})">${icon("bot")}${n ? `<span class="ago-addr-count">${n}</span>` : ""}</button>`;
 }
 
 function agoAddrChipsHTML(threadId) {
@@ -1538,7 +1543,7 @@ function agoAddrChipsHTML(threadId) {
         ${agoAgentAvatarHTML(a.id, "xs")}
         <span class="aname">${esc(a.name)}</span>
         <button class="ago-x" title="Stop addressing ${esc(a.name)}"
-          onclick="agoAddrToggle(${arg}, '${esc(a.id)}')">✕</button>
+          onclick="agoAddrToggle(${arg}, '${esc(a.id)}')">${icon("x")}</button>
       </span>`).join("")}
     <button class="ago-addr-clear" title="Address everyone in the channel again"
       onclick="agoAddrClear(${arg})">Clear</button>
@@ -1556,7 +1561,7 @@ function agoAddrPopHTML(threadId) {
          onclick="agoAddrToggle(${arg}, '${esc(a.id)}')">
       ${agoAgentAvatarHTML(a.id, "sm")}
       <span class="mname">${esc(a.name)}</span>
-      <span class="ago-addr-check">${on ? "✓" : ""}</span>
+      <span class="ago-addr-check">${on ? icon("check") : ""}</span>
     </div>`;
   }).join("");
   return `<div class="ago-addr-pop" id="ago-addr-pop">
@@ -1588,8 +1593,8 @@ function agoAttachmentsHTML(m) {
     if (AGO_BROWSER_IMAGE.test(f.mime || "")) {
       return `<a class="ago-att-img" href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${esc(f.filename)}" loading="lazy"></a>`;
     }
-    const icon = (f.mime || "").startsWith("image/") ? "🖼" : "📄";
-    return `<a class="ago-att-file" href="${url}" download="${esc(f.filename)}" title="Download ${esc(f.filename)}">${icon} <span class="fname">${esc(f.filename)}</span> <span class="fsize">${agoHumanSize(f.size)}</span></a>`;
+    const ico = (f.mime || "").startsWith("image/") ? icon("image") : icon("file-text");
+    return `<a class="ago-att-file" href="${url}" download="${esc(f.filename)}" title="Download ${esc(f.filename)}">${ico} <span class="fname">${esc(f.filename)}</span> <span class="fsize">${agoHumanSize(f.size)}</span></a>`;
   });
   return `<div class="ago-atts">${parts.join("")}</div>`;
 }
@@ -1651,7 +1656,7 @@ function agoDrawThread() {
   box.innerHTML = `
     <div class="ago-head">
       <button class="btn sm ago-back" title="Back to #${esc(channel ? channel.name : "channel")}"
-        onclick="agoCloseThread()">‹</button>
+        onclick="agoCloseThread()">${icon("chevron-left")}</button>
       <div class="ago-head-text">
         <span class="ago-chan-name">Thread</span>
         ${channel ? `<span class="dim"><span class="hash">#</span>${esc(channel.name)}</span>` : ""}
@@ -1662,13 +1667,13 @@ function agoDrawThread() {
           title="${agoLiveScopeActive(_agoThreadRoot.id)
             ? "End the live voice conversation in this thread"
             : "Live voice in this thread: talk hands-free, turns post here"}"
-          onclick="agoLiveToggle(${_agoThreadRoot.id})">🎧 Live</button>` : ""}
+          onclick="agoLiveToggle(${_agoThreadRoot.id})">${icon("headphones")} Live</button>` : ""}
         <button class="btn sm ${agoIsPinned(_agoThreadRoot.id) ? "active" : ""}"
           title="${agoIsPinned(_agoThreadRoot.id) ? "Unpin this thread" : "Pin this thread for quick access"}"
-          onclick="agoTogglePin(${_agoThreadRoot.id})">${agoIsPinned(_agoThreadRoot.id) ? "📌 Pinned" : "⚲ Pin"}</button>
+          onclick="agoTogglePin(${_agoThreadRoot.id})">${agoIsPinned(_agoThreadRoot.id) ? icon("pin", "fill") + " Pinned" : icon("pin") + " Pin"}</button>
         <button class="btn sm ago-thread-expand" title="${_agoThreadExpanded ? "Shrink thread back to the side panel" : "Expand thread to full width"}"
-          onclick="agoToggleThreadSize()">${_agoThreadExpanded ? "⤡" : "⤢"}</button>
-        <button class="btn sm ago-thread-close" onclick="agoCloseThread()">✕</button>
+          onclick="agoToggleThreadSize()">${_agoThreadExpanded ? icon("minimize-2") : icon("maximize-2")}</button>
+        <button class="btn sm ago-thread-close" onclick="agoCloseThread()">${icon("x")}</button>
       </div>
     </div>
     <div class="ago-log ago-thread-log" id="ago-thread-log" onscroll="agoOnThreadScroll()">
@@ -1732,7 +1737,7 @@ function agoDrawMembers() {
     const off = m.member_type === "agent" && liveById[m.member_id] === false;
     const mark = m.member_type === "agent"
       ? agoAgentAvatarHTML(m.member_id, "sm")
-      : `<span class="ago-av sm">👤</span>`;
+      : `<span class="ago-av sm">${icon("user")}</span>`;
     return `
     <div class="ago-member">
       ${mark}
@@ -1740,7 +1745,7 @@ function agoDrawMembers() {
       <span class="mmeta">${esc(m.role)}${m.channel_id ? " · " + esc(chanName(m.channel_id)) : ""}${off
         ? ' · <span class="ago-off">offline — won\u2019t reply</span>' : ""}</span>
       ${admin ? `<button class="ago-x" title="Remove"
-        onclick="agoRemoveMember('${esc(m.member_type)}','${esc(m.member_id)}','${esc(m.channel_id || "")}')">✕</button>` : ""}
+        onclick="agoRemoveMember('${esc(m.member_type)}','${esc(m.member_id)}','${esc(m.channel_id || "")}')">${icon("x")}</button>` : ""}
     </div>`;
   }).join("");
   const agentOpts = _agoAvailAgents.map(a =>
@@ -1762,7 +1767,7 @@ function agoDrawMembers() {
         <span class="ago-chan-name">Members</span>
         <span class="dim">${esc(g.name)}</span>
       </div>
-      <button class="btn sm" title="Close members" onclick="agoToggleMembers()">✕</button>
+      <button class="btn sm" title="Close members" onclick="agoToggleMembers()">${icon("x")}</button>
     </div>
     <div class="ago-members-body">
       <div class="ago-member-list">${rows || '<div class="dim" style="padding:6px 0;font-size:12px">No members yet.</div>'}</div>
@@ -1966,12 +1971,12 @@ function agoVoiceBtnHTML(threadId) {
   }
   if (_agoRec && _agoRec.key === key) {
     return `<button class="btn ago-mic cancel" title="Discard recording"
-        onclick="agoVoiceCancel()">✕</button>
+        onclick="agoVoiceCancel()">${icon("x")}</button>
       <button class="btn ago-mic recording" title="Stop and send"
-        onclick="agoVoiceToggle(${arg})">■&nbsp;<span class="ago-rec-time" id="ago-rec-time-${key}">0:00</span></button>`;
+        onclick="agoVoiceToggle(${arg})">${icon("square", "fill")}&nbsp;<span class="ago-rec-time" id="ago-rec-time-${key}">0:00</span></button>`;
   }
   return `<button class="btn ago-mic" title="Record a voice message"
-      onclick="agoVoiceToggle(${arg})">🎙</button>`;
+      onclick="agoVoiceToggle(${arg})">${icon("mic")}</button>`;
 }
 
 function agoRecMime() {
@@ -2119,7 +2124,7 @@ async function agoPlaySpeech(url, onDone) {
   } catch (e) {
     if (!_agoPlayWarned) {
       _agoPlayWarned = true;
-      toast("Couldn't play the reply — tap 🔊 or 🎧 Live again to allow sound on this device",
+      toast("Couldn't play the reply — tap the speaker or Live button again to allow sound on this device",
         { variant: "warn" });
     }
     done();
@@ -2221,7 +2226,7 @@ function agoLiveLabel(state) {
   // With 🔊 off the session still listens and posts turns, but replies stay
   // text-only — say so instead of implying audio is coming.
   if (state === "listening" && !_agoSpeakAll) {
-    return "Listening — replies appear in chat (\uD83D\uDD0A off)";
+    return "Listening — replies appear in chat (speaker off)";
   }
   return AGO_LIVE_LABELS[state] || state;
 }

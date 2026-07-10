@@ -13,8 +13,10 @@ import {
   View,
 } from "react-native";
 import { Stack, router } from "expo-router";
+import { MessagesSquare } from "lucide-react-native";
 import { useThreads } from "../../src/api/queries";
 import type { ThreadRow } from "../../src/api/types";
+import { Icon } from "../../src/components/Icon";
 import { fmtTs } from "../../src/lib/format";
 import { colors } from "../../src/lib/theme";
 
@@ -93,7 +95,7 @@ export default function ThreadsScreen() {
             <ActivityIndicator color={colors.dim} style={{ paddingVertical: 40 }} />
           ) : (
             <View style={styles.empty}>
-              <Text style={styles.emptyGlyph}>🧵</Text>
+              <Icon icon={MessagesSquare} size={34} color={colors.faint} />
               <Text style={styles.emptyText}>No threads yet</Text>
               <Text style={styles.emptyHint}>
                 Threads you start or reply in show up here, with unread counts
@@ -140,7 +142,6 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: colors.text, fontSize: 11.5, fontWeight: "800" },
   empty: { alignItems: "center", paddingVertical: 60, gap: 6 },
-  emptyGlyph: { fontSize: 30, opacity: 0.6 },
   emptyText: { color: colors.dim, fontSize: 15, fontWeight: "600" },
   emptyHint: {
     color: colors.faint,

@@ -7,10 +7,12 @@ import { Image } from "expo-image";
 // The legacy API is the one with documented header support on downloads.
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { FileText } from "lucide-react-native";
 import { authHeaders, fileUrl, type Session } from "../api/client";
 import type { Attachment } from "../api/types";
 import { fmtSize } from "../lib/format";
 import { colors } from "../lib/theme";
+import { Icon } from "./Icon";
 import { toastErr } from "./Toast";
 
 async function downloadAndShare(session: Session, att: Attachment) {
@@ -39,7 +41,7 @@ function FileChip({ session, att }: { session: Session; att: Attachment }) {
         }
       }}
     >
-      {busy ? <ActivityIndicator size="small" color={colors.dim} /> : <Text style={styles.icon}>📄</Text>}
+      {busy ? <ActivityIndicator size="small" color={colors.dim} /> : <Icon icon={FileText} size={16} />}
       <View style={{ flexShrink: 1 }}>
         <Text style={styles.name} numberOfLines={1}>
           {att.filename}
@@ -98,7 +100,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     maxWidth: 260,
   },
-  icon: { fontSize: 16 },
   name: { color: colors.text, fontSize: 13, fontWeight: "600" },
   size: { color: colors.dim, fontSize: 11.5 },
 });
