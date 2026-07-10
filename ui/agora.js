@@ -600,7 +600,7 @@ function agoDrawSide() {
       : "";
     const groupArmed = agoArmed("group:" + g.id);
     const groupDel = (g.role === "admin" || isOwner())
-      ? `<button class="ago-x ${groupArmed ? "armed" : ""}" title="${groupArmed
+      ? `<button class="ago-x ago-group-del ${groupArmed ? "armed" : ""}" title="${groupArmed
           ? "Click again to delete " + esc(g.name) + " and everything in it" : "Delete group"}"
            onclick="event.stopPropagation(); agoDeleteGroup('${esc(g.id)}')">${groupArmed ? "Sure?" : "✕"}</button>`
       : "";
@@ -613,10 +613,12 @@ function agoDrawSide() {
            onclick="agoToggleGroup('${esc(g.id)}')"
            title="${open ? "Collapse" : "Expand"} ${esc(g.name)}">
         <span class="ago-caret ${open ? "open" : ""}">▸</span>
-        <span class="nm">${esc(g.name)}</span>
+        <span class="ago-group-title">
+          <span class="nm">${esc(g.name)}</span>
+          ${groupDel}
+        </span>
         ${open ? "" : agoBadgeHTML(groupUnread, groupMentions)}
         <span class="role">${esc(g.role || "")}</span>
-        ${groupDel}
       </div>
       ${channels}${addChan}
     </div>`;
@@ -870,12 +872,12 @@ function agoDrawMain() {
     ${agoAddrChipsHTML(null)}
     ${agoFileChipsHTML(null)}
     <div class="chat-input" ondragover="agoDragOver(event)" ondrop="agoDrop(event, null)">
+      ${agoAddrBtnHTML(null)}
       <textarea id="ago-msg" rows="1" placeholder="Message #${esc(channel.name)}"
         title="@mention an agent to address it directly"
         onkeydown="agoKeydown(event, null)" oninput="autoGrow(this); agoMentionInput('ago-msg')"
         onpaste="agoPaste(event, null)"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
-      ${agoAddrBtnHTML(null)}
       ${agoAttachBtnHTML(null)}
       ${agoVoiceBtnHTML(null)}
       <button class="btn primary" onclick="agoSend(null)">Send</button>
@@ -1657,11 +1659,11 @@ function agoDrawThread() {
     ${agoAddrChipsHTML(_agoThreadRoot.id)}
     ${agoFileChipsHTML(_agoThreadRoot.id)}
     <div class="chat-input" ondragover="agoDragOver(event)" ondrop="agoDrop(event, ${_agoThreadRoot.id})">
+      ${agoAddrBtnHTML(_agoThreadRoot.id)}
       <textarea id="ago-thread-msg" rows="1" placeholder="Reply in thread…"
         onkeydown="agoKeydown(event, ${_agoThreadRoot.id})" oninput="autoGrow(this); agoMentionInput('ago-thread-msg')"
         onpaste="agoPaste(event, ${_agoThreadRoot.id})"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
-      ${agoAddrBtnHTML(_agoThreadRoot.id)}
       ${agoAttachBtnHTML(_agoThreadRoot.id)}
       ${agoVoiceBtnHTML(_agoThreadRoot.id)}
       <button class="btn primary" onclick="agoSend(${_agoThreadRoot.id})">Send</button>
