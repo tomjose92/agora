@@ -58,6 +58,8 @@ let _agoUnreadsOnly =           // sidebar shows only unread/mentioned channels
   localStorage.getItem("agora_unreads_only") === "1";
 let _agoEditingChan = false;    // channel header rename/topic editor open
 let _agoDrag = null;            // drag-reorder state {type, id, gid}
+let _agoAddr = {};              // composer key ("main" | "t<id>") -> selected agent ids
+let _agoAddrOpen = null;        // composer key whose "talk to" picker popup is open
 
 /* Voice features (voice notes, speak-aloud, live voice) need the server to
    have an OPENAI_API_KEY; /api/me reports it and the controls hide without
@@ -712,6 +714,8 @@ function agoSelectChannel(gid, cid) {
     agoLiveStop();      // so is a live voice session
     agoSpeakStop();     // don't keep reading the previous channel's replies
     _agoFiles = {};     // pending attachments belong to the previous channel
+    _agoAddr = {};      // so does the "talk to" agent selection
+    _agoAddrOpen = null;
     _agoSel.g = gid; _agoSel.c = cid;
     _agoThreadRoot = null; _agoThreadMsgs = []; _agoMembers = null;
     _agoPins = []; _agoPinsOpen = false;
@@ -862,6 +866,7 @@ function agoDrawMain() {
     <div class="ago-log" id="ago-log" onscroll="agoOnScroll()"></div>
     <div class="ago-status" id="ago-status"></div>
     ${agoLiveStripHTML(null)}
+    ${agoAddrChipsHTML(null)}
     ${agoFileChipsHTML(null)}
     <div class="chat-input" ondragover="agoDragOver(event)" ondrop="agoDrop(event, null)">
       <textarea id="ago-msg" rows="1" placeholder="Message #${esc(channel.name)}"
@@ -869,9 +874,11 @@ function agoDrawMain() {
         onkeydown="agoKeydown(event, null)" oninput="autoGrow(this); agoMentionInput('ago-msg')"
         onpaste="agoPaste(event, null)"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
+      ${agoAddrBtnHTML(null)}
       ${agoAttachBtnHTML(null)}
       ${agoVoiceBtnHTML(null)}
       <button class="btn primary" onclick="agoSend(null)">Send</button>
+      ${agoAddrPopHTML(null)}
     </div>`;
   const msgBox = document.getElementById("ago-msg");
   if (msgBox && draft) { msgBox.value = draft; autoGrow(msgBox); }
@@ -1273,6 +1280,7 @@ function agoKeydown(e, threadId) {
     }
     if (e.key === "Escape") { agoCloseMention(); return; }
   }
+  if (e.key === "Escape" && _agoAddrOpen) { agoAddrTogglePop(threadId); return; }
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agoSend(threadId); }
 }
 async function agoSend(threadId) {
@@ -1284,13 +1292,17 @@ async function agoSend(threadId) {
   const text = input.value.trim();
   const files = agoPendingFiles(threadId);
   if (!text && !files.length) return;
+  // "Talk to" selection: prepend the chosen agents' mentions ("@a, @b, …")
+  // so the message opens with their names and routes to exactly them.
+  const addr = agoAddrPrefix(threadId);
+  const outText = addr ? (text ? `${addr}, ${text}` : addr) : text;
   input.value = "";
   autoGrow(input);
   try {
     let msg;
     if (files.length) {
       const fd = new FormData();
-      fd.append("text", text);
+      fd.append("text", outText);
       if (threadId != null) fd.append("thread_id", threadId);
       for (const f of files) fd.append("files", f, f.name);
       const res = await fetch(`/api/channels/${encodeURIComponent(channel.id)}/messages/upload`, {
@@ -1307,7 +1319,7 @@ async function agoSend(threadId) {
     } else {
       msg = await apiPost(
         `/api/channels/${encodeURIComponent(channel.id)}/messages`,
-        threadId ? { text, thread_id: threadId } : { text });
+        threadId ? { text: outText, thread_id: threadId } : { text: outText });
     }
     agoIngestMessage(msg);   // websocket will dedupe by id
   } catch (e) {
@@ -1408,6 +1420,115 @@ function agoFileChipsHTML(threadId) {
 
 function agoRedrawComposer(threadId) {
   if (threadId != null) agoDrawThread(); else agoDrawMain();
+}
+
+/* ---------- "talk to" agent multi-select (@ button in the composer) ----------
+   Pick which of the channel's agents a message addresses; the selection is
+   sticky per composer and its @mentions are prepended on send ("@a, @b, …"),
+   so the existing mention routing delivers to exactly those agents. */
+function agoAddrList(threadId) { return _agoAddr[agoRecKey(threadId)] || []; }
+
+function agoAddrSelected(threadId) {
+  // Resolve ids -> agent records; drops agents that left the channel.
+  return agoAddrList(threadId)
+    .map(id => _agoChanAgents.find(a => a.id === id))
+    .filter(Boolean);
+}
+
+function agoAddrToggle(threadId, agentId) {
+  const key = agoRecKey(threadId);
+  const cur = _agoAddr[key] || [];
+  _agoAddr[key] = cur.includes(agentId) ? cur.filter(id => id !== agentId) : cur.concat(agentId);
+  if (!_agoAddr[key].length) delete _agoAddr[key];
+  agoRedrawComposer(threadId);
+  agoAddrFocus(threadId);
+}
+
+function agoAddrClear(threadId) {
+  delete _agoAddr[agoRecKey(threadId)];
+  agoRedrawComposer(threadId);
+  agoAddrFocus(threadId);
+}
+
+function agoAddrTogglePop(threadId) {
+  const key = agoRecKey(threadId);
+  _agoAddrOpen = _agoAddrOpen === key ? null : key;
+  agoRedrawComposer(threadId);
+  agoAddrFocus(threadId);
+}
+
+function agoAddrFocus(threadId) {
+  const input = document.getElementById(threadId != null ? "ago-thread-msg" : "ago-msg");
+  if (input) input.focus();
+}
+
+/* Click-away closes the picker (the button and popup clicks are exempt). */
+document.addEventListener("click", (e) => {
+  if (!_agoAddrOpen) return;
+  const t = e.target;
+  if (t && t.closest && (t.closest(".ago-addr-pop") || t.closest(".ago-addr-btn"))) return;
+  const key = _agoAddrOpen;
+  _agoAddrOpen = null;
+  if (key === "main") agoDrawMain(); else agoDrawThread();
+});
+
+function agoAddrPrefix(threadId) {
+  const sel = agoAddrSelected(threadId);
+  if (!sel.length) return "";
+  return sel.map(a => "@" + agoSlug(a.name)).join(", ");
+}
+
+function agoAddrBtnHTML(threadId) {
+  if (!_agoChanAgents.length) return "";
+  const arg = threadId != null ? threadId : "null";
+  const n = agoAddrList(threadId).length;
+  return `<button class="btn ago-addr-btn ${n ? "active" : ""}"
+    title="Choose which agents you're talking to"
+    onclick="agoAddrTogglePop(${arg})">@${n ? `<span class="ago-addr-count">${n}</span>` : ""}</button>`;
+}
+
+function agoAddrChipsHTML(threadId) {
+  const sel = agoAddrSelected(threadId);
+  if (!sel.length) return "";
+  const arg = threadId != null ? threadId : "null";
+  return `<div class="ago-addr-bar">
+    <span class="ago-addr-label">To</span>
+    ${sel.map(a => `
+      <span class="ago-addr-chip" title="@${esc(agoSlug(a.name))}">
+        ${agoAgentAvatarHTML(a.id, "xs")}
+        <span class="aname">${esc(a.name)}</span>
+        <button class="ago-x" title="Stop addressing ${esc(a.name)}"
+          onclick="agoAddrToggle(${arg}, '${esc(a.id)}')">✕</button>
+      </span>`).join("")}
+    <button class="ago-addr-clear" title="Address everyone in the channel again"
+      onclick="agoAddrClear(${arg})">Clear</button>
+  </div>`;
+}
+
+function agoAddrPopHTML(threadId) {
+  if (_agoAddrOpen !== agoRecKey(threadId)) return "";
+  const arg = threadId != null ? threadId : "null";
+  const sel = agoAddrList(threadId);
+  const rows = _agoChanAgents.map(a => {
+    const on = sel.includes(a.id);
+    return `
+    <div class="ago-addr-opt ${on ? "selected" : ""}" role="option" aria-selected="${on}"
+         onclick="agoAddrToggle(${arg}, '${esc(a.id)}')">
+      ${agoAgentAvatarHTML(a.id, "sm")}
+      <span class="mname">${esc(a.name)}</span>
+      <span class="ago-addr-check">${on ? "✓" : ""}</span>
+    </div>`;
+  }).join("");
+  return `<div class="ago-addr-pop" id="ago-addr-pop">
+    <div class="ago-addr-pop-head">
+      <span>Talk to</span>
+      ${sel.length ? `<button class="ago-addr-clear" onclick="agoAddrClear(${arg})">Clear</button>` : ""}
+    </div>
+    ${rows || `<div class="ago-addr-empty">No agents in this channel yet.</div>`}
+    <div class="ago-addr-pop-foot">${sel.length
+      ? "Their names are prepended to every message you send here."
+      : "No selection — everyone in the channel is addressed."}</div>
+  </div>`;
 }
 
 /* Attachment URLs carry the token in the query — <img> tags can't set an
@@ -1520,15 +1641,18 @@ function agoDrawThread() {
     </div>
     <div class="ago-status" id="ago-thread-status"></div>
     ${agoLiveStripHTML(_agoThreadRoot.id)}
+    ${agoAddrChipsHTML(_agoThreadRoot.id)}
     ${agoFileChipsHTML(_agoThreadRoot.id)}
     <div class="chat-input" ondragover="agoDragOver(event)" ondrop="agoDrop(event, ${_agoThreadRoot.id})">
       <textarea id="ago-thread-msg" rows="1" placeholder="Reply in thread…"
         onkeydown="agoKeydown(event, ${_agoThreadRoot.id})" oninput="autoGrow(this); agoMentionInput('ago-thread-msg')"
         onpaste="agoPaste(event, ${_agoThreadRoot.id})"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
+      ${agoAddrBtnHTML(_agoThreadRoot.id)}
       ${agoAttachBtnHTML(_agoThreadRoot.id)}
       ${agoVoiceBtnHTML(_agoThreadRoot.id)}
       <button class="btn primary" onclick="agoSend(${_agoThreadRoot.id})">Send</button>
+      ${agoAddrPopHTML(_agoThreadRoot.id)}
     </div>`;
   const input = document.getElementById("ago-thread-msg");
   if (input && draft) { input.value = draft; autoGrow(input); }
