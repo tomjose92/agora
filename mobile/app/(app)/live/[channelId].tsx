@@ -1,5 +1,6 @@
 /* Live voice: a hands-free, full-screen conversation loop for one channel —
-   the mobile counterpart of the web UI's 🎧 Live strip.
+   or, when opened from a thread, for that one thread (turns post as replies
+   under the root) — the mobile counterpart of the web UI's 🎧 Live strip.
 
    Half-duplex cascade: the mic records continuously and a metering-based VAD
    (src/lib/vad.ts) endpoints each utterance; the clip goes to /voice?live=true
@@ -51,8 +52,16 @@ const IDLE_RECYCLE_MS = 45_000;
 const TURN_TIMEOUT_MS = 60_000; // same safety valve as the web loop
 
 export default function LiveScreen() {
-  const params = useLocalSearchParams<{ channelId: string; channelName?: string }>();
+  const params = useLocalSearchParams<{
+    channelId: string;
+    channelName?: string;
+    rootId?: string;
+    rootSnippet?: string;
+  }>();
   const channelId = params.channelId;
+  // Thread-scoped session: turns post as replies under this root, and only
+  // that thread's agent replies close the turn (same rule as the web UI).
+  const threadId = params.rootId ? Number(params.rootId) : null;
   const session = useSession((s) => s.session)!;
   const sendVoice = useSendVoice(channelId);
   const insets = useSafeAreaInsets();
@@ -135,7 +144,7 @@ export default function LiveScreen() {
       try {
         await sendVoice.mutateAsync({
           file: { uri, name: `live-${Date.now()}.m4a`, type: "audio/m4a" },
-          threadId: null,
+          threadId,
           live: true,
         });
       } catch (e) {
@@ -145,7 +154,7 @@ export default function LiveScreen() {
         void startMic();
       }
     },
-    [sendVoice, startMic],
+    [sendVoice, startMic, threadId],
   );
 
   /* -------------------------------------------------- VAD loop
@@ -178,12 +187,14 @@ export default function LiveScreen() {
   }, [recorderState]);
 
   /* -------------------------------------------------- agent replies
-     Only top-level replies in this channel close the turn and get spoken —
-     same scoping as the web session. */
+     Only replies in this session's scope close the turn and get spoken —
+     channel sessions take top-level replies, thread sessions their thread's.
+     Same scoping as the web session. */
 
   useEffect(() => {
     return onAgentMessage((m) => {
-      if (ended.current || m.channel_id !== channelId || m.thread_id != null) return;
+      if (ended.current || m.channel_id !== channelId) return;
+      if ((m.thread_id ?? null) !== threadId) return;
       if (turnTimer.current) clearTimeout(turnTimer.current);
       void (async () => {
         await stopMic(); // half-duplex: never record our own playback
@@ -198,7 +209,7 @@ export default function LiveScreen() {
         });
       })();
     });
-  }, [channelId, session, startMic, stopMic]);
+  }, [channelId, threadId, session, startMic, stopMic]);
 
   /* -------------------------------------------------- UI */
 
@@ -218,7 +229,20 @@ export default function LiveScreen() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <Pressable style={[styles.root, { paddingTop: insets.top + 18 }]} onPress={interrupt}>
-        <Text style={styles.channel}>🎧 # {params.channelName || channelId}</Text>
+        {threadId != null ? (
+          <>
+            <Text style={styles.channel}>
+              🧵 Thread · # {params.channelName || channelId}
+            </Text>
+            {params.rootSnippet ? (
+              <Text style={styles.rootSnippet} numberOfLines={2}>
+                {params.rootSnippet}
+              </Text>
+            ) : null}
+          </>
+        ) : (
+          <Text style={styles.channel}>🎧 # {params.channelName || channelId}</Text>
+        )}
         <View style={styles.center}>
           <View
             style={[
@@ -250,6 +274,14 @@ export default function LiveScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg, alignItems: "center" },
   channel: { color: colors.dim, fontSize: 14.5, fontWeight: "700" },
+  rootSnippet: {
+    color: colors.dim,
+    fontSize: 12.5,
+    marginTop: 6,
+    paddingHorizontal: 36,
+    textAlign: "center",
+    opacity: 0.8,
+  },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 34 },
   orb: {
     width: 130,
