@@ -19,7 +19,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../../../src/api/keys";
@@ -41,9 +41,16 @@ import { Composer, type MentionCandidate } from "../../../../src/components/Comp
 import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows";
 import { MessageItem } from "../../../../src/components/MessageItem";
 import { toastErr } from "../../../../src/components/Toast";
+import { onAgentMessage } from "../../../../src/lib/agentBus";
 import { useHeaderKeyboardOffset } from "../../../../src/lib/keyboard";
+import {
+  enqueueSpeech,
+  prepareSpeechAudio,
+  stopSpeech,
+} from "../../../../src/lib/speech";
 import { colors } from "../../../../src/lib/theme";
 import { useChannelLive } from "../../../../src/state/live";
+import { usePrefs } from "../../../../src/state/prefs";
 import { useSession } from "../../../../src/state/session";
 
 type Row = { kind: "root"; m: Message } | { kind: "msg"; m: Message };
@@ -127,6 +134,41 @@ export default function ThreadScreen() {
   const starredIds = useMemo(() => new Set((stars.data ?? []).map((s) => s.id)), [stars.data]);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
 
+  /* 🔊 speak-aloud: while this thread is focused (and not covered by the
+     live screen), agent replies landing in it are read out via server TTS —
+     the thread-scoped mirror of the channel screen's effect. */
+  const speakAloud = usePrefs((s) => s.speakAloud);
+  const setSpeakAloud = usePrefs((s) => s.setSpeakAloud);
+  useFocusEffect(
+    useCallback(() => {
+      if (!voiceOk || !speakAloud) return;
+      void prepareSpeechAudio();
+      const off = onAgentMessage((m) => {
+        if (m.channel_id === channelId && m.thread_id === rootId) {
+          enqueueSpeech(session, m.id);
+        }
+      });
+      return () => {
+        off();
+        stopSpeech();
+      };
+    }, [voiceOk, speakAloud, channelId, rootId, session]),
+  );
+
+  /* 🎧 live voice scoped to this thread: turns post as replies here. */
+  const openLive = useCallback(() => {
+    stopSpeech();
+    router.push({
+      pathname: "/(app)/live/[channelId]",
+      params: {
+        channelId,
+        channelName: params.channelName ?? "",
+        rootId: String(rootId),
+        rootSnippet: (root?.text ?? "").slice(0, 80),
+      },
+    });
+  }, [channelId, params.channelName, rootId, root?.text]);
+
   const listRef = useRef<FlashListRef<Row>>(null);
 
   const renderRow = useCallback(
@@ -149,6 +191,23 @@ export default function ThreadScreen() {
         options={{
           title: params.channelName ? `Thread · # ${params.channelName}` : "Thread",
           headerShown: true,
+          headerRight: () =>
+            voiceOk ? (
+              <View style={styles.headerBtns}>
+                <Pressable
+                  onPress={() => {
+                    if (speakAloud) stopSpeech();
+                    setSpeakAloud(!speakAloud);
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.headerBtn, !speakAloud && styles.headerBtnOff]}>🔊</Text>
+                </Pressable>
+                <Pressable onPress={openLive} hitSlop={8}>
+                  <Text style={styles.headerBtn}>🎧</Text>
+                </Pressable>
+              </View>
+            ) : null,
         }}
       />
       <KeyboardAvoidingView
@@ -237,6 +296,9 @@ export default function ThreadScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  headerBtns: { flexDirection: "row", gap: 16 },
+  headerBtn: { fontSize: 17 },
+  headerBtnOff: { opacity: 0.35 },
   rootMsg: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.borderStrong,
