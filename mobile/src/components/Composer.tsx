@@ -22,6 +22,7 @@ import {
   useAudioRecorderState,
 } from "expo-audio";
 import * as DocumentPicker from "expo-document-picker";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "../api/queries";
@@ -31,6 +32,35 @@ import { colors } from "../lib/theme";
 import { toast, toastErr } from "./Toast";
 
 const MAX_FILES = 5;
+
+/* Image types the rest of the stack digests: browsers render them and the
+   vision APIs accept them. Everything else (HEIC on every iPhone, AVIF...)
+   is re-encoded to JPEG on device before upload. */
+const WEB_SAFE_IMAGE = /^image\/(jpe?g|png|gif|webp)$/i;
+/** Longest edge for uploads; keeps photos comfortably under server caps. */
+const MAX_IMAGE_EDGE = 2048;
+
+async function toWebSafeImage(a: ImagePicker.ImagePickerAsset): Promise<OutgoingFile> {
+  const type = a.mimeType ?? "image/jpeg";
+  const name = a.fileName ?? `photo-${Date.now()}.jpg`;
+  const oversize = Math.max(a.width ?? 0, a.height ?? 0) > MAX_IMAGE_EDGE;
+  if (WEB_SAFE_IMAGE.test(type) && !oversize) {
+    return { uri: a.uri, name, type };
+  }
+  const ctx = ImageManipulator.manipulate(a.uri);
+  if (oversize) {
+    ctx.resize(
+      (a.width ?? 0) >= (a.height ?? 0) ? { width: MAX_IMAGE_EDGE } : { height: MAX_IMAGE_EDGE },
+    );
+  }
+  const rendered = await ctx.renderAsync();
+  const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
+  return {
+    uri: saved.uri,
+    name: name.replace(/\.[a-z0-9]+$/i, "") + ".jpg",
+    type: "image/jpeg",
+  };
+}
 
 export interface MentionCandidate {
   id: string;
@@ -196,13 +226,7 @@ export function Composer({
         quality: 0.9,
       });
       if (res.canceled) return;
-      addFiles(
-        res.assets.map((a, i) => ({
-          uri: a.uri,
-          name: a.fileName ?? `photo-${Date.now()}-${i}.jpg`,
-          type: a.mimeType ?? "image/jpeg",
-        })),
-      );
+      addFiles(await Promise.all(res.assets.map(toWebSafeImage)));
     } catch (e) {
       toastErr("Photo pick failed", e);
     }
@@ -217,13 +241,7 @@ export function Composer({
       }
       const res = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.9 });
       if (res.canceled) return;
-      addFiles(
-        res.assets.map((a, i) => ({
-          uri: a.uri,
-          name: a.fileName ?? `photo-${Date.now()}-${i}.jpg`,
-          type: a.mimeType ?? "image/jpeg",
-        })),
-      );
+      addFiles(await Promise.all(res.assets.map(toWebSafeImage)));
     } catch (e) {
       toastErr("Camera failed", e);
     }

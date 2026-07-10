@@ -312,6 +312,44 @@ fn safe_filename(name: &str) -> String {
     }
 }
 
+/// Image MIME from magic bytes, or None for anything that isn't a recognized
+/// image. Client-declared content types are unreliable (especially from mobile
+/// pickers), and the stored mime drives both inline rendering in the UI and
+/// the vision path on the agent side — so trust the bytes for images and fall
+/// back to the client's declaration for everything else.
+fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("image/png");
+    }
+    if data.starts_with(b"\xff\xd8\xff") {
+        return Some("image/jpeg");
+    }
+    if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    // ISO-BMFF image brands: HEIC (iPhone default), HEIF, AVIF.
+    if data.len() >= 12 && &data[4..8] == b"ftyp" {
+        return match &data[8..12] {
+            b"heic" | b"heix" | b"hevc" => Some("image/heic"),
+            b"heif" | b"mif1" | b"msf1" => Some("image/heif"),
+            b"avif" | b"avis" => Some("image/avif"),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// The mime to store for an upload: magic bytes for images, the client's
+/// content-type otherwise.
+fn attachment_mime(data: &[u8], declared: &str) -> String {
+    sniff_image_mime(data)
+        .map(str::to_string)
+        .unwrap_or_else(|| declared.split(';').next().unwrap_or("").trim().to_string())
+}
+
 fn resolve_thread(
     state: &AppState,
     channel_id: &str,
@@ -657,7 +695,7 @@ async fn post_message_upload(
                     return Err(err(StatusCode::BAD_REQUEST, "Too many files (max 5 per message)"));
                 }
                 let filename = safe_filename(field.file_name().unwrap_or("file"));
-                let mime = field.content_type().unwrap_or("").split(';').next().unwrap_or("").to_string();
+                let declared = field.content_type().unwrap_or("").to_string();
                 let data = field
                     .bytes()
                     .await
@@ -670,7 +708,7 @@ async fn post_message_upload(
                 }
                 attachments.push(NewAttachment {
                     filename,
-                    mime,
+                    mime: attachment_mime(&data, &declared),
                     data: data.to_vec(),
                 });
             }
@@ -1644,4 +1682,46 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
         }
     }
     state.hub.unregister_connection(conn_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sniff_recognizes_classic_web_formats() {
+        assert_eq!(sniff_image_mime(b"\x89PNG\r\n\x1a\n\x00\x00"), Some("image/png"));
+        assert_eq!(sniff_image_mime(b"\xff\xd8\xff\xe0rest"), Some("image/jpeg"));
+        assert_eq!(sniff_image_mime(b"GIF89a......"), Some("image/gif"));
+        assert_eq!(sniff_image_mime(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("image/webp"));
+    }
+
+    #[test]
+    fn sniff_recognizes_iso_bmff_image_brands() {
+        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypheic\x00\x00"), Some("image/heic"));
+        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypmif1\x00\x00"), Some("image/heif"));
+        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypavif\x00\x00"), Some("image/avif"));
+        // Video brands are not images.
+        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypisom\x00\x00"), None);
+    }
+
+    #[test]
+    fn sniff_rejects_non_images_and_short_input() {
+        assert_eq!(sniff_image_mime(b"plain text"), None);
+        assert_eq!(sniff_image_mime(b""), None);
+        assert_eq!(sniff_image_mime(b"RIFF"), None);
+    }
+
+    #[test]
+    fn attachment_mime_trusts_bytes_over_declaration() {
+        // A HEIC upload declared as octet-stream still stores as image/heic.
+        assert_eq!(
+            attachment_mime(b"\x00\x00\x00\x18ftypheic\x00\x00", "application/octet-stream"),
+            "image/heic"
+        );
+        // A JPEG mislabeled as png corrects to jpeg.
+        assert_eq!(attachment_mime(b"\xff\xd8\xff\xe0rest", "image/png"), "image/jpeg");
+        // Non-images keep the declared type, parameters stripped.
+        assert_eq!(attachment_mime(b"%PDF-1.7", "application/pdf; name=x"), "application/pdf");
+    }
 }

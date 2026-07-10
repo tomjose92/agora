@@ -1403,15 +1403,21 @@ function agoFileUrl(id) {
   return `/api/files/${encodeURIComponent(id)}${t ? "?token=" + encodeURIComponent(t) : ""}`;
 }
 
+/* Image formats <img> can decode everywhere. HEIC/HEIF/AVIF render as
+   download chips instead of broken inline images (only Safari decodes HEIC;
+   mobile converts to JPEG before upload, so these stay rare). */
+const AGO_BROWSER_IMAGE = /^image\/(jpeg|png|gif|webp|svg\+xml|bmp)$/;
+
 function agoAttachmentsHTML(m) {
   const files = m.attachments || [];
   if (!files.length) return "";
   const parts = files.map(f => {
     const url = agoFileUrl(f.id);
-    if ((f.mime || "").startsWith("image/")) {
+    if (AGO_BROWSER_IMAGE.test(f.mime || "")) {
       return `<a class="ago-att-img" href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${esc(f.filename)}" loading="lazy"></a>`;
     }
-    return `<a class="ago-att-file" href="${url}" download="${esc(f.filename)}" title="Download ${esc(f.filename)}">📄 <span class="fname">${esc(f.filename)}</span> <span class="fsize">${agoHumanSize(f.size)}</span></a>`;
+    const icon = (f.mime || "").startsWith("image/") ? "🖼" : "📄";
+    return `<a class="ago-att-file" href="${url}" download="${esc(f.filename)}" title="Download ${esc(f.filename)}">${icon} <span class="fname">${esc(f.filename)}</span> <span class="fsize">${agoHumanSize(f.size)}</span></a>`;
   });
   return `<div class="ago-atts">${parts.join("")}</div>`;
 }
