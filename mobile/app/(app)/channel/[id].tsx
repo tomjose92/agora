@@ -249,13 +249,16 @@ export default function ChannelScreen() {
     }, 80);
   }, [rows]);
 
+  const agentCandidates = useMemo<MentionCandidate[]>(
+    () => (channelAgents.data ?? []).map((a) => ({ id: a.id, name: a.name })),
+    [channelAgents.data],
+  );
   const mentionCandidates = useMemo<MentionCandidate[]>(() => {
-    const agents = (channelAgents.data ?? []).map((a) => ({ id: a.id, name: a.name }));
     const people = (members.data ?? [])
       .filter((m) => m.member_type === "user")
       .map((m) => ({ id: m.member_id, name: m.member_id }));
-    return [...agents, ...people];
-  }, [channelAgents.data, members.data]);
+    return [...agentCandidates, ...people];
+  }, [agentCandidates, members.data]);
 
   const starredIds = useMemo(() => new Set((stars.data ?? []).map((s) => s.id)), [stars.data]);
   const pinnedIds = useMemo(() => new Set((pins.data ?? []).map((p) => p.id)), [pins.data]);
@@ -437,6 +440,8 @@ export default function ChannelScreen() {
         <Composer
           placeholder={`Message # ${channelName}`}
           mentions={mentionCandidates}
+          agents={agentCandidates}
+          addressKey={channelId}
           sending={send.isPending}
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: null, files });

@@ -1,6 +1,7 @@
 /* Message composer: text, attachments (max 5, like the server), voice notes
-   (🎤 → transcribed server-side), and @mention autocomplete over the
-   channel's live agents + group members. */
+   (🎤 → transcribed server-side), @mention autocomplete over the channel's
+   live agents + group members, and a "talk to" multi-select that prepends
+   the chosen agents' mentions to every message sent here. */
 
 import React, { useMemo, useRef, useState } from "react";
 import {
@@ -29,7 +30,11 @@ import type { OutgoingFile } from "../api/queries";
 import { slugify } from "../lib/format";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
+import { useAddressed } from "../state/addressed";
+import { AgentAvatar } from "./AgentAvatar";
 import { toast, toastErr } from "./Toast";
+
+const NONE_ADDRESSED: string[] = [];
 
 const MAX_FILES = 5;
 
@@ -70,12 +75,19 @@ export interface MentionCandidate {
 export function Composer({
   placeholder,
   mentions,
+  agents = [],
+  addressKey,
   sending,
   onSend,
   onSendVoice,
 }: {
   placeholder: string;
   mentions: MentionCandidate[];
+  /** The channel's agents for the "talk to" multi-select; empty hides it. */
+  agents?: MentionCandidate[];
+  /** Conversation key (channel id / channel:t<root>) the "talk to" selection
+      is remembered under for the app session; unset hides the picker. */
+  addressKey?: string;
   sending: boolean;
   onSend: (v: { text: string; files: OutgoingFile[] }) => Promise<void>;
   /** When set (server has voice), a 🎤 button records a voice note and hands
@@ -86,6 +98,22 @@ export function Composer({
   const [files, setFiles] = useState<OutgoingFile[]>([]);
   const [focused, setFocused] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
+  /* "Talk to": which agents this conversation addresses. Session-level state
+     keyed by addressKey, so it's remembered when you leave and come back;
+     their @mentions are prepended on send ("@a, @b, …"), so the server's
+     mention routing delivers to exactly those agents. */
+  const addressed =
+    useAddressed((s) => (addressKey ? s.byConvo[addressKey] : undefined)) ?? NONE_ADDRESSED;
+  const toggleAddr = useAddressed((s) => s.toggle);
+  const clearAddr = useAddressed((s) => s.clear);
+  const [addrSheet, setAddrSheet] = useState(false);
+  const addressedAgents = useMemo(
+    () => agents.filter((a) => addressed.includes(a.id)),
+    [agents, addressed],
+  );
+  const toggleAddressed = (id: string) => {
+    if (addressKey) toggleAddr(addressKey, id);
+  };
   const selection = useRef({ start: 0, end: 0 });
   const inputRef = useRef<TextInput>(null);
 
@@ -250,8 +278,9 @@ export function Composer({
   const send = async () => {
     const body = text.trim();
     if (!body && files.length === 0) return;
+    const prefix = addressedAgents.map((a) => `@${slugify(a.name)}`).join(", ");
     try {
-      await onSend({ text: body, files });
+      await onSend({ text: prefix ? (body ? `${prefix}, ${body}` : prefix) : body, files });
       setText("");
       setFiles([]);
     } catch (e) {
@@ -291,6 +320,22 @@ export function Composer({
 
   return (
     <View style={[styles.wrap, { paddingBottom: bottomPad }]}>
+      {addressedAgents.length > 0 ? (
+        <ScrollView horizontal keyboardShouldPersistTaps="always" style={styles.addrBar}>
+          <Pressable style={styles.addrLabelBtn} onPress={() => setAddrSheet(true)} hitSlop={6}>
+            <Text style={styles.addrLabel}>To</Text>
+          </Pressable>
+          {addressedAgents.map((a) => (
+            <Pressable key={a.id} style={styles.addrChip} onPress={() => toggleAddressed(a.id)}>
+              <AgentAvatar agentId={a.id} size={16} />
+              <Text style={styles.addrChipText} numberOfLines={1}>
+                {a.name}
+              </Text>
+              <Text style={styles.addrChipX}>✕</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
       {candidates.length > 0 ? (
         <ScrollView horizontal keyboardShouldPersistTaps="always" style={styles.mentionBar}>
           {candidates.map((c) => (
@@ -366,6 +411,22 @@ export function Composer({
           <Pressable onPress={() => setAttachSheet(true)} hitSlop={8} style={styles.plusBtn}>
             <Text style={styles.plusText}>+</Text>
           </Pressable>
+          {agents.length > 0 && addressKey ? (
+            <Pressable onPress={() => setAddrSheet(true)} hitSlop={8} style={styles.toolBtn}>
+              <View style={styles.addrBtn}>
+                <Text
+                  style={[styles.addrAt, addressedAgents.length > 0 && styles.addrAtActive]}
+                >
+                  @
+                </Text>
+                {addressedAgents.length > 0 ? (
+                  <View style={styles.addrBadge}>
+                    <Text style={styles.addrBadgeText}>{addressedAgents.length}</Text>
+                  </View>
+                ) : null}
+              </View>
+            </Pressable>
+          ) : null}
           <Pressable onPress={pickPhotos} hitSlop={8} style={styles.toolBtn}>
             <Text style={styles.icon}>🖼️</Text>
           </Pressable>
@@ -387,6 +448,46 @@ export function Composer({
             )}
           </Pressable>
         </View>
+      ) : null}
+      {addrSheet ? (
+        <Modal transparent animationType="fade" onRequestClose={() => setAddrSheet(false)}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setAddrSheet(false)}>
+            <Pressable style={styles.sheet} onPress={() => {}}>
+              <View style={styles.addrHead}>
+                <Text style={styles.addrTitle}>Talk to</Text>
+                {addressed.length > 0 && addressKey ? (
+                  <Pressable onPress={() => clearAddr(addressKey)} hitSlop={8}>
+                    <Text style={styles.addrClear}>Clear</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              <ScrollView style={styles.addrList}>
+                {agents.map((a) => {
+                  const on = addressed.includes(a.id);
+                  return (
+                    <Pressable key={a.id} style={styles.addrRow} onPress={() => toggleAddressed(a.id)}>
+                      <AgentAvatar agentId={a.id} size={28} />
+                      <Text style={styles.addrRowName} numberOfLines={1}>
+                        {a.name}
+                      </Text>
+                      <View style={[styles.addrCheck, on && styles.addrCheckOn]}>
+                        {on ? <Text style={styles.addrCheckMark}>✓</Text> : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              <Text style={styles.addrHint}>
+                {addressed.length > 0
+                  ? "Their names are prepended to every message you send here."
+                  : "No selection — everyone in the channel is addressed."}
+              </Text>
+              <Pressable style={styles.addrDone} onPress={() => setAddrSheet(false)}>
+                <Text style={styles.addrDoneText}>Done</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
       ) : null}
       {attachSheet ? (
         <Modal
@@ -420,6 +521,84 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     backgroundColor: colors.bg,
   },
+  addrBar: { paddingHorizontal: 12, paddingTop: 8 },
+  addrLabelBtn: { alignSelf: "center", marginRight: 8 },
+  addrLabel: {
+    color: colors.faint,
+    fontSize: 10.5,
+    fontWeight: "800",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  addrChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(139,124,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(139,124,255,0.35)",
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingLeft: 4,
+    paddingRight: 8,
+    marginRight: 6,
+    maxWidth: 180,
+  },
+  addrChipText: { color: "#cfc8ff", fontSize: 12.5, fontWeight: "600", flexShrink: 1 },
+  addrChipX: { color: colors.dim, fontSize: 10.5 },
+  addrBtn: { flexDirection: "row", alignItems: "flex-start" },
+  addrAt: { color: colors.dim, fontSize: 19, fontWeight: "700", lineHeight: 22 },
+  addrAtActive: { color: colors.a1 },
+  addrBadge: {
+    minWidth: 15,
+    height: 15,
+    borderRadius: 999,
+    paddingHorizontal: 4,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: -3,
+    marginTop: -3,
+  },
+  addrBadgeText: { color: colors.onAccent, fontSize: 9.5, fontWeight: "800" },
+  addrHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  addrTitle: { color: colors.text, fontSize: 16, fontWeight: "800" },
+  addrClear: { color: colors.dim, fontSize: 13, fontWeight: "600" },
+  addrList: { maxHeight: 320 },
+  addrRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  addrRowName: { color: colors.text, fontSize: 15, fontWeight: "600", flex: 1 },
+  addrCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addrCheckOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  addrCheckMark: { color: colors.onAccent, fontSize: 13, fontWeight: "800" },
+  addrHint: { color: colors.faint, fontSize: 12, lineHeight: 16.5, marginTop: 10 },
+  addrDone: {
+    marginTop: 12,
+    backgroundColor: colors.accent,
+    borderRadius: 12,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  addrDoneText: { color: colors.onAccent, fontSize: 15, fontWeight: "800" },
   mentionBar: { paddingHorizontal: 12, paddingTop: 8 },
   mentionChip: {
     backgroundColor: "rgba(139,124,255,0.15)",

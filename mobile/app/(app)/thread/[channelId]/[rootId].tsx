@@ -49,6 +49,7 @@ import {
   stopSpeech,
 } from "../../../../src/lib/speech";
 import { colors } from "../../../../src/lib/theme";
+import { threadAddressKey } from "../../../../src/state/addressed";
 import { useChannelLive } from "../../../../src/state/live";
 import { usePrefs } from "../../../../src/state/prefs";
 import { useSession } from "../../../../src/state/session";
@@ -123,13 +124,16 @@ export default function ThreadScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestId]);
 
+  const agentCandidates = useMemo<MentionCandidate[]>(
+    () => (channelAgents.data ?? []).map((a) => ({ id: a.id, name: a.name })),
+    [channelAgents.data],
+  );
   const mentionCandidates = useMemo<MentionCandidate[]>(() => {
-    const agents = (channelAgents.data ?? []).map((a) => ({ id: a.id, name: a.name }));
     const people = (members.data ?? [])
       .filter((m) => m.member_type === "user")
       .map((m) => ({ id: m.member_id, name: m.member_id }));
-    return [...agents, ...people];
-  }, [channelAgents.data, members.data]);
+    return [...agentCandidates, ...people];
+  }, [agentCandidates, members.data]);
 
   const starredIds = useMemo(() => new Set((stars.data ?? []).map((s) => s.id)), [stars.data]);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
@@ -254,6 +258,8 @@ export default function ThreadScreen() {
         <Composer
           placeholder="Reply in thread"
           mentions={mentionCandidates}
+          agents={agentCandidates}
+          addressKey={threadAddressKey(channelId, rootId)}
           sending={send.isPending}
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: rootId, files });
