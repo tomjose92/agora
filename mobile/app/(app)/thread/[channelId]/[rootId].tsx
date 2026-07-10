@@ -49,6 +49,7 @@ import {
   stopSpeech,
 } from "../../../../src/lib/speech";
 import { colors } from "../../../../src/lib/theme";
+import { threadAddressKey } from "../../../../src/state/addressed";
 import { useChannelLive } from "../../../../src/state/live";
 import { usePrefs } from "../../../../src/state/prefs";
 import { useSession } from "../../../../src/state/session";
@@ -258,6 +259,7 @@ export default function ThreadScreen() {
           placeholder="Reply in thread"
           mentions={mentionCandidates}
           agents={agentCandidates}
+          addressKey={threadAddressKey(channelId, rootId)}
           sending={send.isPending}
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: rootId, files });

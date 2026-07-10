@@ -441,6 +441,7 @@ export default function ChannelScreen() {
           placeholder={`Message # ${channelName}`}
           mentions={mentionCandidates}
           agents={agentCandidates}
+          addressKey={channelId}
           sending={send.isPending}
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: null, files });

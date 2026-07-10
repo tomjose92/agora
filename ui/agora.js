@@ -58,7 +58,9 @@ let _agoUnreadsOnly =           // sidebar shows only unread/mentioned channels
   localStorage.getItem("agora_unreads_only") === "1";
 let _agoEditingChan = false;    // channel header rename/topic editor open
 let _agoDrag = null;            // drag-reorder state {type, id, gid}
-let _agoAddr = {};              // composer key ("main" | "t<id>") -> selected agent ids
+let _agoAddr = {};              // "talk to" selection: channel or channel:t<id> -> agent ids;
+                                // session-level memory so a conversation keeps addressing
+                                // the same agents until changed (not persisted anywhere)
 let _agoAddrOpen = null;        // composer key whose "talk to" picker popup is open
 
 /* Voice features (voice notes, speak-aloud, live voice) need the server to
@@ -714,8 +716,7 @@ function agoSelectChannel(gid, cid) {
     agoLiveStop();      // so is a live voice session
     agoSpeakStop();     // don't keep reading the previous channel's replies
     _agoFiles = {};     // pending attachments belong to the previous channel
-    _agoAddr = {};      // so does the "talk to" agent selection
-    _agoAddrOpen = null;
+    _agoAddrOpen = null;   // the "talk to" selection itself is per channel and persists
     _agoSel.g = gid; _agoSel.c = cid;
     _agoThreadRoot = null; _agoThreadMsgs = []; _agoMembers = null;
     _agoPins = []; _agoPinsOpen = false;
@@ -1423,10 +1424,20 @@ function agoRedrawComposer(threadId) {
 }
 
 /* ---------- "talk to" agent multi-select (@ button in the composer) ----------
-   Pick which of the channel's agents a message addresses; the selection is
-   sticky per composer and its @mentions are prepended on send ("@a, @b, …"),
-   so the existing mention routing delivers to exactly those agents. */
-function agoAddrList(threadId) { return _agoAddr[agoRecKey(threadId)] || []; }
+   Pick which of the channel's agents a conversation addresses; the selection
+   is keyed per channel (and per thread) and remembered for the app session,
+   so it sticks for future messages until changed. On send the @mentions are
+   prepended ("@a, @b, …"), so the existing mention routing delivers to
+   exactly those agents. */
+function agoAddrKey(threadId) {
+  const c = agoSelChannel();
+  return c ? (threadId != null ? `${c.id}:t${threadId}` : c.id) : null;
+}
+
+function agoAddrList(threadId) {
+  const key = agoAddrKey(threadId);
+  return (key && _agoAddr[key]) || [];
+}
 
 function agoAddrSelected(threadId) {
   // Resolve ids -> agent records; drops agents that left the channel.
@@ -1436,7 +1447,8 @@ function agoAddrSelected(threadId) {
 }
 
 function agoAddrToggle(threadId, agentId) {
-  const key = agoRecKey(threadId);
+  const key = agoAddrKey(threadId);
+  if (!key) return;
   const cur = _agoAddr[key] || [];
   _agoAddr[key] = cur.includes(agentId) ? cur.filter(id => id !== agentId) : cur.concat(agentId);
   if (!_agoAddr[key].length) delete _agoAddr[key];
@@ -1445,7 +1457,8 @@ function agoAddrToggle(threadId, agentId) {
 }
 
 function agoAddrClear(threadId) {
-  delete _agoAddr[agoRecKey(threadId)];
+  const key = agoAddrKey(threadId);
+  if (key) delete _agoAddr[key];
   agoRedrawComposer(threadId);
   agoAddrFocus(threadId);
 }

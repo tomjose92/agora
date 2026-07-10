@@ -30,8 +30,11 @@ import type { OutgoingFile } from "../api/queries";
 import { slugify } from "../lib/format";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
+import { useAddressed } from "../state/addressed";
 import { AgentAvatar } from "./AgentAvatar";
 import { toast, toastErr } from "./Toast";
+
+const NONE_ADDRESSED: string[] = [];
 
 const MAX_FILES = 5;
 
@@ -73,6 +76,7 @@ export function Composer({
   placeholder,
   mentions,
   agents = [],
+  addressKey,
   sending,
   onSend,
   onSendVoice,
@@ -81,6 +85,9 @@ export function Composer({
   mentions: MentionCandidate[];
   /** The channel's agents for the "talk to" multi-select; empty hides it. */
   agents?: MentionCandidate[];
+  /** Conversation key (channel id / channel:t<root>) the "talk to" selection
+      is remembered under for the app session; unset hides the picker. */
+  addressKey?: string;
   sending: boolean;
   onSend: (v: { text: string; files: OutgoingFile[] }) => Promise<void>;
   /** When set (server has voice), a 🎤 button records a voice note and hands
@@ -91,17 +98,22 @@ export function Composer({
   const [files, setFiles] = useState<OutgoingFile[]>([]);
   const [focused, setFocused] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
-  /* "Talk to": sticky per-composer selection of agents this conversation is
-     addressed to; their @mentions are prepended on send ("@a, @b, …"), so
-     the server's mention routing delivers to exactly those agents. */
-  const [addressed, setAddressed] = useState<string[]>([]);
+  /* "Talk to": which agents this conversation addresses. Session-level state
+     keyed by addressKey, so it's remembered when you leave and come back;
+     their @mentions are prepended on send ("@a, @b, …"), so the server's
+     mention routing delivers to exactly those agents. */
+  const addressed =
+    useAddressed((s) => (addressKey ? s.byConvo[addressKey] : undefined)) ?? NONE_ADDRESSED;
+  const toggleAddr = useAddressed((s) => s.toggle);
+  const clearAddr = useAddressed((s) => s.clear);
   const [addrSheet, setAddrSheet] = useState(false);
   const addressedAgents = useMemo(
     () => agents.filter((a) => addressed.includes(a.id)),
     [agents, addressed],
   );
-  const toggleAddressed = (id: string) =>
-    setAddressed((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const toggleAddressed = (id: string) => {
+    if (addressKey) toggleAddr(addressKey, id);
+  };
   const selection = useRef({ start: 0, end: 0 });
   const inputRef = useRef<TextInput>(null);
 
@@ -399,7 +411,7 @@ export function Composer({
           <Pressable onPress={() => setAttachSheet(true)} hitSlop={8} style={styles.plusBtn}>
             <Text style={styles.plusText}>+</Text>
           </Pressable>
-          {agents.length > 0 ? (
+          {agents.length > 0 && addressKey ? (
             <Pressable onPress={() => setAddrSheet(true)} hitSlop={8} style={styles.toolBtn}>
               <View style={styles.addrBtn}>
                 <Text
@@ -443,8 +455,8 @@ export function Composer({
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.addrHead}>
                 <Text style={styles.addrTitle}>Talk to</Text>
-                {addressed.length > 0 ? (
-                  <Pressable onPress={() => setAddressed([])} hitSlop={8}>
+                {addressed.length > 0 && addressKey ? (
+                  <Pressable onPress={() => clearAddr(addressKey)} hitSlop={8}>
                     <Text style={styles.addrClear}>Clear</Text>
                   </Pressable>
                 ) : null}
