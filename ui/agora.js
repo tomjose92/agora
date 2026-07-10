@@ -52,6 +52,7 @@ let _agoReadTimer = null;       // debounce for PUT /read
 /* Threads inbox: every thread I participate in, with per-thread unreads. */
 let _agoThreads = [];           // rows from GET /api/threads
 let _agoInboxOpen = false;      // main pane shows the threads inbox
+let _agoGroupPage = false;      // main pane shows the selected group's overview page
 let _agoThreadReadTimer = null; // debounce for PUT /threads/:id/read
 let _agoThreadsTimer = null;    // debounce for inbox refetches
 let _agoUnreadsOnly =           // sidebar shows only unread/mentioned channels
@@ -100,7 +101,7 @@ function agoToggleGroup(gid) {
     return;
   }
   agoSetExpanded(gid, true);
-  agoSelectGroup(gid);
+  agoDrawSide();
 }
 function agoErr(msg, e) { toast(`${msg}: ${(e && e.message) || e}`, { variant: "warn" }); }
 
@@ -219,7 +220,8 @@ async function agoLoadGroups() {
     _agoSel.c = null;
   }
   const g = agoSelGroup();
-  if (g && !agoSelChannel()) _agoSel.c = (g.channels[0] || {}).id || null;
+  // On the group overview page no channel is selected on purpose.
+  if (g && !agoSelChannel() && !_agoGroupPage) _agoSel.c = (g.channels[0] || {}).id || null;
   agoSaveSel();
 }
 
@@ -471,6 +473,7 @@ function agoApplyThreadRead(rootId, lastId) {
    a different channel than the one on screen. */
 async function agoGoToThread(gid, cid, rootId) {
   _agoInboxOpen = false;
+  _agoGroupPage = false;
   if (_agoSel.c !== cid || _agoSel.g !== gid) {
     agoSetExpanded(gid, true);
     _agoFiles = {};
@@ -494,6 +497,7 @@ async function agoGoToThread(gid, cid, rootId) {
 
 function agoOpenInbox() {
   _agoInboxOpen = true;
+  _agoGroupPage = false;
   _agoThreadRoot = null; _agoThreadMsgs = [];
   _agoMembers = null;
   agoSetView("main");
@@ -566,7 +570,7 @@ function agoDrawSide() {
       const mentions = agoMentionCount(c.id);
       const threads = agoChannelThreads(c.id);
       const threadUnread = threads.reduce((n, t) => n + (t.unread || 0), 0);
-      const active = sel && c.id === _agoSel.c && !_agoInboxOpen;
+      const active = sel && c.id === _agoSel.c && !_agoInboxOpen && !_agoGroupPage;
       // Unreads-only mode: keep unread/mentioned channels, live threads, and
       // whatever is selected so nothing on screen becomes unreachable.
       if (_agoUnreadsOnly && !unread && !mentions && !threadUnread && !active) return "";
@@ -603,24 +607,18 @@ function agoDrawSide() {
            <button class="btn sm" onclick="agoCreateChannel()">Add</button></div>`
         : `<button class="ago-add" onclick="agoOpenCreate('channel','${esc(g.id)}')">+ channel</button>`)
       : "";
-    const groupArmed = agoArmed("group:" + g.id);
-    const groupDel = (g.role === "admin" || isOwner())
-      ? `<button class="ago-x ago-group-del ${groupArmed ? "armed" : ""}" title="${groupArmed
-          ? "Click again to delete " + esc(g.name) + " and everything in it" : "Delete group"}"
-           onclick="event.stopPropagation(); agoDeleteGroup('${esc(g.id)}')">${groupArmed ? "Sure?" : icon("x")}</button>`
-      : "";
     return `<div class="ago-group ${open ? "open" : ""} ${sel ? "sel" : ""}">
       <div class="ago-group-head ${groupUnread || groupMentions ? "unread" : ""}"
            draggable="true"
            ondragstart="agoDragStart(event,'group','${esc(g.id)}')"
            ondragover="agoDragOverRow(event,'group','${esc(g.id)}')"
            ondrop="agoDropRow(event,'group','${esc(g.id)}')"
-           onclick="agoToggleGroup('${esc(g.id)}')"
-           title="${open ? "Collapse" : "Expand"} ${esc(g.name)}">
-        <span class="ago-caret ${open ? "open" : ""}">${icon("chevron-right")}</span>
+           onclick="agoOpenGroupPage('${esc(g.id)}')"
+           title="Open ${esc(g.name)}">
+        <span class="ago-caret ${open ? "open" : ""}" title="${open ? "Collapse" : "Expand"} ${esc(g.name)}"
+              onclick="event.stopPropagation(); agoToggleGroup('${esc(g.id)}')">${icon("chevron-right")}</span>
         <span class="ago-group-title">
           <span class="nm">${esc(g.name)}</span>
-          ${groupDel}
         </span>
         ${open ? "" : agoBadgeHTML(groupUnread, groupMentions)}
         <span class="role">${esc(g.role || "")}</span>
@@ -694,30 +692,36 @@ async function agoDropRow(ev, type, id, gid) {
   } catch (e) { agoErr("Couldn't reorder", e); }
 }
 
-function agoSelectGroup(gid) {
+/* Group overview page: clicking a group name in the sidebar opens it in the
+   main pane — channels, description, and (for admins) the delete action. */
+function agoOpenGroupPage(gid) {
   agoSetExpanded(gid, true);
   _agoInboxOpen = false;
+  _agoGroupPage = true;
   if (_agoSel.g !== gid) {
     agoVoiceCancel();   // a recording is tied to the channel it started in
     agoLiveStop();      // so is a live voice session
     agoSpeakStop();     // don't keep reading the previous channel's replies
     _agoSel.g = gid;
-    const g = agoSelGroup();
-    _agoSel.c = (g && g.channels[0] && g.channels[0].id) || null;
-    _agoThreadRoot = null; _agoThreadMsgs = []; _agoMembers = null;
-    _agoPins = []; _agoPinsOpen = false;
-    _agoStars = []; _agoStarsOpen = false;
-    _agoEditingChan = false;
+    _agoSel.c = null;
     agoSaveSel();
   }
+  _agoThreadRoot = null; _agoThreadMsgs = []; _agoMembers = null;
+  _agoPins = []; _agoPinsOpen = false;
+  _agoStars = []; _agoStarsOpen = false;
+  _agoEditingChan = false;
   _agoCreating = null;
   agoDisarm();
+  agoSetView("main");   // phones: opening a group drills into its page
   agoDrawSide();
-  agoLoadChannel().catch(console.error);
+  agoDrawMain();
+  agoDrawThread();
+  agoDrawMembers();
 }
 function agoSelectChannel(gid, cid) {
   agoSetExpanded(gid, true);
   _agoInboxOpen = false;
+  _agoGroupPage = false;
   if (_agoSel.c !== cid || _agoSel.g !== gid) {
     agoVoiceCancel();   // a recording is tied to the channel it started in
     agoLiveStop();      // so is a live voice session
@@ -747,11 +751,7 @@ async function agoCreateGroup() {
     const group = await apiPost("/api/groups", { name });
     _agoCreating = null;
     await agoLoadGroups();
-    agoSetExpanded(group.id, true);
-    _agoSel.g = group.id; _agoSel.c = null;
-    agoSaveSel();
-    agoDrawSide();
-    agoLoadChannel().catch(console.error);
+    agoOpenGroupPage(group.id);
   } catch (e) { agoErr("Couldn't create group", e); }
 }
 async function agoCreateChannel() {
@@ -780,22 +780,64 @@ async function agoDeleteChannel(gid, cid) {
   } catch (e) { agoErr("Delete failed", e); agoDrawSide(); }
 }
 async function agoDeleteGroup(gid) {
-  // Called from the channel header (no gid: the selected group) or from a
-  // sidebar row's ✕ (explicit gid) — arm/confirm must redraw the right pane.
-  const fromSide = !!gid;
-  const g = fromSide ? _agoGroups.find(x => x.id === gid) : agoSelGroup();
+  // Lives on the group overview page — arm/confirm redraws the main pane.
+  const g = _agoGroups.find(x => x.id === gid);
   if (!g) return;
-  const redraw = fromSide ? agoDrawSide : agoDrawMain;
-  if (!agoArmed("group:" + g.id)) { agoArm("group:" + g.id, redraw); return; }
+  if (!agoArmed("group:" + g.id)) { agoArm("group:" + g.id, agoDrawMain); return; }
   agoDisarm();
   try {
     await apiPost(`/api/groups/${encodeURIComponent(g.id)}`, {}, "DELETE");
     if (_agoSel.g === g.id) { _agoSel = {}; _agoMembers = null; agoSaveSel(); }
+    _agoGroupPage = false;
     await agoLoadGroups();
     agoDrawSide();
     agoLoadChannel().catch(console.error);
     toast(`Group "${g.name}" deleted`, { variant: "ok" });
-  } catch (e) { agoErr("Delete failed", e); redraw(); }
+  } catch (e) { agoErr("Delete failed", e); agoDrawMain(); }
+}
+
+/* ---------- group overview page ---------- */
+function agoDrawGroupPage(box) {
+  const g = agoSelGroup();
+  if (!g) { _agoGroupPage = false; agoDrawMain(); return; }
+  const admin = g.role === "admin" || isOwner();
+  const armed = agoArmed("group:" + g.id);
+  const desc = (g.description || "").trim();
+  const chans = (g.channels || []).map(c => {
+    const unread = agoUnreadCount(c.id);
+    const mentions = agoMentionCount(c.id);
+    return `
+      <div class="ago-inbox-row ago-gp-chan ${unread || mentions ? "unread" : ""}"
+           onclick="agoSelectChannel('${esc(g.id)}','${esc(c.id)}')" title="Open #${esc(c.name)}">
+        <div class="ago-inbox-top">
+          <span class="chan"><span class="hash">#</span>${esc(c.name)}</span>
+          ${agoBadgeHTML(unread, mentions)}
+        </div>
+        ${c.topic ? `<div class="ago-gp-topic">${esc(c.topic)}</div>` : ""}
+      </div>`;
+  }).join("");
+  const n = (g.channels || []).length;
+  box.innerHTML = `
+    <div class="ago-head">
+      <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">${icon("chevron-left")}</button>
+      <div class="ago-head-text">
+        <span class="ago-chan-name">${esc(g.name)}</span>
+        <span class="dim">${n} channel${n === 1 ? "" : "s"}</span>
+      </div>
+      <div class="ago-head-actions">
+        ${admin
+          ? `<button class="btn sm danger ${armed ? "armed" : ""}" onclick="agoDeleteGroup('${esc(g.id)}')">
+               ${armed ? "Sure? This deletes everything" : "Delete group"}</button>`
+          : ""}
+      </div>
+    </div>
+    <div class="ago-log ago-inbox-list">
+      ${desc ? `<div class="ago-gp-desc">${esc(desc)}</div>` : ""}
+      ${chans
+        || `<div class="empty"><div class="glyph">${icon("layout-grid")}</div>
+            <div>No channels yet</div>
+            <div class="hint">Add a channel from the sidebar to start chatting in ${esc(g.name)}.</div></div>`}
+    </div>`;
 }
 
 /* ---------- main column (messages + composer) ---------- */
@@ -803,6 +845,7 @@ function agoDrawMain() {
   const box = document.getElementById("agora-main");
   if (!box) return;
   if (_agoInboxOpen) { agoDrawInbox(box); return; }
+  if (_agoGroupPage) { agoDrawGroupPage(box); return; }
   const group = agoSelGroup();
   const channel = agoSelChannel();
   if (!channel) {
@@ -861,10 +904,6 @@ function agoDrawMain() {
           title="Starred messages in #${esc(channel.name)}"
           onclick="agoToggleStarList()">${_agoStars.length ? icon("star", "fill") + " " + _agoStars.length : icon("star")}</button>
         <button class="btn sm ${_agoMembers ? "active" : ""}" onclick="agoToggleMembers()">Members</button>
-        ${agoIsAdmin()
-          ? `<button class="btn sm danger ${agoArmed("group:" + group.id) ? "armed" : ""}" onclick="agoDeleteGroup()">
-               ${agoArmed("group:" + group.id) ? "Sure? This deletes everything" : "Delete group"}</button>`
-          : ""}
       </div>
     </div>
     ${agoPinBarHTML()}
@@ -1860,6 +1899,7 @@ function agoIngestMessage(m) {
       if (!isThreadReply) u.count += 1;
       if (agoMentionsMe(m.text)) u.mentions = (u.mentions || 0) + 1;
       agoDrawSide();
+      if (_agoGroupPage) agoDrawMain();   // keep the group page's badges live
       if (open && !isThreadReply) agoDrawUnreadBar();
     }
     if (isThreadReply) agoBumpThreadUnread(m, seenNow);

@@ -249,9 +249,6 @@ a.btn { text-decoration: none; }
 .ago-chan:hover .ago-x, .ago-member:hover .ago-x, .ago-group-head:hover .ago-x { opacity: 1; }
 .ago-x:hover { color: #f87171; background: rgba(248,113,113,.12); }
 .ago-x.armed { opacity: 1; color: #f87171; background: rgba(248,113,113,.14); font-weight: 700; }
-/* Keep group delete visible next to the name (not hover-only / not after ADMIN). */
-.ago-group-head .ago-group-del { opacity: .55; }
-.ago-group-head:hover .ago-group-del, .ago-group-head .ago-group-del.armed { opacity: 1; }
 .ago-add {
   display: block; width: 100%; text-align: left; padding: 6px 10px 6px 30px;
   border: none; background: transparent; color: var(--faint); font: inherit; font-size: 12px;
@@ -395,6 +392,18 @@ a.btn { text-decoration: none; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim);
 }
 .ago-inbox-foot { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--faint); }
+
+/* ---------- group overview page ---------- */
+.ago-gp-desc {
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px;
+  background: rgba(255,255,255,.02); color: var(--dim); font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.ago-gp-chan .ago-inbox-top { font-size: 13px; }
+.ago-gp-topic {
+  font-size: 12px; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ---------- channel rename / topic editor ---------- */
 .ago-edit-btn {
@@ -785,7 +794,7 @@ a.btn { text-decoration: none; }
   .ago-inbox-item { padding: 11px 10px; }
   .ago-side-thread { padding-top: 9px; padding-bottom: 9px; }
   .ago-chan { padding-top: 9px; padding-bottom: 9px; }
-  .ago-chan .ago-x, .ago-group-head .ago-x, .ago-group-head .ago-group-del { opacity: 1; }
+  .ago-chan .ago-x, .ago-group-head .ago-x { opacity: 1; }
   .ago-chan-edit { flex-wrap: wrap; }
   .ago-chan-edit #ago-edit-name, .ago-chan-edit #ago-edit-topic {
     font-size: 16px;                      /* iOS anti-zoom */
