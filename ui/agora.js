@@ -1123,7 +1123,32 @@ function agoBubble(m, inThread) {
   const foot = `<div class="ago-bubble-foot">${replies}${threadBtn}${pinBtn}${starBtn}</div>`;
   const mark = (pinned ? '<span class="ago-pinned-mark" title="Pinned">📌</span>' : "")
     + (starred ? '<span class="ago-starred-mark" title="Starred by you">★</span>' : "");
-  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(m.text)}${agoAttachmentsHTML(m)}${foot}</div>`;
+  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(m.text)}${agoAttachmentsHTML(m)}${agoOptionsHTML(m)}${foot}</div>`;
+}
+function agoOptionsHTML(m) {
+  const meta = m.meta;
+  if (!meta || !Array.isArray(meta.options) || !meta.options.length) return "";
+  const resolved = meta.resolved && typeof meta.resolved === "object" ? meta.resolved : null;
+  if (resolved) {
+    const label = resolved.label
+      || (meta.options.find(o => o.id === resolved.option_id) || {}).label
+      || resolved.option_id
+      || "Resolved";
+    const by = resolved.by ? ` by ${esc(resolved.by)}` : "";
+    return `<div class="ago-options resolved"><span class="ago-option-result">${esc(label)}${by}</span></div>`;
+  }
+  const buttons = meta.options.map(o => {
+    const style = o.style === "primary" ? "primary" : (o.style === "danger" ? "danger" : "");
+    return `<button class="ago-option-btn ${style}" onclick="agoSelectOption(${m.id}, '${esc(o.id)}')">${esc(o.label || o.id)}</button>`;
+  }).join("");
+  return `<div class="ago-options">${buttons}</div>`;
+}
+async function agoSelectOption(messageId, optionId) {
+  try {
+    await apiPost(`/api/messages/${messageId}/select`, { option_id: optionId });
+  } catch (e) {
+    alert(e.message || "Could not submit choice");
+  }
 }
 function agoMsgHTML(m, inThread) {
   const bubble = agoBubble(m, inThread);
@@ -1871,9 +1896,31 @@ function agoIngestMessage(m) {
   if (!mine && !isThreadReply) agoMaybeMarkRead();
 }
 
+function agoApplyMessageUpdate(m) {
+  if (!m || m.id == null) return;
+  const channel = agoSelChannel();
+  let redraw = false;
+  const idx = _agoMsgs.findIndex(x => x.id === m.id);
+  if (idx >= 0) {
+    const prev = _agoMsgs[idx];
+    _agoMsgs[idx] = { ...prev, ...m, reply_count: m.reply_count ?? prev.reply_count };
+    redraw = !!(channel && m.channel_id === channel.id);
+  }
+  const tIdx = _agoThreadMsgs.findIndex(x => x.id === m.id);
+  if (tIdx >= 0) {
+    _agoThreadMsgs[tIdx] = { ..._agoThreadMsgs[tIdx], ...m };
+    agoDrawThread();
+  }
+  if (redraw) agoDrawMessages();
+}
+
 function agoHandleEvent(data) {
   const channel = agoSelChannel();
   if (data.type === "message") { agoIngestMessage(data.message); return; }
+  if (data.type === "message_update") {
+    agoApplyMessageUpdate(data.message);
+    return;
+  }
   if (data.type === "read") { agoApplyRead(data.channel_id, data.last_read_id); return; }
   if (data.type === "thread_read") { agoApplyThreadRead(data.thread_id, data.last_read_id); return; }
   if (!channel || data.channel_id !== channel.id) return;

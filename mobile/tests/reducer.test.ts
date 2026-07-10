@@ -19,6 +19,7 @@ import {
   applyThreadRead,
   applyWsEvent,
   bumpReplyCount,
+  replaceMessage,
   type MessagePages,
 } from "../src/ws/reducer";
 
@@ -328,5 +329,45 @@ describe("applyWsEvent", () => {
       unread: 0,
       last_read_id: 20,
     });
+  });
+
+  it("applies message_update frames (options resolved)", () => {
+    const original = msg({
+      id: 42,
+      meta: {
+        options: [
+          { id: "approve", label: "Approve" },
+          { id: "reject", label: "Reject" },
+        ],
+        options_id: "abc",
+        resolved: null,
+      },
+    });
+    qc.setQueryData(keys.messages("general-1a2b", null), pages([original]));
+    applyWsEvent(
+      qc,
+      {
+        type: "message_update",
+        message: {
+          ...original,
+          meta: {
+            ...original.meta!,
+            resolved: { option_id: "approve", by: "me", ts: 1 },
+          },
+        },
+      },
+      { username: "me" },
+    );
+    const data = qc.getQueryData<MessagePages>(keys.messages("general-1a2b", null))!;
+    expect(data.pages[0][0].meta?.resolved?.option_id).toBe("approve");
+  });
+});
+
+describe("replaceMessage", () => {
+  it("merges fields onto an existing message", () => {
+    const data = pages([msg({ id: 1, text: "old" })]);
+    const next = replaceMessage(data, msg({ id: 1, text: "new", meta: { options: [] } }))!;
+    expect(next.pages[0][0].text).toBe("new");
+    expect(next.pages[0][0].meta).toEqual({ options: [] });
   });
 });

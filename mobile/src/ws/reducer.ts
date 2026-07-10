@@ -34,6 +34,23 @@ export function appendMessage(
   return { ...data, pages };
 }
 
+/** Replace a message in place (e.g. options resolved). */
+export function replaceMessage(
+  data: MessagePages | undefined,
+  message: Message,
+): MessagePages | undefined {
+  if (!data) return undefined;
+  let found = false;
+  const pages = data.pages.map((p) =>
+    p.map((m) => {
+      if (m.id !== message.id) return m;
+      found = true;
+      return { ...m, ...message, reply_count: message.reply_count ?? m.reply_count };
+    }),
+  );
+  return found ? { ...data, pages } : data;
+}
+
 /** A reply arrived: bump reply_count on its root in the top-level page set. */
 export function bumpReplyCount(
   data: MessagePages | undefined,
@@ -181,6 +198,14 @@ export function applyWsEvent(
         useLive.getState().agentDone(message.channel_id, message.author_id);
         ctx.onAgentMessage?.(message);
       }
+      break;
+    }
+    case "message_update": {
+      const { message } = ev as { type: "message_update"; message: Message };
+      qc.setQueryData<MessagePages>(
+        keys.messages(message.channel_id, message.thread_id),
+        (data) => replaceMessage(data, message),
+      );
       break;
     }
     case "read": {

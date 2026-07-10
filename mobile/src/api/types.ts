@@ -39,6 +39,23 @@ export interface Attachment {
   size: number;
 }
 
+export interface MessageOption {
+  id: string;
+  label: string;
+  style?: "primary" | "danger" | "default" | string;
+}
+
+export interface MessageMeta {
+  options?: MessageOption[];
+  options_id?: string;
+  resolved?: {
+    option_id: string;
+    by?: string;
+    label?: string;
+    ts?: number;
+  } | null;
+}
+
 export interface Message {
   id: number;
   channel_id: string;
@@ -49,6 +66,7 @@ export interface Message {
   text: string;
   ts: number;
   attachments: Attachment[];
+  meta?: MessageMeta | null;
   /* Top-level pages only. */
   reply_count?: number;
 }
@@ -147,10 +165,16 @@ export interface PinEvent {
   message_id?: number;
 }
 
+export interface MessageUpdateEvent {
+  type: "message_update";
+  message: Message;
+}
+
 export type WsEvent =
   | TypingEvent
   | ProgressEvent
   | MessageEvent
+  | MessageUpdateEvent
   | ReadEvent
   | ThreadReadEvent
   | PinEvent;
