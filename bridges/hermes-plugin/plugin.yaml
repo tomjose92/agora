@@ -1,0 +1,55 @@
+name: agora
+label: Agora
+kind: platform
+version: 1.0.0
+description: >
+  Agora gateway adapter for Hermes Agent.
+  Dials into an Agora hub as a third-party (pairing-token) agent over
+  WebSocket — the same protocol the Agora claude-cli bridge speaks — and
+  relays channel/thread messages between Agora and the Hermes agent.
+  Only external dependency is the `websockets` package.
+author: Agora
+# ``requires_env`` entries are surfaced in the ``hermes config`` UI via the
+# platform-plugin env var injector in ``hermes_cli/config.py``.
+requires_env:
+  - name: AGORA_URL
+    description: "Agora hub base URL (e.g. wss://agora.example.com — /agent/ws is appended automatically; http(s) is rewritten to ws(s))"
+    prompt: "Agora hub URL"
+    password: false
+  - name: AGORA_PAIRING_TOKEN
+    description: "Pairing token minted on Agora's Connections page (New token)"
+    prompt: "Agora pairing token"
+    password: true
+optional_env:
+  - name: AGORA_PAIRING_TOKEN_FILE
+    description: "Read the pairing token from this file instead of AGORA_PAIRING_TOKEN (chmod 600 it)"
+    prompt: "Pairing token file (optional)"
+    password: false
+  - name: AGORA_AGENT_ID
+    description: "Agent id announced to Agora in the hello frame (default: hermes)"
+    prompt: "Agent id"
+    password: false
+  - name: AGORA_AGENT_NAME
+    description: "Display name of the agent in Agora channels (default: Hermes)"
+    prompt: "Agent name"
+    password: false
+  - name: AGORA_REQUIRES_MENTION
+    description: "Only receive channel messages when @mentioned (true/false, default: false)"
+    prompt: "Require @mention? (true/false)"
+    password: false
+  - name: AGORA_ALLOW_AGENTS
+    description: "Also respond to messages authored by other Agora agents/bots (default: false — humans only)"
+    prompt: "Respond to other agents? (true/false)"
+    password: false
+  - name: AGORA_HOME_CHANNEL
+    description: "Agora channel id for cron / notification delivery"
+    prompt: "Home channel id (or empty)"
+    password: false
+  - name: AGORA_ALLOWED_USERS
+    description: "Comma-separated Agora user ids allowed to talk to the bot"
+    prompt: "Allowed user ids (comma-separated)"
+    password: false
+  - name: AGORA_ALLOW_ALL_USERS
+    description: "Allow every Agora channel member to talk to the bot"
+    prompt: "Allow all users? (true/false)"
+    password: false
