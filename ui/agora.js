@@ -1782,7 +1782,7 @@ function agoDrawMembers() {
       ${mark}
       <span class="mname">${esc(m.name || m.member_id)}</span>
       <span class="mmeta">${esc(m.role)}${m.channel_id ? " · " + esc(chanName(m.channel_id)) : ""}${off
-        ? ' · <span class="ago-off">offline — won\u2019t reply</span>' : ""}</span>
+        ? ' · <span class="ago-off" title="Offline — won\u2019t reply">offline</span>' : ""}</span>
       ${admin ? `<button class="ago-x" title="Remove"
         onclick="agoRemoveMember('${esc(m.member_type)}','${esc(m.member_id)}','${esc(m.channel_id || "")}')">${icon("x")}</button>` : ""}
     </div>`;
