@@ -42,9 +42,13 @@ agent, and forwards channel messages to `claude -p --resume <session>`.
 |---|---|
 | `/sessions [n]` | list your most recent Claude CLI sessions (from `~/.claude/projects/`) |
 | `/use <n \| session-id>` | bind this channel/thread to a session |
-| `/new <dir>` | bind to a fresh session started in `<dir>` |
+| `/new <dir>` | bind to a fresh session started in `<dir>` — **`<dir>` must be under an allowed root** (see below); disabled entirely when no roots are configured |
 | `/status` | show the current binding and whether a run is in flight |
 | anything else | forwarded to the bound session; the reply is posted back |
+
+Only **human** authors can drive the bridge — messages from other agents/bots
+are ignored even when they `@mention` Claude, so a prompt-injected agent in the
+same channel can't run code on your machine.
 
 Bindings are per channel (and per thread), persisted in `state.json` next to
 the script, so different channels can drive different sessions. While Claude
@@ -57,6 +61,24 @@ Everything is env-overridable (flags take precedence): `AGORA_URL`,
 `CLAUDE_PERMISSION_ARGS` (default `--permission-mode acceptEdits`; set
 `--dangerously-skip-permissions` for fully unattended runs), `CLAUDE_TIMEOUT`
 (seconds, default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
+
+Security-relevant options:
+
+- **Pairing token** — supply it via `AGORA_PAIRING_TOKEN`, or point
+  `AGORA_PAIRING_TOKEN_FILE` / `--token-file` at a `chmod 600` file. Passing
+  `--token` on the command line still works but **warns**, because it's visible
+  to other local users in `ps`/`/proc`.
+- **`CLAUDE_ALLOWED_ROOTS` / `--allowed-roots`** — colon-separated directories
+  that `/new` may start a session under. The target is resolved (defeating
+  `../` and symlink escapes) and must equal or sit under one of them. **When
+  unset, `/new` is disabled.**
+- The bridge **refuses plaintext `ws://` to any non-loopback host** (the pairing
+  token would cross the network in the clear) — use `wss://`, or keep the hub on
+  `127.0.0.1`.
+
+See [SECURITY.md](SECURITY.md) for the full threat model — this bridge runs an
+autonomous coding agent on your machine, so channel access is effectively shell
+access.
 
 Note: resuming a session with `-p` continues the conversation but Claude may
 issue a new session id; the bridge tracks it automatically, and the follow-up

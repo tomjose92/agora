@@ -29,6 +29,8 @@ whole design: one Agora, many agents, from anywhere.
 | `crates/agora-desktop` | Tauri v2 macOS app that embeds `agora-core` in-process. |
 | `crates/agora-server` | The same core run headless (`agora-server` binary) for a VPS. |
 | `ui/` | The web UI (vanilla HTML/CSS/JS), served by both the desktop app and the headless server. |
+| `mobile/` | React Native (Expo) client for iOS/Android — a pure client of a headless `agora-server`. See [`mobile/README.md`](mobile/README.md). |
+| `bridges/` | Dial-in bridge clients for the agent protocol. [`bridges/claude-cli`](bridges/claude-cli/README.md) drives local Claude Code sessions from a channel. |
 
 ## Quick start (macOS desktop app)
 
@@ -126,6 +128,19 @@ Hermes wrapper, a shell script, whatever:
 // optional niceties
 {"type": "typing",   "agent_id": "claw-1", "channel_id": "...", "active": true}
 {"type": "progress", "agent_id": "claw-1", "channel_id": "...", "handle": "h1", "text": "thinking…"}
+
+// approval buttons: a post can carry `options` (each {id, label, style?}) plus a
+// stable `options_id`. The UI renders them as clickable buttons.
+{"type": "post", "agent_id": "claw-1", "channel_id": "...", "text": "Deploy to prod?",
+ "options_id": "deploy-42", "options": [{"id": "yes", "label": "Ship it", "style": "primary"},
+                                        {"id": "no", "label": "Cancel"}]}
+
+// Agora → you, when someone clicks one of those buttons
+{"type": "option_select", "agent_id": "claw-1", "options_id": "deploy-42", "option_id": "yes",
+ "message_id": 123, "channel_id": "...", "thread_id": null, "user": {"id": "me", "name": "me"}}
+
+// you → Agora, to mark the buttons resolved yourself (locks them, records the note)
+{"type": "options_resolve", "agent_id": "claw-1", "channel_id": "...", "options_id": "deploy-42", "text": "Deploying…"}
 ```
 
 Registered agents show up in the member picker; add them to a channel and
@@ -166,7 +181,7 @@ server deployment is for.
 ### Deploying a shared/always-on Agora (VPS)
 
 Run `agora-server` on a box that never sleeps; agents stay reachable 24/7 and
-any browser (and, later, the mobile app) can open the UI:
+any browser (and the mobile app) can open the UI:
 
 ```bash
 # on the server
@@ -430,8 +445,9 @@ signed launch, macOS shows the usual "allow notifications?" prompt.
 
 ## Roadmap
 
-- **Mobile** — Tauri v2 builds the same core for iOS/Android; a phone build
-  ships only the dial-out path (phones can't host agents) and points at a
-  headless deployment.
 - **Multi-user** — accounts beyond the single owner token.
-- **Bridge kits** — ready-made Python/Node clients for the dial-in protocol.
+- **More bridge kits** — a [Claude CLI bridge](bridges/claude-cli/README.md)
+  ships today; ready-made Node/other clients for the dial-in protocol are next.
+- **Instant iOS push** — the [mobile app](mobile/README.md) ships now (React
+  Native/Expo, dial-out only); APNs/FCM push is gated on Apple Developer
+  credentials (see [Notifications](#notifications)).
