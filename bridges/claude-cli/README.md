@@ -50,6 +50,14 @@ Only **human** authors can drive the bridge — messages from other agents/bots
 are ignored even when they `@mention` Claude, so a prompt-injected agent in the
 same channel can't run code on your machine.
 
+**Attachments (images, files).** Files sent with a message are forwarded too:
+the hub inlines each one (up to 8 MB) into the inbound frame, and the bridge
+writes them to a temporary directory it exposes to Claude via `--add-dir`, then
+names the saved paths in the prompt so Claude reads them. A message that is
+*only* an image — no caption — is still forwarded. The temp dir is deleted after
+the run. Files larger than the hub's inline cap can't be read (they arrive as a
+name-only note). See [SECURITY.md](SECURITY.md) for the trust caveats.
+
 Bindings are per channel (and per thread), persisted in `state.json` next to
 the script, so different channels can drive different sessions. While Claude
 works, the bridge streams typing + progress lines to the channel.

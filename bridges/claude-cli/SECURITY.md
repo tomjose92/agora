@@ -55,7 +55,23 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
      parse error / disconnect left `claude` running and auto-applying edits
      after the user was told the run "failed."
 
-6. **Bounded memory DoS on large output.** The subprocess stdout limit is 64 MB
+6. **Attachment bytes written to disk from channel input.** Inbound messages can
+   carry files (the hub inlines those up to 8 MB as base64); the bridge decodes
+   each into a fresh `tempfile.mkdtemp()` dir and exposes it to Claude with
+   `--add-dir` so its Read tool can open images/files.
+   - *Addressed:* filenames are reduced to a sanitized basename
+     (`_safe_filename` strips directory components and shell/path metacharacters)
+     so a sender can't traverse out of the temp dir or influence the path;
+     collisions get a numeric suffix; the temp dir is removed in a `finally`
+     after every run. Undecodable/oversized entries are noted in the prompt, not
+     written.
+   - *Still open:* the bytes themselves are untrusted content fed to an
+     autonomous agent (a hostile image/file could carry a prompt-injection
+     payload the model then acts on). Bounded only by the permission mode
+     (#1 above). See `materialize_attachments` / `_stage_attachments` in
+     [bridge.py](bridge.py).
+
+7. **Bounded memory DoS on large output.** The subprocess stdout limit is 64 MB
    (raised from asyncio's 64 KB default so `stream-json` lines carrying whole
    files don't crash the reader). A single pathological line can still make the
    bridge buffer up to 64 MB. Acceptable for single-user use; note it if you
@@ -88,7 +104,8 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
 | Issue | Status | Where |
 |---|---|---|
 | Non-user authors can drive it (2) | Fixed | `handle_inbound` |
-| Orphaned child on failure (5) | Fixed | `run_claude` (finally-kill) |
+| Attachment path traversal / temp-dir leak (6) | Fixed | `_safe_filename`, `_stage_attachments` |
+| Orphaned child on failure (5→7) | Fixed | `run_claude` (finally-kill) |
 | `/new` any directory (4) | Fixed | `_cmd_new` + `CLAUDE_ALLOWED_ROOTS` |
 | Token on CLI / plaintext ws (3, partial) | Fixed (bridge side) | `main`, `_reject_insecure_ws` |
 | RCE / no sandbox (1) | Open | operational (run Claude confined) |

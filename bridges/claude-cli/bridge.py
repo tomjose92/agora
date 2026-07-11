@@ -18,11 +18,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import binascii
 import json
 import os
 import re
 import shlex
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -173,6 +177,73 @@ def format_sessions(sessions: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# ----------------------------------------------------------- attachments
+
+
+def _safe_filename(name: str) -> str:
+    """Reduce an untrusted attachment filename to a harmless basename.
+
+    Strips any directory components (defeating ``../`` traversal) and replaces
+    anything outside a conservative charset, so a channel member can't steer
+    where the file lands or smuggle shell/path metacharacters into the prompt.
+    """
+    name = os.path.basename(name or "")
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".")
+    return name[:120] or "attachment"
+
+
+def _unique_path(dest: Path, name: str) -> Path:
+    """A path under ``dest`` for ``name`` that doesn't collide with a sibling."""
+    path = dest / name
+    if not path.exists():
+        return path
+    stem, dot, ext = name.partition(".")
+    i = 1
+    while True:
+        cand = dest / f"{stem}-{i}{dot}{ext}"
+        if not cand.exists():
+            return cand
+        i += 1
+
+
+def materialize_attachments(attachments: list, dest_dir: Path) -> tuple[list[Path], list[str]]:
+    """Write inlined attachment bytes into ``dest_dir`` for Claude to read.
+
+    The hub inlines files up to a size cap as base64 (``data_b64``); larger ones
+    arrive as name-only refs with no bytes. Returns the saved paths plus a list
+    of human/agent-readable note lines describing every attachment (saved,
+    oversized, or undecodable) to append to the prompt.
+    """
+    saved: list[Path] = []
+    notes: list[str] = []
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        filename = att.get("filename") or "attachment"
+        mime = att.get("mime") or "application/octet-stream"
+        b64 = att.get("data_b64")
+        if not b64:
+            size = att.get("size")
+            notes.append(
+                f"- {filename} ({mime}, {size} bytes) — too large to inline; not available locally"
+            )
+            continue
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except (binascii.Error, ValueError):
+            notes.append(f"- {filename} ({mime}) — could not be decoded, skipped")
+            continue
+        path = _unique_path(dest_dir, _safe_filename(filename))
+        try:
+            path.write_bytes(data)
+        except OSError as e:
+            notes.append(f"- {filename} ({mime}) — could not be written ({e}), skipped")
+            continue
+        saved.append(path)
+        notes.append(f"- {path} ({mime}, {len(data)} bytes)")
+    return saved, notes
+
+
 # --------------------------------------------------------------------- bridge
 
 
@@ -276,7 +347,9 @@ class Bridge:
         if frame.get("author", {}).get("type") != "user":
             return
         text = self._strip_mention(frame.get("text") or "")
-        if not text:
+        # An image/file with no caption is still a real turn — forward it so
+        # long as something (text or an attachment) actually came through.
+        if not text and not (frame.get("attachments") or []):
             return
         key = self.binding_key(frame)
         cmd, _, rest = text.partition(" ")
@@ -374,70 +447,104 @@ class Bridge:
             self.busy.discard(key)
             self.typing(frame, False)
 
+    def _stage_attachments(self, frame: dict, text: str) -> tuple[str, list[str], str | None]:
+        """Drop any inbound attachments to a temp dir and build the prompt.
+
+        Returns ``(prompt, extra_args, tmpdir)``. Bytes are written to a fresh
+        temp dir which is exposed to Claude via ``--add-dir`` (so its Read tool
+        can open them without prompting), and every saved path is named in the
+        prompt so the model knows to look at them. ``tmpdir`` is ``None`` when
+        there's nothing to stage; the caller removes it after the run.
+        """
+        attachments = frame.get("attachments") or []
+        if not attachments:
+            return text, [], None
+        tmpdir = tempfile.mkdtemp(prefix="agora-att-")
+        saved, notes = materialize_attachments(attachments, Path(tmpdir))
+        prompt = text
+        if notes:
+            block = "The Agora message included these attachments:\n" + "\n".join(notes)
+            prompt = f"{text}\n\n{block}".strip() if text else block
+        extra_args = ["--add-dir", tmpdir] if saved else []
+        if not saved:
+            # Nothing landed on disk (all oversized/undecodable) — no point
+            # keeping an empty dir around or widening Claude's read scope.
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            tmpdir = None
+        return prompt, extra_args, tmpdir
+
     async def run_claude(self, key: str, frame: dict, binding: dict, text: str) -> str:
-        cmd = [
-            self.claude_bin, "-p", text,
-            "--output-format", "stream-json", "--verbose",
-            *self.claude_args,
-        ]
-        if binding.get("session_id"):
-            cmd += ["--resume", binding["session_id"]]
-        log(f"run: session={binding.get('session_id')} cwd={binding['cwd']}")
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=binding["cwd"],
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            stdin=asyncio.subprocess.DEVNULL,
-            # stream-json events are single lines that can carry whole file
-            # contents; the default 64 KB readline limit is far too small.
-            limit=64 * 1024 * 1024,
-        )
-        result_text, last_progress = None, 0.0
+        prompt, extra_args, tmpdir = self._stage_attachments(frame, text)
         try:
-            async with asyncio.timeout(self.timeout):
-                assert proc.stdout is not None
-                async for raw in proc.stdout:
-                    line = raw.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    kind = event.get("type")
-                    if kind == "assistant":
-                        snippet = self._progress_snippet(event)
-                        if snippet and time.monotonic() - last_progress > PROGRESS_THROTTLE:
-                            last_progress = time.monotonic()
-                            self.progress(frame, snippet)
-                    elif kind == "result":
-                        result_text = event.get("result") or ""
-                        if event.get("is_error"):
-                            result_text = f"(claude error) {result_text}"
-                        else:
-                            # Resuming with -p can fork to a new session id;
-                            # track it (successful runs only) so follow-ups
-                            # keep continuing the same conversation.
-                            new_sid = event.get("session_id")
-                            if new_sid and new_sid != binding.get("session_id"):
-                                binding["session_id"] = new_sid
-                                self.bindings[key] = binding
-                                self._save_state()
-                await proc.wait()
-        except TimeoutError:
-            raise RuntimeError(f"timed out after {self.timeout}s")
+            cmd = [
+                self.claude_bin, "-p", prompt,
+                "--output-format", "stream-json", "--verbose",
+                *extra_args,
+                *self.claude_args,
+            ]
+            if binding.get("session_id"):
+                cmd += ["--resume", binding["session_id"]]
+            log(f"run: session={binding.get('session_id')} cwd={binding['cwd']}"
+                + (f" attachments@{tmpdir}" if tmpdir else ""))
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=binding["cwd"],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.DEVNULL,
+                # stream-json events are single lines that can carry whole file
+                # contents; the default 64 KB readline limit is far too small.
+                limit=64 * 1024 * 1024,
+            )
+            result_text, last_progress = None, 0.0
+            try:
+                async with asyncio.timeout(self.timeout):
+                    assert proc.stdout is not None
+                    async for raw in proc.stdout:
+                        line = raw.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        kind = event.get("type")
+                        if kind == "assistant":
+                            snippet = self._progress_snippet(event)
+                            if snippet and time.monotonic() - last_progress > PROGRESS_THROTTLE:
+                                last_progress = time.monotonic()
+                                self.progress(frame, snippet)
+                        elif kind == "result":
+                            result_text = event.get("result") or ""
+                            if event.get("is_error"):
+                                result_text = f"(claude error) {result_text}"
+                            else:
+                                # Resuming with -p can fork to a new session id;
+                                # track it (successful runs only) so follow-ups
+                                # keep continuing the same conversation.
+                                new_sid = event.get("session_id")
+                                if new_sid and new_sid != binding.get("session_id"):
+                                    binding["session_id"] = new_sid
+                                    self.bindings[key] = binding
+                                    self._save_state()
+                    await proc.wait()
+            except TimeoutError:
+                raise RuntimeError(f"timed out after {self.timeout}s")
+            finally:
+                # Never leave an orphaned claude running: any exit path (timeout,
+                # stream parse error, disconnect, cancellation) must kill the
+                # child, otherwise it keeps auto-applying edits after a reported
+                # failure.
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+            if result_text is None:
+                stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
+                raise RuntimeError(stderr[-500:] or f"claude exited {proc.returncode} with no result")
+            return result_text
         finally:
-            # Never leave an orphaned claude running: any exit path (timeout,
-            # stream parse error, disconnect, cancellation) must kill the child,
-            # otherwise it keeps auto-applying edits after a reported failure.
-            if proc.returncode is None:
-                proc.kill()
-                await proc.wait()
-        if result_text is None:
-            stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
-            raise RuntimeError(stderr[-500:] or f"claude exited {proc.returncode} with no result")
-        return result_text
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
     @staticmethod
     def _progress_snippet(event: dict) -> str | None:
