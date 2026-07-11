@@ -467,8 +467,8 @@ export default function ChannelScreen() {
           }}
           onSendVoice={
             voiceOk
-              ? async (file) => {
-                  await sendVoice.mutateAsync({ file, threadId: null });
+              ? async (file, mentions) => {
+                  await sendVoice.mutateAsync({ file, threadId: null, mentions });
                 }
               : undefined
           }

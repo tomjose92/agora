@@ -23,10 +23,11 @@ import {
 import { useKeepAwake } from "expo-keep-awake";
 import { Headphones } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useSendVoice } from "../../../src/api/queries";
+import { useChannelAgents, useSendVoice } from "../../../src/api/queries";
 import { Icon } from "../../../src/components/Icon";
 import { toast } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
+import { slugify } from "../../../src/lib/format";
 import {
   enqueueSpeech,
   onSpeechIdle,
@@ -35,6 +36,7 @@ import {
 } from "../../../src/lib/speech";
 import { colors } from "../../../src/lib/theme";
 import { initialVadState, vadStep } from "../../../src/lib/vad";
+import { threadAddressKey, useAddressed } from "../../../src/state/addressed";
 import { useSession } from "../../../src/state/session";
 
 type LiveStatus = "starting" | "listening" | "recording" | "thinking" | "speaking" | "error";
@@ -68,6 +70,23 @@ export default function LiveScreen() {
   const sendVoice = useSendVoice(channelId);
   const insets = useSafeAreaInsets();
   useKeepAwake();
+
+  /* The conversation's "talk to" selection (set in the composer) also
+     addresses live turns: the transcript gets the same "@a, @b" prefix a
+     typed message would, so mention routing reaches the tagged agents. */
+  const addressKey = threadId != null ? threadAddressKey(channelId, threadId) : channelId;
+  const addressedIds = useAddressed((s) => s.byConvo[addressKey]);
+  const channelAgents = useChannelAgents(channelId);
+  const mentionPrefix = React.useMemo(() => {
+    if (!addressedIds?.length) return undefined;
+    const prefix = (channelAgents.data ?? [])
+      .filter((a) => addressedIds.includes(a.id))
+      .map((a) => `@${slugify(a.name)}`)
+      .join(", ");
+    return prefix || undefined;
+  }, [addressedIds, channelAgents.data]);
+  const mentionPrefixRef = useRef(mentionPrefix);
+  mentionPrefixRef.current = mentionPrefix;
 
   const [status, setStatus] = useState<LiveStatus>("starting");
   const statusRef = useRef(status);
@@ -148,6 +167,7 @@ export default function LiveScreen() {
           file: { uri, name: `live-${Date.now()}.m4a`, type: "audio/m4a" },
           threadId,
           live: true,
+          mentions: mentionPrefixRef.current,
         });
       } catch (e) {
         if (ended.current) return;

@@ -239,7 +239,9 @@ export function useSelectOption() {
 
 /** Voice note / live-voice turn: upload a recording, the server transcribes
     it and posts the transcript as a normal user message (returned here).
-    `live` steers member agents to answer in spoken prose. */
+    `live` steers member agents to answer in spoken prose. `mentions` is the
+    composer's "talk to" prefix ("@a, @b") — the server prepends it to the
+    transcript so voice turns address agents like typed messages do. */
 export function useSendVoice(channelId: string) {
   const api = useApi();
   const qc = useQueryClient();
@@ -248,11 +250,13 @@ export function useSendVoice(channelId: string) {
       file: OutgoingFile;
       threadId: number | null;
       live?: boolean;
+      mentions?: string;
     }) => {
       const form = new FormData();
       form.append("file", formFile(v.file));
       if (v.threadId != null) form.append("thread_id", String(v.threadId));
       if (v.live) form.append("live", "true");
+      if (v.mentions) form.append("mentions", v.mentions);
       return api.upload<Message>(`/api/channels/${channelId}/voice`, form);
     },
     onSuccess: (message, v) => {
