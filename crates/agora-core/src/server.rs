@@ -754,6 +754,7 @@ async fn post_voice_message(
     let mut filename = String::new();
     let mut thread_id: Option<i64> = None;
     let mut live = false;
+    let mut mentions = String::new();
     while let Some(field) = multipart
         .next_field()
         .await
@@ -778,6 +779,7 @@ async fn post_voice_message(
                 }
             }
             "live" => live = field.text().await.unwrap_or_default() == "true",
+            "mentions" => mentions = field.text().await.unwrap_or_default(),
             _ => {}
         }
     }
@@ -801,10 +803,29 @@ async fn post_voice_message(
             "Couldn't hear anything in that recording",
         ));
     }
+    // The composer's "talk to" selection rides along as a `mentions` field so
+    // voice turns address agents the same way typed messages do ("@a, @b, …" —
+    // the transcript alone never contains routable @mentions).
+    let text = match mention_prefix(&mentions) {
+        Some(prefix) => format!("{prefix}, {text}"),
+        None => text,
+    };
     let message = state
         .hub
         .post_user_message_opts(&channel_id, &text, &user, None, thread_id, vec![], live);
     Ok(Json(message))
+}
+
+/// Normalize a client-supplied `mentions` field into a clean "@a, @b" prefix.
+/// Only mention tokens survive (anything else in the field is dropped), so a
+/// client can't smuggle arbitrary text in front of a transcript.
+fn mention_prefix(raw: &str) -> Option<String> {
+    let raw: String = raw.chars().take(500).collect();
+    let tokens = crate::hub::mention_tokens(&raw);
+    if tokens.is_empty() {
+        return None;
+    }
+    Some(tokens.iter().map(|t| format!("@{t}")).collect::<Vec<_>>().join(", "))
 }
 
 /// Synthesize a message as speech for client playback (speak-aloud and live
@@ -1811,6 +1832,18 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mention_prefix_normalizes_and_rejects_smuggled_text() {
+        assert_eq!(mention_prefix("@claude"), Some("@claude".into()));
+        assert_eq!(mention_prefix("@a, @b"), Some("@a, @b".into()));
+        // Slugs keep word chars / dots / dashes; case folds like typed mentions.
+        assert_eq!(mention_prefix("@Kite-Bot"), Some("@kite-bot".into()));
+        // Non-mention text is dropped, not prepended.
+        assert_eq!(mention_prefix("ignore this @claude do that"), Some("@claude".into()));
+        assert_eq!(mention_prefix("no mentions here"), None);
+        assert_eq!(mention_prefix(""), None);
+    }
 
     #[test]
     fn agent_avatar_path_maps_flag_to_proxy_url() {

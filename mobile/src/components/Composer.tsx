@@ -93,8 +93,10 @@ export function Composer({
   sending: boolean;
   onSend: (v: { text: string; files: OutgoingFile[] }) => Promise<void>;
   /** When set (server has voice), a 🎤 button records a voice note and hands
-      the file here for the transcribe-and-post upload. */
-  onSendVoice?: (file: OutgoingFile) => Promise<void>;
+      the file here for the transcribe-and-post upload. `mentions` carries the
+      "talk to" prefix ("@a, @b") so the transcript addresses the same agents
+      a typed message would. */
+  onSendVoice?: (file: OutgoingFile, mentions?: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<OutgoingFile[]>([]);
@@ -186,11 +188,16 @@ export function Composer({
     }
     setRecPhase("uploading");
     try {
-      await onSendVoice?.({
-        uri,
-        name: `voice-note-${Date.now()}.m4a`,
-        type: "audio/m4a",
-      });
+      // Voice notes address the "talk to" agents exactly like typed sends.
+      const prefix = addressedAgents.map((a) => `@${slugify(a.name)}`).join(", ");
+      await onSendVoice?.(
+        {
+          uri,
+          name: `voice-note-${Date.now()}.m4a`,
+          type: "audio/m4a",
+        },
+        prefix || undefined,
+      );
     } catch (e) {
       toastErr("Voice message failed", e);
     }
