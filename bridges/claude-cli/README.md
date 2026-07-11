@@ -50,6 +50,25 @@ Only **human** authors can drive the bridge — messages from other agents/bots
 are ignored even when they `@mention` Claude, so a prompt-injected agent in the
 same channel can't run code on your machine.
 
+**Permission prompts in the channel.** When Claude needs approval for a tool
+(e.g. a Bash command outside the allowed set), the bridge posts the request to
+the channel with **Approve / Always allow (this session) / Reject** buttons and
+relays your tap back to the CLI, so headless runs no longer silently deny (or
+require blanket `--dangerously-skip-permissions`). "Always allow" is remembered
+per channel/thread binding, in memory only — a bridge restart re-asks. If
+nobody taps within `--permission-timeout` (`CLAUDE_PERMISSION_TIMEOUT`, default
+600 s) the request is denied and the buttons lock with a note; the wait counts
+against the overall run `--timeout`. The default permission mode is still
+`acceptEdits` — edits proceed unprompted, everything else asks.
+
+**Attachments (images, files).** Files sent with a message are forwarded too:
+the hub inlines each one (up to 8 MB) into the inbound frame, and the bridge
+writes them to a temporary directory it exposes to Claude via `--add-dir`, then
+names the saved paths in the prompt so Claude reads them. A message that is
+*only* an image — no caption — is still forwarded. The temp dir is deleted after
+the run. Files larger than the hub's inline cap can't be read (they arrive as a
+name-only note). See [SECURITY.md](SECURITY.md) for the trust caveats.
+
 Bindings are per channel (and per thread), persisted in `state.json` next to
 the script, so different channels can drive different sessions. While Claude
 works, the bridge streams typing + progress lines to the channel.
