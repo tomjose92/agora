@@ -38,10 +38,79 @@ PROGRESS_THROTTLE = 2.0  # seconds between progress frames
 TAIL_BYTES = 256 * 1024  # how much of a session .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
+# Models a channel may switch to via /model. Keys are what a user can type
+# (short aliases + full ids); values are what we pass to `claude --model`.
+# We allowlist rather than forward arbitrary strings into the subprocess argv.
+ALLOWED_MODELS = {
+    "opus": "opus",
+    "sonnet": "sonnet",
+    "haiku": "haiku",
+    "fable": "claude-fable-5",
+    "claude-opus-4-8": "claude-opus-4-8",
+    "claude-sonnet-5": "claude-sonnet-5",
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",
+    "claude-fable-5": "claude-fable-5",
+}
+MODEL_CHOICES = "opus | sonnet | haiku | fable (or a full model id) | default"
+
+# Permission modes, ordered least→most privileged. The rank gates escalation:
+# a channel may always *lower* privilege (e.g. → plan) but raising it above the
+# bridge's startup default requires CLAUDE_ALLOW_PERMISSION_ESCALATION.
+PERMISSION_RANK = {"plan": 0, "default": 1, "acceptEdits": 2, "bypassPermissions": 3}
+_PERMISSION_ALIASES = {
+    "plan": "plan",
+    "default": "default",
+    "acceptedits": "acceptEdits",
+    "accept": "acceptEdits",
+    "edits": "acceptEdits",
+    "bypass": "bypassPermissions",
+    "bypasspermissions": "bypassPermissions",
+    "skip": "bypassPermissions",
+}
+
+
+def normalize_permission_mode(raw: str) -> str | None:
+    """Map a user/CLI spelling to a canonical --permission-mode value (or None)."""
+    return _PERMISSION_ALIASES.get((raw or "").strip().lower())
+
+
+def split_permission_args(tokens: list[str]) -> tuple[str, list[str]]:
+    """Pull the default permission mode out of the base claude args.
+
+    Returns (default_mode, remaining_tokens). We strip any --permission-mode /
+    --dangerously-skip-permissions from the shared base args so that the
+    per-binding mode we always pass in run_claude can't collide with a second
+    --permission-mode already present in CLAUDE_PERMISSION_ARGS.
+    """
+    mode = "default"
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--permission-mode" and i + 1 < len(tokens):
+            mode = normalize_permission_mode(tokens[i + 1]) or mode
+            i += 2
+            continue
+        if t.startswith("--permission-mode="):
+            mode = normalize_permission_mode(t.split("=", 1)[1]) or mode
+            i += 1
+            continue
+        if t == "--dangerously-skip-permissions":
+            mode = "bypassPermissions"
+            i += 1
+            continue
+        out.append(t)
+        i += 1
+    return mode, out
+
+
 HELP = """Commands (everything else is forwarded to Claude):
 /sessions [n] - list recent Claude CLI sessions
 /use <n | session-id> - bind this channel/thread to a session
 /new <dir> - bind to a fresh session in a directory (must be under an allowed root)
+/model <opus|sonnet|haiku|fable|full-id|default> - set the model for this channel
+/permissions <plan|acceptEdits|bypass|default|reset> - set the permission mode
+/stop - cancel the run in flight on this channel
 /status - show the current binding
 /help - this message"""
 
@@ -182,7 +251,13 @@ class Bridge:
         self.agent_id = args.agent_id
         self.agent_name = args.agent_name
         self.claude_bin = args.claude_bin
-        self.claude_args = shlex.split(args.claude_args)
+        # Separate the default permission mode from the rest of the base args so
+        # a per-binding /permissions choice can override it without duplication.
+        self.default_permission_mode, self.base_claude_args = split_permission_args(
+            shlex.split(args.claude_args)
+        )
+        self.default_model = (args.model or "").strip() or None
+        self.allow_escalation = args.allow_permission_escalation
         self.timeout = args.timeout
         self.sessions_limit = args.sessions
         self.allowed_roots = parse_allowed_roots(args.allowed_roots)
@@ -190,6 +265,8 @@ class Bridge:
         self.bindings: dict[str, dict] = self._load_state()
         self.listings: dict[str, list[dict]] = {}  # binding key -> last /sessions result
         self.busy: set[str] = set()
+        self.procs: dict[str, asyncio.subprocess.Process] = {}  # key -> running claude
+        self.stop_requested: set[str] = set()  # keys whose run was cancelled via /stop
         self.outbox: asyncio.Queue = asyncio.Queue()
 
     @staticmethod
@@ -292,6 +369,12 @@ class Bridge:
             self.post(frame, await asyncio.to_thread(self._cmd_use, key, rest))
         elif cmd == "/new":
             self.post(frame, self._cmd_new(key, rest))
+        elif cmd == "/model":
+            self.post(frame, self._cmd_model(key, rest))
+        elif cmd == "/permissions":
+            self.post(frame, self._cmd_permissions(key, rest))
+        elif cmd == "/stop":
+            self.post(frame, self._cmd_stop(key))
         elif cmd == "/status":
             self.post(frame, self._cmd_status(key))
         elif cmd.startswith("/"):
@@ -344,13 +427,77 @@ class Bridge:
         self._save_state()
         return f"Will start a fresh Claude session in {cwd} on your next message."
 
+    def _cmd_model(self, key: str, arg: str) -> str:
+        b = self.bindings.get(key)
+        if not b:
+            return "No session bound here. Run /sessions then /use <n>."
+        if not arg:
+            cur = b.get("model") or self.default_model or "session default"
+            return f"Model: {cur}\nUsage: /model <{MODEL_CHOICES}>"
+        choice = arg.strip().lower()
+        if choice == "default":
+            b.pop("model", None)
+            self.bindings[key] = b
+            self._save_state()
+            fell_back = self.default_model or "session default"
+            return f"Model reset to the bridge default ({fell_back})."
+        model = ALLOWED_MODELS.get(choice)
+        if not model:
+            return f"Unknown model {arg!r}. Options: {MODEL_CHOICES}"
+        b["model"] = model
+        self.bindings[key] = b
+        self._save_state()
+        return f"Model set to {model} for this channel."
+
+    def _cmd_permissions(self, key: str, arg: str) -> str:
+        b = self.bindings.get(key)
+        if not b:
+            return "No session bound here. Run /sessions then /use <n>."
+        default = self.default_permission_mode
+        if not arg:
+            cur = b.get("permission_mode") or default
+            return (
+                f"Permission mode: {cur} (bridge default: {default})\n"
+                "Usage: /permissions <plan | acceptEdits | bypass | default | reset>"
+            )
+        choice = arg.strip().lower()
+        if choice == "reset":
+            b.pop("permission_mode", None)
+            self.bindings[key] = b
+            self._save_state()
+            return f"Permission mode reset to the bridge default ({default})."
+        mode = normalize_permission_mode(choice)
+        if not mode:
+            return "Unknown mode. Options: plan, acceptEdits, bypass, default, reset."
+        if PERMISSION_RANK[mode] > PERMISSION_RANK[default] and not self.allow_escalation:
+            return (
+                f"Refusing to escalate from {default} to {mode}: privilege escalation "
+                "is disabled. Restart the bridge with "
+                "CLAUDE_ALLOW_PERMISSION_ESCALATION=1 to allow it. You can always "
+                "lower privilege (e.g. /permissions plan)."
+            )
+        b["permission_mode"] = mode
+        self.bindings[key] = b
+        self._save_state()
+        return f"Permission mode set to {mode} for this channel."
+
+    def _cmd_stop(self, key: str) -> str:
+        proc = self.procs.get(key)
+        if not proc or proc.returncode is not None:
+            return "Nothing running here."
+        self.stop_requested.add(key)
+        proc.kill()
+        return "Stopping the current run…"
+
     def _cmd_status(self, key: str) -> str:
         b = self.bindings.get(key)
         if not b:
             return "No session bound here. Run /sessions then /use <n>."
         sid = b["session_id"][:8] + "…" if b["session_id"] else "(new, not started)"
+        model = b.get("model") or self.default_model or "session default"
+        mode = b.get("permission_mode") or self.default_permission_mode
         busy = " — a run is in flight" if key in self.busy else ""
-        return f"Session {sid} in {b['cwd']}{busy}"
+        return f"Session {sid} in {b['cwd']}\nModel: {model}\nPermissions: {mode}{busy}"
 
     # ------------------------------------------------------------ claude
 
@@ -375,14 +522,20 @@ class Bridge:
             self.typing(frame, False)
 
     async def run_claude(self, key: str, frame: dict, binding: dict, text: str) -> str:
+        mode = binding.get("permission_mode") or self.default_permission_mode
+        model = binding.get("model") or self.default_model
         cmd = [
             self.claude_bin, "-p", text,
             "--output-format", "stream-json", "--verbose",
-            *self.claude_args,
+            "--permission-mode", mode,
+            *self.base_claude_args,
         ]
+        if model:
+            cmd += ["--model", model]
         if binding.get("session_id"):
             cmd += ["--resume", binding["session_id"]]
-        log(f"run: session={binding.get('session_id')} cwd={binding['cwd']}")
+        log(f"run: session={binding.get('session_id')} cwd={binding['cwd']} "
+            f"model={model or 'default'} mode={mode}")
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=binding["cwd"],
@@ -393,6 +546,7 @@ class Bridge:
             # contents; the default 64 KB readline limit is far too small.
             limit=64 * 1024 * 1024,
         )
+        self.procs[key] = proc  # so /stop can find and kill this run
         result_text, last_progress = None, 0.0
         try:
             async with asyncio.timeout(self.timeout):
@@ -434,6 +588,10 @@ class Bridge:
             if proc.returncode is None:
                 proc.kill()
                 await proc.wait()
+            self.procs.pop(key, None)
+        if key in self.stop_requested:
+            self.stop_requested.discard(key)
+            return "Stopped."
         if result_text is None:
             stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
             raise RuntimeError(stderr[-500:] or f"claude exited {proc.returncode} with no result")
@@ -520,7 +678,17 @@ def main() -> None:
     ap.add_argument("--claude-bin", default=os.environ.get("CLAUDE_BIN", "claude"))
     ap.add_argument("--claude-args",
                     default=os.environ.get("CLAUDE_PERMISSION_ARGS", "--permission-mode acceptEdits"),
-                    help="extra args for every claude run (permissions etc.)")
+                    help="extra args for every claude run (permissions etc.); the "
+                         "permission mode here is the default, overridable per channel "
+                         "with /permissions")
+    ap.add_argument("--model", default=os.environ.get("CLAUDE_MODEL", ""),
+                    help="default model for every run (channels can override with "
+                         f"/model); one of: {MODEL_CHOICES}")
+    ap.add_argument("--allow-permission-escalation", action="store_true",
+                    default=os.environ.get("CLAUDE_ALLOW_PERMISSION_ESCALATION", "").lower()
+                    in ("1", "true", "yes"),
+                    help="allow /permissions to raise privilege above the bridge "
+                         "default (off by default; lowering privilege is always allowed)")
     ap.add_argument("--timeout", type=int, default=int(os.environ.get("CLAUDE_TIMEOUT", "1800")),
                     help="per-run timeout in seconds")
     ap.add_argument("--sessions", type=int, default=int(os.environ.get("SESSIONS_LIMIT", "10")),
