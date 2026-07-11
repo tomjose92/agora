@@ -25,6 +25,7 @@ import shlex
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 try:
     import websockets
@@ -35,13 +36,41 @@ CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 MAX_POST_CHARS = 8000
 PROGRESS_THROTTLE = 2.0  # seconds between progress frames
 TAIL_BYTES = 256 * 1024  # how much of a session .jsonl to scan for the last prompt
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
 HELP = """Commands (everything else is forwarded to Claude):
 /sessions [n] - list recent Claude CLI sessions
 /use <n | session-id> - bind this channel/thread to a session
-/new <dir> - bind to a fresh session in a directory
+/new <dir> - bind to a fresh session in a directory (must be under an allowed root)
 /status - show the current binding
 /help - this message"""
+
+
+def _reject_insecure_ws(url: str) -> None:
+    """Refuse plaintext ws:// to a non-loopback host (token + traffic in clear)."""
+    if not url.startswith("ws://"):
+        return
+    host = (urlsplit(url).hostname or "").lower()
+    if host not in LOOPBACK_HOSTS and host not in {h.strip("[]") for h in LOOPBACK_HOSTS}:
+        raise SystemExit(
+            f"refusing plaintext ws:// to non-loopback host {host!r}: the pairing "
+            "token and all messages would cross the network unencrypted. Use wss:// "
+            "(or keep the hub on 127.0.0.1)."
+        )
+
+
+def parse_allowed_roots(raw: str) -> list[Path]:
+    """Parse a colon-separated CLAUDE_ALLOWED_ROOTS into resolved directories."""
+    roots: list[Path] = []
+    for part in (raw or "").split(":"):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            roots.append(Path(part).expanduser().resolve())
+        except OSError:
+            continue
+    return roots
 
 
 def log(msg: str) -> None:
@@ -156,6 +185,7 @@ class Bridge:
         self.claude_args = shlex.split(args.claude_args)
         self.timeout = args.timeout
         self.sessions_limit = args.sessions
+        self.allowed_roots = parse_allowed_roots(args.allowed_roots)
         self.state_file = Path(args.state_file)
         self.bindings: dict[str, dict] = self._load_state()
         self.listings: dict[str, list[dict]] = {}  # binding key -> last /sessions result
@@ -169,6 +199,7 @@ class Bridge:
         url = re.sub(r"^https://", "wss://", url)
         if not url.startswith(("ws://", "wss://")):
             url = "ws://" + url
+        _reject_insecure_ws(url)
         if "/agent/ws" not in url:
             url += "/agent/ws"
         sep = "&" if "?" in url else "?"
@@ -239,8 +270,11 @@ class Bridge:
         )
 
     async def handle_inbound(self, frame: dict) -> None:
-        if frame.get("author", {}).get("type") != "user" and not frame.get("mentioned"):
-            return  # ignore other bots unless they @mention us
+        # Only humans may drive Claude. Non-user authors (other agents/bots) are
+        # ignored even when they @mention us: a prompt-injected agent in the same
+        # channel must never be able to run code on this machine.
+        if frame.get("author", {}).get("type") != "user":
+            return
         text = self._strip_mention(frame.get("text") or "")
         if not text:
             return
@@ -291,9 +325,21 @@ class Bridge:
     def _cmd_new(self, key: str, arg: str) -> str:
         if not arg:
             return "Usage: /new <directory>"
-        cwd = Path(arg).expanduser()
+        if not self.allowed_roots:
+            return (
+                "/new is disabled: no allowed roots configured. Set "
+                "CLAUDE_ALLOWED_ROOTS (colon-separated dirs) or --allowed-roots "
+                "on the bridge, then restart it."
+            )
+        try:
+            cwd = Path(arg).expanduser().resolve()
+        except OSError as e:
+            return f"Cannot resolve {arg!r}: {e}"
         if not cwd.is_dir():
             return f"Not a directory: {cwd}"
+        if not any(cwd == root or cwd.is_relative_to(root) for root in self.allowed_roots):
+            allowed = ", ".join(str(r) for r in self.allowed_roots)
+            return f"{cwd} is not under an allowed root. Allowed: {allowed}"
         self.bindings[key] = {"session_id": None, "cwd": str(cwd)}
         self._save_state()
         return f"Will start a fresh Claude session in {cwd} on your next message."
@@ -343,6 +389,9 @@ class Bridge:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.DEVNULL,
+            # stream-json events are single lines that can carry whole file
+            # contents; the default 64 KB readline limit is far too small.
+            limit=64 * 1024 * 1024,
         )
         result_text, last_progress = None, 0.0
         try:
@@ -377,9 +426,14 @@ class Bridge:
                                 self._save_state()
                 await proc.wait()
         except TimeoutError:
-            proc.kill()
-            await proc.wait()
             raise RuntimeError(f"timed out after {self.timeout}s")
+        finally:
+            # Never leave an orphaned claude running: any exit path (timeout,
+            # stream parse error, disconnect, cancellation) must kill the child,
+            # otherwise it keeps auto-applying edits after a reported failure.
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
         if result_text is None:
             stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
             raise RuntimeError(stderr[-500:] or f"claude exited {proc.returncode} with no result")
@@ -453,8 +507,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Claude CLI bridge for Agora")
     ap.add_argument("--url", default=os.environ.get("AGORA_URL", "ws://127.0.0.1:4470"),
                     help="Agora base URL (http(s)/ws(s); /agent/ws appended if missing)")
-    ap.add_argument("--token", default=os.environ.get("AGORA_PAIRING_TOKEN", ""),
-                    help="pairing token (Connections page or POST /api/pairing)")
+    ap.add_argument("--token", default=None,
+                    help="pairing token. DISCOURAGED on the CLI (visible in ps/proc); "
+                         "prefer AGORA_PAIRING_TOKEN or --token-file")
+    ap.add_argument("--token-file", default=os.environ.get("AGORA_PAIRING_TOKEN_FILE"),
+                    help="read the pairing token from this file (chmod 600 it)")
+    ap.add_argument("--allowed-roots", default=os.environ.get("CLAUDE_ALLOWED_ROOTS", ""),
+                    help="colon-separated dirs /new sessions may start under; "
+                         "/new is disabled when empty")
     ap.add_argument("--agent-id", default=os.environ.get("AGENT_ID", "claude-cli"))
     ap.add_argument("--agent-name", default=os.environ.get("AGENT_NAME", "Claude"))
     ap.add_argument("--claude-bin", default=os.environ.get("CLAUDE_BIN", "claude"))
@@ -467,8 +527,19 @@ def main() -> None:
                     help="how many sessions /sessions lists")
     ap.add_argument("--state-file", default=os.environ.get("STATE_FILE", str(default_state)))
     args = ap.parse_args()
+    if args.token:
+        log("warning: --token on the command line is visible to other local users "
+            "(ps/proc). Prefer AGORA_PAIRING_TOKEN or --token-file.")
+    else:
+        if args.token_file:
+            try:
+                args.token = Path(args.token_file).expanduser().read_text().strip()
+            except OSError as e:
+                ap.error(f"cannot read --token-file {args.token_file}: {e}")
+        else:
+            args.token = os.environ.get("AGORA_PAIRING_TOKEN", "")
     if not args.token:
-        ap.error("--token (or AGORA_PAIRING_TOKEN) is required")
+        ap.error("a pairing token is required (AGORA_PAIRING_TOKEN, --token-file, or --token)")
     log(f"claude-cli bridge -> {re.sub(r'token=[^&]+', 'token=***', Bridge._normalize_url(args.url, args.token))}")
     try:
         asyncio.run(Bridge(args).run())
