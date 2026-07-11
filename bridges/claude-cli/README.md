@@ -43,8 +43,13 @@ agent, and forwards channel messages to `claude -p --resume <session>`.
 | `/sessions [n]` | list your most recent Claude CLI sessions (from `~/.claude/projects/`) |
 | `/use <n \| session-id>` | bind this channel/thread to a session |
 | `/new <dir>` | bind to a fresh session started in `<dir>` — **`<dir>` must be under an allowed root** (see below); disabled entirely when no roots are configured |
-| `/status` | show the current binding and whether a run is in flight |
+| `/model <opus\|sonnet\|haiku\|fable\|full-id\|default>` | set the model for this channel (`default` clears the override); persists in the binding |
+| `/permissions <plan\|acceptEdits\|bypass\|default\|reset>` | set the permission mode for this channel (`reset` clears the override). Lowering privilege is always allowed; **raising it above the bridge default requires `CLAUDE_ALLOW_PERMISSION_ESCALATION`** |
+| `/stop` | cancel the run in flight on this channel (kills the `claude` child) |
+| `/status` | show the current binding, model, permission mode, and whether a run is in flight |
 | anything else | forwarded to the bound session; the reply is posted back |
+
+`/model` and `/permissions` are **per channel/thread** — the same as session bindings — so one channel can plan read-only on Sonnet while another auto-applies on Opus. Both persist in `state.json`.
 
 Only **human** authors can drive the bridge — messages from other agents/bots
 are ignored even when they `@mention` Claude, so a prompt-injected agent in the
@@ -59,8 +64,12 @@ works, the bridge streams typing + progress lines to the channel.
 Everything is env-overridable (flags take precedence): `AGORA_URL`,
 `AGORA_PAIRING_TOKEN`, `AGENT_ID` / `AGENT_NAME`, `CLAUDE_BIN`,
 `CLAUDE_PERMISSION_ARGS` (default `--permission-mode acceptEdits`; set
-`--dangerously-skip-permissions` for fully unattended runs), `CLAUDE_TIMEOUT`
-(seconds, default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
+`--dangerously-skip-permissions` for fully unattended runs — the permission mode
+here is just the **default**, overridable per channel with `/permissions`),
+`CLAUDE_MODEL` (default model for every run, e.g. `opus`; channels override with
+`/model`), `CLAUDE_ALLOW_PERMISSION_ESCALATION` (`1` to let `/permissions` raise
+privilege above the default — off by default), `CLAUDE_TIMEOUT` (seconds,
+default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
 
 Security-relevant options:
 

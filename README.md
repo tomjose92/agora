@@ -30,7 +30,7 @@ whole design: one Agora, many agents, from anywhere.
 | `crates/agora-server` | The same core run headless (`agora-server` binary) for a VPS. |
 | `ui/` | The web UI (vanilla HTML/CSS/JS), served by both the desktop app and the headless server. |
 | `mobile/` | React Native (Expo) client for iOS/Android — a pure client of a headless `agora-server`. See [`mobile/README.md`](mobile/README.md). |
-| `bridges/` | Dial-in bridge clients for the agent protocol. [`bridges/claude-cli`](bridges/claude-cli/README.md) drives local Claude Code sessions from a channel. |
+| `bridges/` | Dial-in bridge clients for the agent protocol. [`bridges/claude-cli`](bridges/claude-cli/README.md) drives local Claude Code sessions from a channel; [`bridges/hermes-plugin`](bridges/hermes-plugin/README.md) is a drop-in Hermes platform plugin that brings a full Hermes agent into Agora. |
 
 ## Quick start (macOS desktop app)
 
@@ -447,7 +447,8 @@ signed launch, macOS shows the usual "allow notifications?" prompt.
 
 - **Multi-user** — accounts beyond the single owner token.
 - **More bridge kits** — a [Claude CLI bridge](bridges/claude-cli/README.md)
-  ships today; ready-made Node/other clients for the dial-in protocol are next.
+  and a [Hermes plugin](bridges/hermes-plugin/README.md) ship today; ready-made
+  Node/other clients for the dial-in protocol are next.
 - **Instant iOS push** — the [mobile app](mobile/README.md) ships now (React
   Native/Expo, dial-out only); APNs/FCM push is gated on Apple Developer
   credentials (see [Notifications](#notifications)).
