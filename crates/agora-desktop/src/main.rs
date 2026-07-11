@@ -72,6 +72,9 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        // target="_blank" links in the UI open in the system browser instead
+        // of dying inside the webview (see capabilities/remote.json).
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_server_settings,
             set_server_settings,

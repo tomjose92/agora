@@ -1,6 +1,7 @@
 import React from "react";
-import { Linking, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { parseMd, type Span } from "../lib/mdlite";
+import { openLink } from "../lib/openLink";
 import { colors, mono } from "../lib/theme";
 
 function SpanText({ span }: { span: Span }) {
@@ -13,7 +14,7 @@ function SpanText({ span }: { span: Span }) {
       return <Text style={styles.code}>{span.text}</Text>;
     case "link":
       return (
-        <Text style={styles.link} onPress={() => Linking.openURL(span.url)}>
+        <Text style={styles.link} onPress={() => void openLink(span.url)} suppressHighlighting={false}>
           {span.text}
         </Text>
       );
@@ -102,7 +103,7 @@ const styles = StyleSheet.create({
     color: colors.a2,
     backgroundColor: colors.panelStrong,
   },
-  link: { color: colors.a2, fontWeight: "500" },
+  link: { color: colors.a2, fontWeight: "500", textDecorationLine: "underline" },
   mention: {
     color: "#b3a8ff",
     fontWeight: "600",

@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote",
+  "description": "Server-origin UI (embedded loopback or remote): let target=_blank links open in the system browser via the opener plugin.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://*", "http://*:*", "https://*", "https://*:*"]
+  },
+  "permissions": ["opener:default"]
+}
