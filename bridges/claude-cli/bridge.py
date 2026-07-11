@@ -11,6 +11,14 @@ Protocol (see the Agora README, "Third-party agents"):
   <- {"type": "inbound", "agent_id", "channel_id", "thread_id", "text", ...}
   -> {"type": "post", "agent_id", "channel_id", "thread_id", "text"}
   -> {"type": "typing" | "progress", ...}   (optional niceties)
+  -> {"type": "post", ..., "options_id", "options"}   (permission buttons)
+  <- {"type": "option_select", "options_id", "option_id", "user", ...}
+  -> {"type": "options_resolve", "options_id", "text"}
+
+Tool permissions: runs use `--permission-prompt-tool stdio`, so when the CLI
+needs approval it emits a `control_request` (subtype `can_use_tool`) on stdout;
+the bridge posts Approve/Always/Reject buttons to the channel and answers with
+a `control_response` on stdin once someone taps (deny on timeout).
 
 Only dependency: `pip install websockets`.
 """
@@ -255,6 +263,7 @@ class Bridge:
         self.claude_bin = args.claude_bin
         self.claude_args = shlex.split(args.claude_args)
         self.timeout = args.timeout
+        self.permission_timeout = args.permission_timeout
         self.sessions_limit = args.sessions
         self.allowed_roots = parse_allowed_roots(args.allowed_roots)
         self.state_file = Path(args.state_file)
@@ -262,6 +271,12 @@ class Bridge:
         self.listings: dict[str, list[dict]] = {}  # binding key -> last /sessions result
         self.busy: set[str] = set()
         self.outbox: asyncio.Queue = asyncio.Queue()
+        # In-flight permission asks: options_id -> (future, channel_id, thread_id).
+        # The future resolves to (option_id, user_name) when someone taps a button.
+        self.pending_perms: dict[str, tuple[asyncio.Future, str, int | None]] = {}
+        # "Always allow" tool names granted per binding key; memory-only so a
+        # bridge restart re-asks rather than silently trusting old grants.
+        self.session_allows: dict[str, set[str]] = {}
 
     @staticmethod
     def _normalize_url(url: str, token: str) -> str:
@@ -475,10 +490,18 @@ class Bridge:
 
     async def run_claude(self, key: str, frame: dict, binding: dict, text: str) -> str:
         prompt, extra_args, tmpdir = self._stage_attachments(frame, text)
+        perm_tasks: list[asyncio.Task] = []
+        perm_ids: list[str] = []
         try:
+            # Bidirectional stream-json: the prompt rides on stdin and
+            # `--permission-prompt-tool stdio` makes the CLI route permission
+            # asks to us as `control_request` events instead of silently
+            # denying them (its headless default).
             cmd = [
-                self.claude_bin, "-p", prompt,
+                self.claude_bin, "-p",
+                "--input-format", "stream-json",
                 "--output-format", "stream-json", "--verbose",
+                "--permission-prompt-tool", "stdio",
                 *extra_args,
                 *self.claude_args,
             ]
@@ -491,11 +514,15 @@ class Bridge:
                 cwd=binding["cwd"],
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.PIPE,
                 # stream-json events are single lines that can carry whole file
                 # contents; the default 64 KB readline limit is far too small.
                 limit=64 * 1024 * 1024,
             )
+            await self._send_to_claude(proc, {
+                "type": "user",
+                "message": {"role": "user", "content": [{"type": "text", "text": prompt}]},
+            })
             result_text, last_progress = None, 0.0
             try:
                 async with asyncio.timeout(self.timeout):
@@ -514,6 +541,13 @@ class Bridge:
                             if snippet and time.monotonic() - last_progress > PROGRESS_THROTTLE:
                                 last_progress = time.monotonic()
                                 self.progress(frame, snippet)
+                        elif kind == "control_request":
+                            perm_tasks.append(asyncio.create_task(
+                                self._handle_control_request(key, frame, proc, event, perm_ids)
+                            ))
+                        elif kind == "control_cancel_request":
+                            self._cancel_perm(f"perm-{event.get('request_id')}",
+                                              "Claude withdrew the request.")
                         elif kind == "result":
                             result_text = event.get("result") or ""
                             if event.get("is_error"):
@@ -527,6 +561,9 @@ class Bridge:
                                     binding["session_id"] = new_sid
                                     self.bindings[key] = binding
                                     self._save_state()
+                            break  # stdin stays open, so EOF never comes — stop here
+                    if proc.stdin is not None:
+                        proc.stdin.close()
                     await proc.wait()
             except TimeoutError:
                 raise RuntimeError(f"timed out after {self.timeout}s")
@@ -538,6 +575,12 @@ class Bridge:
                 if proc.returncode is None:
                     proc.kill()
                     await proc.wait()
+                # Unstick any approval still waiting on a button: cancel it and
+                # lock the buttons so a later tap can't answer a dead run.
+                for oid in perm_ids:
+                    self._cancel_perm(oid, "The run ended before a decision.")
+                if perm_tasks:
+                    await asyncio.gather(*perm_tasks, return_exceptions=True)
             if result_text is None:
                 stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
                 raise RuntimeError(stderr[-500:] or f"claude exited {proc.returncode} with no result")
@@ -545,6 +588,122 @@ class Bridge:
         finally:
             if tmpdir:
                 shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # -------------------------------------------------------- permissions
+
+    @staticmethod
+    async def _send_to_claude(proc, obj: dict) -> None:
+        """Write one JSON line to the CLI's stdin (whole-line writes are safe
+        to interleave across tasks: write() appends atomically, drain flushes)."""
+        proc.stdin.write((json.dumps(obj) + "\n").encode())
+        await proc.stdin.drain()
+
+    @staticmethod
+    def _perm_response(req_id: str, allow: bool, tool_input: dict, deny_msg: str = "") -> dict:
+        inner = (
+            {"behavior": "allow", "updatedInput": tool_input}
+            if allow
+            else {"behavior": "deny", "message": deny_msg or "Denied via Agora"}
+        )
+        return {"type": "control_response", "response": {
+            "subtype": "success", "request_id": req_id, "response": inner,
+        }}
+
+    @staticmethod
+    def _perm_prompt_text(tool: str, tool_input: dict, description: str | None) -> str:
+        if tool == "Bash" and tool_input.get("command"):
+            detail = str(tool_input["command"])
+        elif tool_input.get("file_path"):
+            detail = str(tool_input["file_path"])
+        else:
+            detail = json.dumps(tool_input)
+        if len(detail) > 500:
+            detail = detail[:500] + "…"
+        lines = [f"Claude wants to use **{tool}**:", f"```\n{detail}\n```"]
+        if description:
+            lines.append(f"_{description}_")
+        return "\n".join(lines)
+
+    def _resolve_perm_buttons(self, options_id: str, channel_id: str,
+                              thread_id: int | None, note: str) -> None:
+        """Lock a permission message's buttons with an outcome note. A no-op
+        hub-side when a tap already resolved them (hub marks that itself)."""
+        self.send({
+            "type": "options_resolve", "agent_id": self.agent_id,
+            "channel_id": channel_id, "thread_id": thread_id,
+            "options_id": options_id, "text": note,
+        })
+
+    def _cancel_perm(self, options_id: str, note: str) -> None:
+        entry = self.pending_perms.pop(options_id, None)
+        if not entry:
+            return
+        fut, channel_id, thread_id = entry
+        if not fut.done():
+            fut.cancel()
+        self._resolve_perm_buttons(options_id, channel_id, thread_id, note)
+
+    def handle_option_select(self, frame: dict) -> None:
+        entry = self.pending_perms.get(frame.get("options_id") or "")
+        if not entry:
+            return
+        fut, _, _ = entry
+        if not fut.done():
+            user = frame.get("user") or {}
+            who = user.get("name") or user.get("id") or "someone"
+            fut.set_result((frame.get("option_id"), who))
+
+    async def _handle_control_request(self, key: str, frame: dict, proc,
+                                      event: dict, perm_ids: list[str]) -> None:
+        """Relay one CLI permission ask to the channel as approval buttons."""
+        req_id = event.get("request_id") or ""
+        req = event.get("request") or {}
+        if req.get("subtype") != "can_use_tool":
+            # Unknown control traffic must still get a reply or the CLI hangs.
+            await self._send_to_claude(proc, {"type": "control_response", "response": {
+                "subtype": "error", "request_id": req_id,
+                "error": f"bridge does not support {req.get('subtype')!r}",
+            }})
+            return
+        tool = req.get("tool_name") or "tool"
+        tool_input = req.get("input") or {}
+        if tool in self.session_allows.get(key, set()):
+            await self._send_to_claude(proc, self._perm_response(req_id, True, tool_input))
+            return
+        options_id = f"perm-{req_id}"
+        fut = asyncio.get_running_loop().create_future()
+        self.pending_perms[options_id] = (fut, frame["channel_id"], frame.get("thread_id"))
+        perm_ids.append(options_id)
+        self.send({
+            "type": "post", "agent_id": self.agent_id,
+            "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
+            "text": self._perm_prompt_text(tool, tool_input, req.get("description")),
+            "options_id": options_id,
+            "options": [
+                {"id": "allow", "label": "Approve", "style": "primary"},
+                {"id": "allow_always", "label": f"Always allow {tool} (this session)"},
+                {"id": "deny", "label": "Reject"},
+            ],
+        })
+        try:
+            option_id, who = await asyncio.wait_for(fut, self.permission_timeout)
+        except asyncio.CancelledError:
+            return  # run ended; _cancel_perm already resolved the buttons
+        except TimeoutError:
+            option_id, who = "deny", None
+            self._resolve_perm_buttons(options_id, frame["channel_id"], frame.get("thread_id"),
+                                       f"No decision within {self.permission_timeout}s — denied.")
+        finally:
+            self.pending_perms.pop(options_id, None)
+        if option_id == "allow_always":
+            self.session_allows.setdefault(key, set()).add(tool)
+        allow = option_id in ("allow", "allow_always")
+        deny_msg = (f"Denied by {who} via Agora" if who
+                    else f"No approval within {self.permission_timeout}s")
+        try:
+            await self._send_to_claude(proc, self._perm_response(req_id, allow, tool_input, deny_msg))
+        except (OSError, RuntimeError, ConnectionResetError):
+            pass  # claude already exited; nothing to answer
 
     @staticmethod
     def _progress_snippet(event: dict) -> str | None:
@@ -603,8 +762,13 @@ class Bridge:
                     frame = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                if frame.get("type") == "inbound" and frame.get("agent_id") == self.agent_id:
+                if frame.get("agent_id") != self.agent_id:
+                    continue
+                kind = frame.get("type")
+                if kind == "inbound":
                     asyncio.create_task(self.handle_inbound(frame))
+                elif kind == "option_select":
+                    self.handle_option_select(frame)
         finally:
             send_task.cancel()
 
@@ -630,6 +794,10 @@ def main() -> None:
                     help="extra args for every claude run (permissions etc.)")
     ap.add_argument("--timeout", type=int, default=int(os.environ.get("CLAUDE_TIMEOUT", "1800")),
                     help="per-run timeout in seconds")
+    ap.add_argument("--permission-timeout", type=int,
+                    default=int(os.environ.get("CLAUDE_PERMISSION_TIMEOUT", "600")),
+                    help="seconds to wait for an Approve/Reject tap before denying "
+                         "a tool request (waits count against --timeout)")
     ap.add_argument("--sessions", type=int, default=int(os.environ.get("SESSIONS_LIMIT", "10")),
                     help="how many sessions /sessions lists")
     ap.add_argument("--state-file", default=os.environ.get("STATE_FILE", str(default_state)))

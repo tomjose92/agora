@@ -26,7 +26,9 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
      where a prompt-injected sandboxed agent runs code on your laptop). See
      `handle_inbound` in [bridge.py](bridge.py).
    - *Still open:* any *human* the hub admits to the channel is fully trusted.
-     There is no per-user authorization list in the bridge.
+     There is no per-user authorization list in the bridge. This extends to the
+     in-channel **permission buttons** (see below): any channel member can tap
+     Approve / Always allow on a tool request, not just the person who asked.
 
 3. **The pairing token is an unscoped master key.**
    - *Addressed (bridge side):* the token can now be supplied via
@@ -71,7 +73,21 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
      (#1 above). See `materialize_attachments` / `_stage_attachments` in
      [bridge.py](bridge.py).
 
-7. **Bounded memory DoS on large output.** The subprocess stdout limit is 64 MB
+7. **In-channel tool approval changes the default trust posture.** Runs now use
+   `--permission-prompt-tool stdio`: tools the permission mode doesn't cover are
+   relayed to the channel as Approve / Always allow / Reject buttons instead of
+   being silently denied. That is the point — but note the consequences:
+   - Approval authority equals channel membership (see #2); there is no
+     approver allowlist and no distinction between who prompted and who taps.
+   - **Always allow** grants the whole tool (e.g. all of `Bash`) for that
+     channel/thread binding until the bridge restarts. It is deliberately
+     memory-only and never persisted to `state.json`.
+   - Unanswered requests **deny** after `--permission-timeout` (default 600 s),
+     and requests still pending when a run dies are denied and their buttons
+     locked, so a stale button can never answer a later run (ids are keyed by
+     the CLI's per-request uuid).
+
+8. **Bounded memory DoS on large output.** The subprocess stdout limit is 64 MB
    (raised from asyncio's 64 KB default so `stream-json` lines carrying whole
    files don't crash the reader). A single pathological line can still make the
    bridge buffer up to 64 MB. Acceptable for single-user use; note it if you
@@ -105,7 +121,8 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
 |---|---|---|
 | Non-user authors can drive it (2) | Fixed | `handle_inbound` |
 | Attachment path traversal / temp-dir leak (6) | Fixed | `_safe_filename`, `_stage_attachments` |
-| Orphaned child on failure (5→7) | Fixed | `run_claude` (finally-kill) |
+| Silent headless denies → in-channel approval (7) | Fixed (by design, see caveats) | `_handle_control_request` |
+| Orphaned child on failure (5) | Fixed | `run_claude` (finally-kill) |
 | `/new` any directory (4) | Fixed | `_cmd_new` + `CLAUDE_ALLOWED_ROOTS` |
 | Token on CLI / plaintext ws (3, partial) | Fixed (bridge side) | `main`, `_reject_insecure_ws` |
 | RCE / no sandbox (1) | Open | operational (run Claude confined) |
