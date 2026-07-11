@@ -21,5 +21,9 @@ mobile/.expo/
 # Bridge runtime state (per-machine channel->session bindings)
 bridges/claude-cli/state.json
 
+# Python bytecode (the bridges are Python)
+__pycache__/
+*.pyc
+
 # OS noise
 .DS_Store
