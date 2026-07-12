@@ -38,6 +38,11 @@ pub const MAX_INLINE_ATTACHMENT: usize = 8 * 1024 * 1024;
 pub const HISTORY_PAGE_DEFAULT: i64 = 20;
 pub const HISTORY_PAGE_MAX: i64 = 50;
 
+/// Same idea for an agent `search_request`: default page size and hard cap;
+/// agents page with `offset`.
+pub const SEARCH_PAGE_DEFAULT: i64 = 20;
+pub const SEARCH_PAGE_MAX: i64 = 50;
+
 /// Minimum gap between notifications for the same channel, so a burst of
 /// agent replies (or a bot exchange) becomes one banner, not a pile.
 const NOTIFY_THROTTLE: Duration = Duration::from_secs(5);
@@ -848,6 +853,13 @@ impl Hub {
             self.handle_history_request(&agent_id, &channel_id, frame);
             return;
         }
+        // search_request likewise answers on the asking connection, and its
+        // channel_id is an optional scope, not an address — handle it before
+        // the empty-channel drop below.
+        if frame["type"].as_str() == Some("search_request") {
+            self.handle_search_request(&agent_id, frame);
+            return;
+        }
         if channel_id.is_empty() || self.store.channel(&channel_id).is_none() {
             return;
         }
@@ -966,6 +978,87 @@ impl Hub {
         let _ = handle.tx.send(response);
     }
 
+    /// A `search_request` from an agent: full-text search over message text,
+    /// answered on the same connection as a `search_response` carrying the
+    /// frame's `request_id`. Visibility is membership, exactly like history:
+    /// with a `channel_id` the agent must be in that channel; without one the
+    /// search spans every channel the agent is a member of. Results come back
+    /// best match first (`sort: "new"` for newest first, `match: "any"` for
+    /// any-term recall); page with `offset`.
+    fn handle_search_request(&self, agent_id: &str, frame: &Value) {
+        let Some(handle) = self.agent_handle(agent_id) else {
+            return; // no live connection to answer on
+        };
+        let mut response = json!({
+            "type": "search_response",
+            "request_id": frame["request_id"],
+        });
+        let query = frame["query"].as_str().unwrap_or_default().trim().to_string();
+        if query.is_empty() {
+            response["error"] = json!("query required");
+            let _ = handle.tx.send(response);
+            return;
+        }
+        let channel_id = frame["channel_id"].as_str().unwrap_or_default();
+        if !channel_id.is_empty() {
+            if self.store.channel(channel_id).is_none() {
+                response["error"] = json!("unknown channel");
+                let _ = handle.tx.send(response);
+                return;
+            }
+            if !self.store.agents_for_channel(channel_id).iter().any(|a| a == agent_id) {
+                response["error"] = json!("agent is not a member of this channel");
+                let _ = handle.tx.send(response);
+                return;
+            }
+        }
+        let limit = frame["limit"]
+            .as_i64()
+            .unwrap_or(SEARCH_PAGE_DEFAULT)
+            .clamp(1, SEARCH_PAGE_MAX) as usize;
+        let offset = frame["offset"].as_i64().unwrap_or(0).max(0) as usize;
+        let newest_first = frame["sort"].as_str() == Some("new");
+        let match_any = frame["match"].as_str() == Some("any");
+        // One extra row decides has_more without a second query.
+        let mut rows = self.store.search_messages(
+            &query,
+            match_any,
+            (!channel_id.is_empty()).then_some(channel_id),
+            None,
+            None,
+            Some(agent_id),
+            newest_first,
+            limit + 1,
+            offset,
+        );
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        let results: Vec<Value> = rows
+            .iter()
+            .map(|m| {
+                json!({
+                    "id": m["id"],
+                    "channel_id": m["channel_id"],
+                    "channel_name": m["channel_name"],
+                    "group_id": m["group_id"],
+                    "group_name": m["group_name"],
+                    "thread_id": m["thread_id"],
+                    "author": {
+                        "type": m["author_type"],
+                        "id": m["author_id"],
+                        "name": m["author_name"],
+                    },
+                    "text": m["text"],
+                    "snippet": m["snippet"],
+                    "ts": format_ts(m["ts"].as_f64().unwrap_or(0.0)),
+                })
+            })
+            .collect();
+        response["results"] = json!(results);
+        response["has_more"] = json!(has_more);
+        let _ = handle.tx.send(response);
+    }
+
     fn resolve_options_by_agent(&self, message_id: i64, text: &str) -> Result<Value, &'static str> {
         let message = self.store.message(message_id).ok_or("Message not found")?;
         let meta = message.get("meta").cloned().unwrap_or(Value::Null);
@@ -993,7 +1086,7 @@ impl Hub {
 
 /// Epoch seconds -> "YYYY-MM-DD HH:MM" (UTC). History transcripts are read by
 /// language models, so a plain calendar stamp beats a raw epoch number.
-fn format_ts(epoch: f64) -> String {
+pub(crate) fn format_ts(epoch: f64) -> String {
     let secs = epoch as i64;
     let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
     let rem = secs.rem_euclid(86_400);

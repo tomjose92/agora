@@ -2,6 +2,7 @@
    the WS reducer; these hooks own initial fetches, pagination and writes. */
 
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -15,19 +16,35 @@ import { useLive } from "../state/live";
 import { appendMessage, applyMessageToGroups, replaceMessage, type MessagePages } from "../ws/reducer";
 import type {
   AgentInfo,
+  AskResponse,
   ChannelActivity,
   ChannelAgent,
   Connection,
   Group,
+  Me,
   Member,
   Message,
   PairingToken,
   PinnedMessage,
+  SearchResponse,
   StarredMessage,
   ThreadRow,
 } from "./types";
 
 const PAGE_SIZE = 50;
+
+/* ------------------------------------------------------------- me */
+
+/** Server capabilities (`voice`, `search_ai`) + identity. Rarely changes
+    within a session, so cache it for a long while. */
+export function useMe() {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.me,
+    queryFn: () => api.get<Me>("/api/me"),
+    staleTime: 5 * 60_000,
+  });
+}
 
 /* ------------------------------------------------------------- groups */
 
@@ -298,6 +315,45 @@ export function useMarkRead(channelId: string) {
         { last_read_id: lastReadId },
       ),
     // Groups cache is patched by the WS "read" echo.
+  });
+}
+
+/* ------------------------------------------------------------- search */
+
+/** First page of GET /api/search for `q`. `keepPreviousData` holds the last
+    results on screen while a retyped query is in flight. */
+export function useSearch(q: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.search(q),
+    queryFn: () => api.get<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}`),
+    enabled: q.trim().length > 0,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Imperative "More results" page fetch; the screen accumulates the pages
+    in local state, so this is a mutation rather than a keyed query. */
+export function useSearchMore() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: async (v: { q: string; offset: number }) =>
+      (
+        await api.get<SearchResponse>(
+          `/api/search?q=${encodeURIComponent(v.q)}&offset=${v.offset}&types=messages`,
+        )
+      ).messages,
+  });
+}
+
+/** POST /api/search/ask — AI answer with [n] citations into `sources`.
+    Only offered when /api/me reports `search_ai`. */
+export function useAskAi() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { q: string; channel_id?: string; group_id?: string }) =>
+      api.post<AskResponse>("/api/search/ask", v),
   });
 }
 

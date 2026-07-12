@@ -227,6 +227,7 @@ async function boot() {
     const me = await api("/api/me");
     CURRENT_USER = { username: me.username, owner: true };
     _agoVoiceOK = !!me.voice;   // server has STT/TTS: show the voice controls
+    _agoSearchAI = !!me.search_ai;   // server can answer /api/search/ask
   } catch (e) {
     return;   // authGate is showing
   }
