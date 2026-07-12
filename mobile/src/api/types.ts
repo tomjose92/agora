@@ -143,6 +143,18 @@ export interface ThreadRow {
   unread: number;
 }
 
+/** One row of GET /api/unreads: an unread message (channel top level past
+    the channel marker, or a thread reply past its thread marker) with
+    channel/group breadcrumbs. Thread replies also carry the root's
+    text/alias so the screen can label the thread they belong to. */
+export interface UnreadMessage extends Message {
+  channel_name: string;
+  group_id: string;
+  group_name: string;
+  root_text: string | null;
+  root_alias: string | null;
+}
+
 export interface StarredMessage extends Message {
   starred_at: number;
   root: Message | null;

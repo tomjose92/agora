@@ -55,6 +55,10 @@ let _agoInboxOpen = false;      // main pane shows the threads inbox
 let _agoGroupPage = false;      // main pane shows the selected group's overview page
 let _agoThreadReadTimer = null; // debounce for PUT /threads/:id/read
 let _agoThreadsTimer = null;    // debounce for inbox refetches
+/* All-unreads view: every unread message across channels and threads. */
+let _agoUnreadsOpen = false;    // main pane shows the unreads view
+let _agoUnreadItems = [];       // rows from GET /api/unreads
+let _agoUnreadsTimer = null;    // debounce for unreads refetches
 let _agoUnreadsOnly =           // sidebar shows only unread/mentioned channels
   localStorage.getItem("agora_unreads_only") === "1";
 let _agoHiddenOpen = false;     // sidebar "Hidden" section expanded
@@ -356,6 +360,7 @@ function agoApplyRead(cid, lastId) {
   u.mentions = 0;
   agoDrawSide();
   agoDrawUnreadBar();
+  agoScheduleUnreadsRefresh();
 }
 
 function agoJumpToLatest() {
@@ -475,12 +480,14 @@ function agoApplyThreadRead(rootId, lastId) {
   t.unread = 0;
   agoDrawSide();
   if (_agoInboxOpen) agoDrawMain();
+  agoScheduleUnreadsRefresh();
 }
 
 /* Navigate to a thread from the inbox or a sidebar thread row — possibly in
    a different channel than the one on screen. */
 async function agoGoToThread(gid, cid, rootId) {
   _agoInboxOpen = false;
+  _agoUnreadsOpen = false;
   _agoGroupPage = false;
   if (_agoSel.c !== cid || _agoSel.g !== gid) {
     agoSetExpanded(gid, true);
@@ -505,6 +512,7 @@ async function agoGoToThread(gid, cid, rootId) {
 
 function agoOpenInbox() {
   _agoInboxOpen = true;
+  _agoUnreadsOpen = false;
   _agoGroupPage = false;
   _agoThreadRoot = null; _agoThreadMsgs = [];
   _agoMembers = null;
@@ -568,6 +576,103 @@ function agoDrawInbox(box) {
     </div>`;
 }
 
+/* ---------- all-unreads view (channels + threads in one pane) ---------- */
+async function agoLoadUnreads() {
+  try {
+    const data = await api("/api/unreads?limit=200");
+    _agoUnreadItems = data.unreads || [];
+  } catch (e) { /* keep whatever we had */ }
+}
+
+function agoOpenUnreads() {
+  _agoUnreadsOpen = true;
+  _agoInboxOpen = false;
+  _agoGroupPage = false;
+  _agoThreadRoot = null; _agoThreadMsgs = [];
+  _agoMembers = null;
+  agoSetView("main");
+  agoDrawSide();
+  agoDrawMain();
+  agoDrawThread();
+  agoDrawMembers();
+  agoLoadUnreads().then(() => { if (_agoUnreadsOpen) { agoDrawMain(); } });
+}
+
+/* Refetch soon while the view is open (new traffic or read acks landed). */
+function agoScheduleUnreadsRefresh() {
+  if (!_agoUnreadsOpen) return;
+  clearTimeout(_agoUnreadsTimer);
+  _agoUnreadsTimer = setTimeout(async () => {
+    await agoLoadUnreads();
+    if (_agoUnreadsOpen) agoDrawMain();
+  }, 500);
+}
+
+function agoUnreadSnippet(m) {
+  const text = (m.text || "").replace(/\s+/g, " ").trim();
+  return text || "(attachment)";
+}
+
+/* Label for a thread bucket: the root's alias, else its first line. */
+function agoUnreadThreadLabel(m) {
+  const alias = (m.root_alias || "").trim();
+  if (alias) return alias;
+  return (m.root_text || "").split("\n")[0].slice(0, 140) || "(thread)";
+}
+
+function agoDrawUnreads(box) {
+  // Bucket the flat newest-first list by conversation — a channel's top
+  // level or one thread — so each card reads like the room it came from.
+  const buckets = new Map();
+  for (const m of _agoUnreadItems) {
+    const key = m.thread_id != null ? "t:" + m.thread_id : "c:" + m.channel_id;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(m);
+  }
+  const cards = [...buckets.values()].map(items => {
+    const first = items[0];
+    const isThread = first.thread_id != null;
+    const title = isThread
+      ? `<span class="tico">${icon("corner-down-right")}</span> ${esc(agoUnreadThreadLabel(first))}
+         <span class="grp"> · #${esc(first.channel_name)} · ${esc(first.group_name)}</span>`
+      : `<span class="hash">#</span>${esc(first.channel_name)}<span class="grp"> · ${esc(first.group_name)}</span>`;
+    const open = isThread
+      ? `agoGoToThread('${esc(first.group_id)}','${esc(first.channel_id)}',${first.thread_id})`
+      : `agoSelectChannel('${esc(first.group_id)}','${esc(first.channel_id)}')`;
+    const msgs = items.slice().reverse().map(m => `
+      <div class="ago-unreads-msg">
+        <span class="author">${esc(agoAuthorLabel(m))}</span>
+        <span class="snippet">${esc(agoUnreadSnippet(m))}</span>
+        <span class="ts">${esc(fmtTs(m.ts))}</span>
+      </div>`).join("");
+    return `
+      <div class="ago-inbox-row unread" onclick="${open}"
+           title="Open ${isThread ? "this thread" : "#" + esc(first.channel_name)}">
+        <div class="ago-inbox-top">
+          <span class="chan">${title}</span>
+          ${agoBadgeHTML(items.length, 0)}
+        </div>
+        ${msgs}
+      </div>`;
+  }).join("");
+  box.innerHTML = `
+    <div class="ago-head">
+      <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">${icon("chevron-left")}</button>
+      <div class="ago-head-text">
+        <span class="ago-chan-name">${icon("circle-dot")} Unreads</span>
+        <span class="dim">every unread message across channels and threads</span>
+      </div>
+      <div class="ago-head-actions">
+        <button class="btn sm" title="Refresh"
+          onclick="agoLoadUnreads().then(agoDrawMain)">${icon("refresh-cw")}</button>
+      </div>
+    </div>
+    <div class="ago-log ago-inbox-list">${cards
+      || `<div class="empty"><div class="glyph">${icon("circle-dot")}</div><div>All caught up</div>
+          <div class="hint">Unread messages from channels and the threads you're part of collect here.</div></div>`}
+    </div>`;
+}
+
 /* ---------- sidebar (groups + channels) ---------- */
 function agoToggleUnreadsOnly() {
   _agoUnreadsOnly = !_agoUnreadsOnly;
@@ -589,7 +694,7 @@ function agoDrawSide() {
       const mentions = agoMentionCount(c.id);
       const threads = agoChannelThreads(c.id);
       const threadUnread = threads.reduce((n, t) => n + (t.unread || 0), 0);
-      const active = sel && c.id === _agoSel.c && !_agoInboxOpen && !_agoGroupPage;
+      const active = sel && c.id === _agoSel.c && !_agoInboxOpen && !_agoGroupPage && !_agoUnreadsOpen;
       // Unreads-only mode: keep unread/mentioned channels, live threads, and
       // whatever is selected so nothing on screen becomes unreachable.
       if (_agoUnreadsOnly && !unread && !mentions && !threadUnread && !active) return "";
@@ -698,6 +803,9 @@ function agoDrawSide() {
   const anyUnread = _agoGroups.some(g => agoGroupUnread(g) > 0) || agoThreadUnreadTotal() > 0;
   const anyMention = _agoGroups.some(g => agoGroupMentions(g) > 0);
   const threadTotal = agoThreadUnreadTotal();
+  const chanTotal = _agoGroups.filter(g => !g.hidden).reduce((n, g) => n + agoGroupUnread(g), 0);
+  const mentionTotal = _agoGroups.filter(g => !g.hidden).reduce((n, g) => n + agoGroupMentions(g), 0);
+  const unreadTotal = chanTotal + threadTotal;
   box.innerHTML = `<div class="side-title"><span>Groups</span>
       <span class="side-title-actions">
         <button class="ago-side-toggle search" title="Search (${AGO_SEARCH_KEY})"
@@ -709,6 +817,11 @@ function agoDrawSide() {
       </span></div>
     <button class="ago-side-toggle expand" title="Show groups" onclick="agoToggleSide()">${icon("chevrons-right")}</button>
     ${anyUnread ? `<span class="ago-side-dot ${anyMention ? "mention" : ""}" title="Unread messages"></span>` : ""}
+    <div class="ago-inbox-item ${_agoUnreadsOpen ? "active" : ""} ${unreadTotal || mentionTotal ? "unread" : ""}"
+         onclick="agoOpenUnreads()" title="All unread messages across channels and threads">
+      <span class="tico">${icon("circle-dot")}</span><span class="nm">Unreads</span>
+      ${agoBadgeHTML(unreadTotal, mentionTotal)}
+    </div>
     <div class="ago-inbox-item ${_agoInboxOpen ? "active" : ""} ${threadTotal ? "unread" : ""}"
          onclick="agoOpenInbox()">
       <span class="tico">${icon("messages-square")}</span><span class="nm">Threads</span>
@@ -764,6 +877,7 @@ async function agoDropRow(ev, type, id, gid) {
 function agoOpenGroupPage(gid) {
   agoSetExpanded(gid, true);
   _agoInboxOpen = false;
+  _agoUnreadsOpen = false;
   _agoGroupPage = true;
   if (_agoSel.g !== gid) {
     agoVoiceCancel();   // a recording is tied to the channel it started in
@@ -788,6 +902,7 @@ function agoOpenGroupPage(gid) {
 function agoSelectChannel(gid, cid) {
   agoSetExpanded(gid, true);
   _agoInboxOpen = false;
+  _agoUnreadsOpen = false;
   _agoGroupPage = false;
   if (_agoSel.c !== cid || _agoSel.g !== gid) {
     agoVoiceCancel();   // a recording is tied to the channel it started in
@@ -987,6 +1102,7 @@ function agoDrawGroupPage(box) {
 function agoDrawMain() {
   const box = document.getElementById("agora-main");
   if (!box) return;
+  if (_agoUnreadsOpen) { agoDrawUnreads(box); return; }
   if (_agoInboxOpen) { agoDrawInbox(box); return; }
   if (_agoGroupPage) { agoDrawGroupPage(box); return; }
   const group = agoSelGroup();
@@ -2048,6 +2164,7 @@ function agoConnectWs() {
 
 function agoIngestMessage(m) {
   _agoLatestSeen[m.channel_id] = Math.max(_agoLatestSeen[m.channel_id] || 0, m.id);
+  agoScheduleUnreadsRefresh();   // keep the unreads view live while it's open
   const channel = agoSelChannel();
   const open = !!(channel && m.channel_id === channel.id);
   const isThreadReply = m.thread_id != null;

@@ -20,6 +20,7 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  CircleDot,
   Eye,
   EyeOff,
   MessagesSquare,
@@ -413,6 +414,13 @@ export default function Home() {
   }, [prefsLoaded, loadPrefs]);
 
   const threadUnread = totalThreadUnread(threads.data ?? []);
+  // Hidden groups/channels don't feed the badge, matching the home list.
+  const shownChannels = (groups.data ?? [])
+    .filter((g) => !g.hidden)
+    .flatMap((g) => g.channels.filter((c) => !c.hidden));
+  const allUnread =
+    shownChannels.reduce((n, c) => n + (c.unread ?? 0), 0) + threadUnread;
+  const allMentions = shownChannels.reduce((n, c) => n + (c.mentions ?? 0), 0);
 
   const header = useMemo(
     () => ({
@@ -458,6 +466,14 @@ export default function Home() {
           />
         }
       >
+        <Pressable
+          style={styles.threadsRow}
+          onPress={() => router.push("/(app)/unreads")}
+        >
+          <Icon icon={CircleDot} size={17} color={colors.a1} />
+          <Text style={styles.threadsLabel}>Unreads</Text>
+          <UnreadBadge count={allUnread} mentions={allMentions} />
+        </Pressable>
         <View style={styles.topRow}>
           <Pressable
             style={styles.threadsRow}

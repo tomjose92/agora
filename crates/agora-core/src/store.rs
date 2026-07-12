@@ -1377,6 +1377,64 @@ impl Store {
         Value::Object(out)
     }
 
+    /// Every unread message, newest first: top-level messages past the
+    /// channel marker plus thread replies past their thread marker (same
+    /// participation/hide rules as `my_threads`). Own messages and hidden
+    /// channels/groups are excluded, mirroring the badge semantics. Rows
+    /// carry channel/group names, and thread replies also the root's
+    /// text/alias so clients can label the thread they belong to.
+    pub fn unread_messages(&self, username: &str, limit: usize) -> Vec<Value> {
+        let rows: Vec<Value> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT m.id, m.channel_id, m.thread_id, m.author_type, m.author_id, \
+                       m.author_name, m.text, m.ts, m.meta, \
+                       c.name, c.group_id, COALESCE(g.name, ''), NULL, NULL \
+                     FROM messages m \
+                     JOIN channels c ON c.id = m.channel_id \
+                     LEFT JOIN groups g ON g.id = c.group_id \
+                     LEFT JOIN reads r ON r.username = ?1 AND r.channel_id = m.channel_id \
+                     WHERE m.thread_id IS NULL \
+                       AND c.hidden = 0 AND COALESCE(g.hidden, 0) = 0 \
+                       AND m.id > COALESCE(r.last_read_id, 0) \
+                       AND NOT (m.author_type = 'user' AND m.author_id = ?1) \
+                     UNION ALL \
+                     SELECT m.id, m.channel_id, m.thread_id, m.author_type, m.author_id, \
+                       m.author_name, m.text, m.ts, m.meta, \
+                       c.name, c.group_id, COALESCE(g.name, ''), rt.text, rt.thread_alias \
+                     FROM messages m \
+                     JOIN messages rt ON rt.id = m.thread_id \
+                     JOIN channels c ON c.id = m.channel_id \
+                     LEFT JOIN groups g ON g.id = c.group_id \
+                     LEFT JOIN thread_reads tr ON tr.username = ?1 AND tr.thread_id = m.thread_id \
+                     WHERE c.hidden = 0 AND COALESCE(g.hidden, 0) = 0 \
+                       AND m.id > COALESCE(tr.last_read_id, 0) \
+                       AND NOT (m.author_type = 'user' AND m.author_id = ?1) \
+                       AND ((rt.author_type = 'user' AND rt.author_id = ?1) \
+                         OR EXISTS (SELECT 1 FROM messages p WHERE p.thread_id = m.thread_id \
+                              AND p.author_type = 'user' AND p.author_id = ?1)) \
+                       AND NOT EXISTS (SELECT 1 FROM thread_hides h \
+                              WHERE h.username = ?1 AND h.thread_id = m.thread_id) \
+                     ORDER BY 1 DESC LIMIT ?2",
+                )
+                .unwrap();
+            stmt.query_map(params![username, limit as i64], |r| {
+                let mut msg = message_row(r, 0)?;
+                msg["channel_name"] = json!(r.get::<_, String>(9)?);
+                msg["group_id"] = json!(r.get::<_, String>(10)?);
+                msg["group_name"] = json!(r.get::<_, String>(11)?);
+                msg["root_text"] = json!(r.get::<_, Option<String>>(12)?);
+                msg["root_alias"] = json!(r.get::<_, Option<String>>(13)?);
+                Ok(msg)
+            })
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+        };
+        self.attach_files(rows)
+    }
+
     // ---------------------------------------------------------- mentions
 
     /// Record which users a message @mentioned (called by the hub at post
@@ -1968,6 +2026,57 @@ mod tests {
         let threads = s.my_threads("tom", 50);
         let thread_a = threads.iter().find(|t| t["root"]["id"] == a_id).unwrap();
         assert_eq!(thread_a["unread"], 0);
+    }
+
+    #[test]
+    fn unread_messages_across_channels_and_threads() {
+        let s = store();
+        let g = s.create_group("G", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c1 = s.create_channel(gid, "main", "");
+        let c1id = c1["id"].as_str().unwrap();
+        let c2 = s.create_channel(gid, "random", "");
+        let c2id = c2["id"].as_str().unwrap();
+        // Unread top-level traffic in two channels; own messages don't count.
+        let m1 = s.add_message(c1id, "hello", "agent", "bot", Some("Bot"), None, &[]);
+        s.add_message(c2id, "psst", "agent", "bot", None, None, &[]);
+        s.add_message(c1id, "mine", "user", "tom", None, None, &[]);
+        // A thread tom participates in, with an unread reply...
+        let root = s.add_message(c1id, "root", "user", "tom", None, None, &[]);
+        let root_id = root["id"].as_i64().unwrap();
+        let reply = s.add_message(c1id, "re", "agent", "bot", None, Some(root_id), &[]);
+        // ...and a thread he doesn't (bot-only), which must not surface.
+        let other = s.add_message(c1id, "bots", "agent", "bot", None, None, &[]);
+        let other_id = other["id"].as_i64().unwrap();
+        s.add_message(c1id, "re bots", "agent", "bot2", None, Some(other_id), &[]);
+
+        let rows = s.unread_messages("tom", 50);
+        let ids: Vec<i64> = rows.iter().map(|m| m["id"].as_i64().unwrap()).collect();
+        // Newest first: bot-only root (top-level), tom's thread reply, then
+        // the two channel messages. The bot-only *reply* is absent.
+        assert_eq!(
+            ids,
+            vec![
+                other_id,
+                reply["id"].as_i64().unwrap(),
+                m1["id"].as_i64().unwrap() + 1, // c2 "psst"
+                m1["id"].as_i64().unwrap(),
+            ]
+        );
+        // Rows carry breadcrumbs; thread replies also the root's text.
+        assert_eq!(rows[0]["channel_name"], "main");
+        assert_eq!(rows[0]["group_name"], "G");
+        assert_eq!(rows[0]["root_text"], Value::Null);
+        assert_eq!(rows[1]["root_text"], "root");
+        // Acking the channel and thread drains them from the view.
+        s.mark_read("tom", c1id, None);
+        s.mark_thread_read("tom", root_id, None);
+        let rows = s.unread_messages("tom", 50);
+        let ids: Vec<i64> = rows.iter().map(|m| m["id"].as_i64().unwrap()).collect();
+        assert_eq!(ids, vec![m1["id"].as_i64().unwrap() + 1]); // only c2 left
+        // Hidden channels drop out of the aggregate entirely.
+        s.update_channel(c2id, None, None, Some(true));
+        assert!(s.unread_messages("tom", 50).is_empty());
     }
 
     #[test]
