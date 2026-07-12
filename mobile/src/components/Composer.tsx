@@ -492,31 +492,30 @@ export function Composer({
           </Pressable>
         </Modal>
       ) : null}
-      {attachSheet ? (
-        <Modal
-          transparent
-          animationType="fade"
-          onRequestClose={() => closeSheet()}
-          onDismiss={onSheetDismissed}
-        >
-          <Pressable style={styles.sheetBackdrop} onPress={() => closeSheet()}>
-            <View style={styles.sheet}>
-              <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickPhotos())}>
-                <Icon icon={ImageIcon} size={19} color={colors.text} />
-                <Text style={styles.sheetText}>Photo library</Text>
-              </Pressable>
-              <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void takePhoto())}>
-                <Icon icon={Camera} size={19} color={colors.text} />
-                <Text style={styles.sheetText}>Camera</Text>
-              </Pressable>
-              <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickDocuments())}>
-                <Icon icon={Paperclip} size={19} color={colors.text} />
-                <Text style={styles.sheetText}>Document</Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        </Modal>
-      ) : null}
+      <Modal
+        transparent
+        visible={attachSheet}
+        animationType="fade"
+        onRequestClose={() => closeSheet()}
+        onDismiss={onSheetDismissed}
+      >
+        <Pressable style={styles.sheetBackdrop} onPress={() => closeSheet()}>
+          <View style={styles.sheet}>
+            <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickPhotos())}>
+              <Icon icon={ImageIcon} size={19} color={colors.text} />
+              <Text style={styles.sheetText}>Photo library</Text>
+            </Pressable>
+            <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void takePhoto())}>
+              <Icon icon={Camera} size={19} color={colors.text} />
+              <Text style={styles.sheetText}>Camera</Text>
+            </Pressable>
+            <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickDocuments())}>
+              <Icon icon={Paperclip} size={19} color={colors.text} />
+              <Text style={styles.sheetText}>Document</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
