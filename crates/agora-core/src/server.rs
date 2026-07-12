@@ -214,6 +214,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/messages/{message_id}", get(get_message))
         .route("/api/messages/{message_id}/select", post(select_message_option))
         .route("/api/messages/{message_id}/speech", get(message_speech))
+        .route("/api/search", get(search))
+        .route("/api/search/ask", post(search_ask))
         .route("/api/threads", get(list_threads))
         .route("/api/threads/{thread_id}/read", put(mark_thread_read))
         .route(
@@ -386,6 +388,9 @@ async fn me(
         // Voice features (voice notes, speak-aloud, live voice) need an
         // OPENAI_API_KEY in the server env; clients hide the controls without it.
         "voice": crate::voice::api_key().is_some(),
+        // AI search answers (/api/search/ask) need an ANTHROPIC_API_KEY in the
+        // server env; clients hide their "Ask AI" controls without it.
+        "search_ai": crate::ai::api_key().is_some(),
     })))
 }
 
@@ -661,6 +666,117 @@ async fn list_messages(
     Ok(Json(json!({
         "messages": state.hub.store.messages(&channel_id, thread_id, before_id, limit)
     })))
+}
+
+/// GET /api/search — full-text search over message text plus name/topic
+/// matches on channels and groups, for the search UIs. `q` is required.
+/// `limit` (default 20, cap 50) and `offset` page the message hits;
+/// `channel_id` / `group_id` / `author` narrow the scope; `sort=new` orders
+/// newest-first instead of best-match (bm25); `match=any` widens to
+/// any-term recall (default: all terms); `types` picks result kinds
+/// (comma list of `messages,channels,groups`, default all three).
+async fn search(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let query = q.get("q").map(|s| s.trim()).unwrap_or_default();
+    if query.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Query required"));
+    }
+    let limit: usize = q
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20)
+        .clamp(1, 50);
+    let offset: usize = q.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let channel_id = q.get("channel_id").map(String::as_str).filter(|s| !s.is_empty());
+    let group_id = q.get("group_id").map(String::as_str).filter(|s| !s.is_empty());
+    let author = q.get("author").map(String::as_str).filter(|s| !s.is_empty());
+    let newest_first = q.get("sort").map(String::as_str) == Some("new");
+    let match_any = q.get("match").map(String::as_str) == Some("any");
+    let types = q.get("types").map(String::as_str).unwrap_or("messages,channels,groups");
+    let want = |t: &str| types.split(',').any(|x| x.trim() == t);
+    let store = &state.hub.store;
+    let mut out = json!({"query": query});
+    if want("messages") {
+        // One extra row decides has_more without a second query.
+        let mut rows = store.search_messages(
+            query, match_any, channel_id, group_id, author, None, newest_first, limit + 1, offset,
+        );
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        out["messages"] = json!({"items": rows, "has_more": has_more, "offset": offset});
+    }
+    if want("channels") {
+        out["channels"] = json!(store.search_channels(query, 20));
+    }
+    if want("groups") {
+        out["groups"] = json!(store.search_groups(query, 20));
+    }
+    Ok(Json(out))
+}
+
+/// POST /api/search/ask {"q", "channel_id"?, "group_id"?} — AI answer mode:
+/// distill the question to keywords, retrieve the best-matching messages via
+/// the FTS index, and have Claude write a short answer citing them as [1],
+/// [2], …. `sources` come back in citation order ([1] = sources[0]). Needs
+/// ANTHROPIC_API_KEY in the server env; `/api/me` advertises it as
+/// `search_ai` so clients can hide the control.
+async fn search_ask(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    // Externally billed like the voice endpoints, so share their backstop.
+    if !state.upload_limiter.allow(&rate_key(&peer)) {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many AI requests — slow down"));
+    }
+    let Some(key) = crate::ai::api_key() else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "AI answers need ANTHROPIC_API_KEY set on the server",
+        ));
+    };
+    let question = payload["q"].as_str().unwrap_or("").trim().to_string();
+    if question.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Question required"));
+    }
+    let channel_id = payload["channel_id"].as_str().filter(|s| !s.is_empty());
+    let group_id = payload["group_id"].as_str().filter(|s| !s.is_empty());
+    // Recall-oriented retrieval: any-term match, bm25 ranks denser hits up.
+    let retrieval = crate::ai::retrieval_keywords(&question).unwrap_or_else(|| question.clone());
+    let sources = state.hub.store.search_messages(
+        &retrieval,
+        true,
+        channel_id,
+        group_id,
+        None,
+        None,
+        false,
+        crate::ai::CONTEXT_MESSAGES,
+        0,
+    );
+    if sources.is_empty() {
+        return Ok(Json(json!({
+            "answer": Value::Null,
+            "sources": [],
+            "detail": "No matching messages to answer from",
+        })));
+    }
+    let model = crate::ai::model();
+    let answer = {
+        let (question, sources, model) = (question.clone(), sources.clone(), model.clone());
+        tokio::task::spawn_blocking(move || crate::ai::answer(&key, &model, &question, &sources))
+            .await
+            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "answer task failed"))?
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, &format!("{e:#}")))?
+    };
+    Ok(Json(json!({"answer": answer, "model": model, "sources": sources})))
 }
 
 async fn post_message(

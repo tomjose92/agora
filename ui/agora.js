@@ -694,6 +694,8 @@ function agoDrawSide() {
   const threadTotal = agoThreadUnreadTotal();
   box.innerHTML = `<div class="side-title"><span>Groups</span>
       <span class="side-title-actions">
+        <button class="ago-side-toggle search" title="Search (${AGO_SEARCH_KEY})"
+          onclick="agoSearchShow()">${icon("search")}</button>
         <button class="ago-side-toggle filter ${_agoUnreadsOnly ? "on" : ""}"
           title="${_agoUnreadsOnly ? "Show all channels" : "Show unreads only"}"
           onclick="agoToggleUnreadsOnly()">${icon("circle-dot")}</button>
@@ -1200,21 +1202,49 @@ async function agoOpenStar(id) {
   _agoStarsOpen = false;
   agoDrawMain();
   if (!s) return;
-  if (s.thread_id != null) {
-    await agoOpenThread(s.thread_id);
-    agoFlashMessage("ago-thread-log", id);
+  await agoJumpToMessage(_agoSel.g, _agoSel.c, s.thread_id, id);
+}
+
+/* Jump to a message wherever it lives (stars, search): select its
+   group/channel if it isn't the one on screen (mirrors agoGoToThread),
+   open its thread when it's a reply, then scroll to it and flash it. */
+async function agoJumpToMessage(gid, cid, threadId, mid) {
+  const wasElsewhere = _agoInboxOpen || _agoGroupPage;
+  _agoInboxOpen = false;
+  _agoGroupPage = false;
+  if (_agoSel.c !== cid || _agoSel.g !== gid) {
+    agoSetExpanded(gid, true);
+    _agoFiles = {};
+    _agoSel.g = gid; _agoSel.c = cid;
+    _agoThreadRoot = null; _agoThreadMsgs = []; _agoMembers = null;
+    _agoPins = []; _agoPinsOpen = false;
+    _agoStars = []; _agoStarsOpen = false;
+    agoSaveSel();
+    _agoCreating = null;
+    agoDisarm();
+    agoDrawSide();
+    await agoLoadChannel();
+  } else if (wasElsewhere) {
+    agoDrawSide();
+    agoDrawMain();
+  }
+  const channel = agoSelChannel();
+  if (!channel) return;
+  if (threadId != null) {
+    await agoOpenThread(threadId);
+    agoFlashMessage("ago-thread-log", mid);
     return;
   }
-  if (!_agoMsgs.some(m => m.id === id)) {
-    const channel = agoSelChannel();
+  agoSetView("main");
+  if (!_agoMsgs.some(m => m.id === mid)) {
     try {
       const data = await api(
-        `/api/channels/${encodeURIComponent(channel.id)}/messages?before_id=${id + 1}&limit=100`);
+        `/api/channels/${encodeURIComponent(channel.id)}/messages?before_id=${mid + 1}&limit=100`);
       _agoMsgs = data.messages || [];
       agoDrawMessages();
     } catch (e) { return; }
   }
-  agoFlashMessage("ago-log", id);
+  agoFlashMessage("ago-log", mid);
 }
 
 function agoFlashMessage(containerId, mid) {
@@ -2663,4 +2693,375 @@ function agoLiveStopPlayback(live) {
   audio.onerror = null;
   try { audio.pause(); } catch (e) {}
   if (audio.src && audio.src.startsWith("blob:")) URL.revokeObjectURL(audio.src);
+}
+
+/* ====================================================================
+   Search — Cmd/Ctrl-K overlay over GET /api/search, keyboard-driven.
+   When the server has an ANTHROPIC_API_KEY (/api/me → search_ai) a
+   pinned "Ask Agora AI" row answers via POST /api/search/ask.
+   ==================================================================== */
+const AGO_SEARCH_KEY =
+  /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl+K";
+let _agoSearchAI = false;        // /api/me said search_ai: offer the Ask row
+let _agoSearchOpen = false;
+let _agoSearchQ = "";            // query the current results belong to
+let _agoSearchRes = null;        // /api/search response (+ .error) or null
+let _agoSearchTimer = null;      // input debounce
+let _agoSearchSeq = 0;           // drop out-of-order search responses
+let _agoSearchSel = 0;           // selected index into _agoSearchItems
+let _agoSearchItems = [];        // flat activation list, rebuilt on each draw
+let _agoSearchView = "results";  // "results" | "ask"
+let _agoSearchAnswer = null;     // /ask response, or "loading"
+let _agoSearchMoreBusy = false;  // "More results" page in flight
+
+function agoSearchEnsure() {
+  if (document.getElementById("ago-search-overlay")) return;
+  const el = document.createElement("div");
+  el.className = "ago-search-overlay";
+  el.id = "ago-search-overlay";
+  el.style.display = "none";
+  el.onclick = e => { if (e.target === el) agoSearchClose(); };
+  el.innerHTML = `
+    <div class="ago-search-panel">
+      <div class="ago-search-bar">
+        ${icon("search")}
+        <input id="ago-search-input" placeholder="Search messages, channels, groups…"
+          autocomplete="off" autocapitalize="off" spellcheck="false"
+          oninput="agoSearchInput()">
+        <button class="ago-x" title="Close (Esc)" onclick="agoSearchClose()">${icon("x")}</button>
+      </div>
+      <div class="ago-search-body" id="ago-search-body"></div>
+    </div>`;
+  document.body.appendChild(el);
+}
+
+function agoSearchShow() {
+  if (document.getElementById("auth-gate")) return;
+  agoSearchEnsure();
+  _agoSearchOpen = true;
+  document.getElementById("ago-search-overlay").style.display = "";
+  // An /ask abandoned mid-flight must not reopen as an eternal spinner.
+  if (_agoSearchAnswer === "loading") { _agoSearchView = "results"; _agoSearchAnswer = null; }
+  agoSearchDraw();
+  // The last query stays, selected, so typing replaces it and Enter re-runs it.
+  const input = document.getElementById("ago-search-input");
+  input.focus();
+  input.select();
+}
+
+function agoSearchClose() {
+  _agoSearchOpen = false;
+  clearTimeout(_agoSearchTimer);
+  const el = document.getElementById("ago-search-overlay");
+  if (el) el.style.display = "none";
+}
+
+function agoSearchToggle() {
+  if (_agoSearchOpen) agoSearchClose(); else agoSearchShow();
+}
+
+/* Global shortcuts. Escape is only claimed while the overlay is open, so
+   the composers' own Escape handling keeps working. */
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
+      && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    agoSearchToggle();
+    return;
+  }
+  if (!_agoSearchOpen) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    if (_agoSearchView === "ask") agoSearchBack(); else agoSearchClose();
+    return;
+  }
+  if (e.isComposing) return;
+  if (e.key === "ArrowDown") { e.preventDefault(); agoSearchMove(1); return; }
+  if (e.key === "ArrowUp") { e.preventDefault(); agoSearchMove(-1); return; }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    // Enter inside the debounce window searches what's typed, not stale rows.
+    const input = document.getElementById("ago-search-input");
+    const q = ((input && input.value) || "").trim();
+    if (_agoSearchView === "results" && q !== _agoSearchQ) {
+      clearTimeout(_agoSearchTimer);
+      agoSearchRun(q).catch(console.error);
+      return;
+    }
+    agoSearchActivate(_agoSearchSel);
+  }
+});
+
+function agoSearchInput() {
+  const input = document.getElementById("ago-search-input");
+  const q = ((input && input.value) || "").trim();
+  clearTimeout(_agoSearchTimer);
+  _agoSearchTimer = setTimeout(() => { agoSearchRun(q).catch(console.error); }, 250);
+}
+
+async function agoSearchRun(q) {
+  _agoSearchView = "results";
+  _agoSearchAnswer = null;
+  if (q === _agoSearchQ && _agoSearchRes) { agoSearchDraw(); return; }
+  _agoSearchQ = q;
+  _agoSearchSel = 0;
+  _agoSearchRes = null;
+  agoSearchDraw();   // ask row + "Searching…" show while the fetch runs
+  if (!q) return;
+  const seq = ++_agoSearchSeq;
+  let res;
+  try {
+    res = await api(`/api/search?q=${encodeURIComponent(q)}`);
+  } catch (e) {
+    res = { error: (e && e.message) || String(e) };
+  }
+  if (seq !== _agoSearchSeq || !_agoSearchOpen) return;
+  _agoSearchRes = res;
+  _agoSearchSel = 0;
+  agoSearchDraw();
+}
+
+/* Matched terms arrive wrapped in U+0001 … U+0002 — escape first, then turn
+   the markers into the highlight span (so server text can't inject HTML). */
+function agoSearchSnippetHTML(s) {
+  return esc(s)
+    .replace(/\u0001/g, '<span class="ago-search-hl">')
+    .replace(/\u0002/g, "</span>");
+}
+
+function agoSearchMsgRowHTML(m, i, num) {
+  const crumb = `${m.group_name || ""} / #${m.channel_name || ""}`;
+  const snippet = m.snippet != null
+    ? agoSearchSnippetHTML(m.snippet) : esc(agoPinSnippet(m));
+  return `
+    <div class="ago-search-row msg" data-si="${i}" title="Jump to message"
+         onclick="agoSearchActivate(${i})">
+      <div class="ago-search-msg-top">
+        ${num ? `<span class="ago-search-srcn">${num}</span>` : ""}
+        <span class="ago-search-author">${esc(agoAuthorLabel(m))}</span>
+        <span class="ago-search-crumb">${esc(crumb)}${m.thread_id != null ? " · in thread" : ""}</span>
+        <span class="ago-search-ts">${esc(fmtTs(m.ts))}</span>
+      </div>
+      <div class="ago-search-snippet">${snippet}</div>
+    </div>`;
+}
+
+function agoSearchDraw() {
+  const box = document.getElementById("ago-search-body");
+  if (!box) return;
+  _agoSearchItems = [];
+  if (_agoSearchView === "ask") { agoSearchDrawAsk(box); return; }
+  const q = _agoSearchQ;
+  if (!q) {
+    box.innerHTML = `<div class="ago-search-hint">
+      Search messages, channels, and groups${_agoSearchAI ? " — or ask the AI a question" : ""}.</div>`;
+    return;
+  }
+  let html = "";
+  if (_agoSearchAI) {
+    const i = _agoSearchItems.push({ kind: "ask" }) - 1;
+    html += `
+      <div class="ago-search-row ask" data-si="${i}" onclick="agoSearchActivate(${i})"
+           title="Answer this from your message history">
+        <span class="ago-search-spark">${icon("sparkles")}</span>
+        <span class="ago-search-ask-label">Ask Agora AI: <b>“${esc(q)}”</b></span>
+      </div>`;
+  }
+  const res = _agoSearchRes;
+  const groups = (res && res.groups) || [];
+  const channels = (res && res.channels) || [];
+  const msgs = (res && res.messages && res.messages.items) || [];
+  if (groups.length) {
+    html += `<div class="ago-search-label">Groups</div>`;
+    for (const g of groups) {
+      const i = _agoSearchItems.push({ kind: "group", g }) - 1;
+      html += `
+      <div class="ago-search-row" data-si="${i}" onclick="agoSearchActivate(${i})"
+           title="Open ${esc(g.name)}">
+        <span class="ago-search-ico">${icon("layout-grid")}</span>
+        <span class="ago-search-name">${esc(g.name)}</span>
+        ${g.description ? `<span class="ago-search-sub">${esc(g.description)}</span>` : ""}
+      </div>`;
+    }
+  }
+  if (channels.length) {
+    html += `<div class="ago-search-label">Channels</div>`;
+    for (const c of channels) {
+      const i = _agoSearchItems.push({ kind: "channel", c }) - 1;
+      html += `
+      <div class="ago-search-row" data-si="${i}" onclick="agoSearchActivate(${i})"
+           title="Open #${esc(c.name)}">
+        <span class="ago-search-ico hash">#</span>
+        <span class="ago-search-name">${esc(c.name)}</span>
+        <span class="ago-search-crumb">${esc(c.group_name || "")}</span>
+        ${c.topic ? `<span class="ago-search-sub">${esc(c.topic)}</span>` : ""}
+      </div>`;
+    }
+  }
+  if (msgs.length) {
+    html += `<div class="ago-search-label">Messages</div>`;
+    html += msgs.map(m =>
+      agoSearchMsgRowHTML(m, _agoSearchItems.push({ kind: "message", m }) - 1, 0)).join("");
+    if (res.messages.has_more) {
+      const i = _agoSearchItems.push({ kind: "more" }) - 1;
+      html += `
+      <div class="ago-search-row more" data-si="${i}" onclick="agoSearchActivate(${i})">
+        ${_agoSearchMoreBusy ? icon("loader", "spin") + " Loading…" : "More results"}
+      </div>`;
+    }
+  }
+  if (res && res.error) {
+    html += `<div class="ago-search-hint">Search failed: ${esc(res.error)}</div>`;
+  } else if (!res) {
+    html += `<div class="ago-search-hint">Searching…</div>`;
+  } else if (!groups.length && !channels.length && !msgs.length) {
+    html += `<div class="ago-search-hint">No results for “${esc(q)}”</div>`;
+  }
+  if (_agoSearchSel >= _agoSearchItems.length) {
+    _agoSearchSel = Math.max(0, _agoSearchItems.length - 1);
+  }
+  box.innerHTML = html;
+  agoSearchApplySel();
+}
+
+function agoSearchMove(d) {
+  const n = _agoSearchItems.length;
+  if (!n) return;
+  _agoSearchSel = (_agoSearchSel + d + n) % n;
+  agoSearchApplySel();
+}
+
+function agoSearchApplySel() {
+  const box = document.getElementById("ago-search-body");
+  if (!box) return;
+  box.querySelectorAll(".ago-search-row").forEach(el => {
+    el.classList.toggle("sel", Number(el.dataset.si) === _agoSearchSel);
+  });
+  const el = box.querySelector(`.ago-search-row[data-si="${_agoSearchSel}"]`);
+  if (el) el.scrollIntoView({ block: "nearest" });
+}
+
+function agoSearchActivate(i) {
+  const it = _agoSearchItems[i];
+  if (!it) return;
+  _agoSearchSel = i;
+  if (it.kind === "ask") { agoSearchAsk().catch(console.error); return; }
+  if (it.kind === "more") { agoSearchMore().catch(console.error); return; }
+  if (it.kind === "group") {
+    agoSearchClose();
+    agoOpenGroupPage(it.g.id);
+    return;
+  }
+  if (it.kind === "channel") {
+    agoSearchClose();
+    agoSelectChannel(it.c.group_id, it.c.id);
+    return;
+  }
+  // message (results or Ask-AI sources)
+  const m = it.m;
+  agoSearchClose();
+  agoJumpToMessage(m.group_id, m.channel_id, m.thread_id, m.id).catch(console.error);
+}
+
+async function agoSearchMore() {
+  const res = _agoSearchRes;
+  if (!res || !res.messages || !res.messages.has_more || _agoSearchMoreBusy) return;
+  _agoSearchMoreBusy = true;
+  agoSearchDraw();
+  const q = _agoSearchQ;
+  const offset = (res.messages.items || []).length;
+  try {
+    const data = await api(
+      `/api/search?q=${encodeURIComponent(q)}&types=messages&offset=${offset}`);
+    if (q !== _agoSearchQ || _agoSearchRes !== res) return;   // query moved on
+    const page = data.messages || {};
+    res.messages.items = (res.messages.items || []).concat(page.items || []);
+    res.messages.has_more = !!page.has_more;
+  } catch (e) {
+    agoErr("Couldn't load more results", e);
+  } finally {
+    _agoSearchMoreBusy = false;
+    agoSearchDraw();
+  }
+}
+
+/* ---------- Ask AI (answer view) ---------- */
+async function agoSearchAsk() {
+  const q = _agoSearchQ;
+  if (!q) return;
+  _agoSearchView = "ask";
+  _agoSearchAnswer = "loading";
+  _agoSearchSel = 0;
+  agoSearchDraw();
+  let data;
+  try {
+    data = await apiPost("/api/search/ask", { q });
+  } catch (e) {
+    if (!_agoSearchOpen || _agoSearchView !== "ask") return;
+    agoErr("Ask AI failed", e);
+    agoSearchBack();
+    return;
+  }
+  if (!_agoSearchOpen || _agoSearchView !== "ask" || q !== _agoSearchQ) return;
+  _agoSearchAnswer = data;
+  agoSearchDraw();
+}
+
+function agoSearchBack() {
+  _agoSearchView = "results";
+  _agoSearchAnswer = null;
+  _agoSearchSel = 0;
+  agoSearchDraw();
+  const input = document.getElementById("ago-search-input");
+  if (input) input.focus();
+}
+
+/* [n] citations become superscript links to sources[n-1]; the same
+   pre/code/link split as agoMd keeps code blocks untouched. */
+function agoSearchAnswerHTML(answer, nSources) {
+  return agoMd(answer)
+    .split(/(<pre[\s\S]*?<\/pre>|<code>[\s\S]*?<\/code>|<a\b[\s\S]*?<\/a>)/)
+    .map((seg, i) => i % 2 ? seg : seg.replace(/\[(\d{1,2})\]/g, (all, n) => {
+      n = Number(n);
+      if (n < 1 || n > nSources) return all;
+      return `<sup class="ago-search-cite"><a href="#" title="Jump to source ${n}"
+        onclick="event.preventDefault(); agoSearchCiteJump(${n})">[${n}]</a></sup>`;
+    }))
+    .join("");
+}
+
+function agoSearchCiteJump(n) {
+  const a = _agoSearchAnswer;
+  const src = a && a.sources && a.sources[n - 1];
+  if (!src) return;
+  agoSearchClose();
+  agoJumpToMessage(src.group_id, src.channel_id, src.thread_id, src.id).catch(console.error);
+}
+
+function agoSearchDrawAsk(box) {
+  const a = _agoSearchAnswer;
+  let body;
+  if (!a || a === "loading") {
+    body = `<div class="ago-search-thinking">${icon("loader", "spin")} Thinking…</div>`;
+  } else if (!a.answer) {
+    body = `<div class="ago-search-hint">${esc(a.detail || "No answer.")}</div>`;
+  } else {
+    const sources = a.sources || [];
+    const srcRows = sources.map((m, k) =>
+      agoSearchMsgRowHTML(m, _agoSearchItems.push({ kind: "message", m }) - 1, k + 1)).join("");
+    body = `
+      <div class="ago-search-answer">${agoSearchAnswerHTML(a.answer, sources.length)}</div>
+      ${sources.length ? `<div class="ago-search-label">Sources</div>${srcRows}` : ""}`;
+  }
+  box.innerHTML = `
+    <div class="ago-search-askhead">
+      <button class="btn sm" title="Back to results (Esc)"
+        onclick="agoSearchBack()">${icon("chevron-left")} Results</button>
+      <span class="ago-search-askq">${icon("sparkles")} ${esc(_agoSearchQ)}</span>
+    </div>
+    ${body}`;
+  if (_agoSearchSel >= _agoSearchItems.length) {
+    _agoSearchSel = Math.max(0, _agoSearchItems.length - 1);
+  }
+  agoSearchApplySel();
 }

@@ -7,6 +7,8 @@ export interface Me {
   version: string;
   /** Server has OPENAI_API_KEY: voice notes / speak-aloud / live voice work. */
   voice?: boolean;
+  /** Server has ANTHROPIC_API_KEY: /api/search/ask (Ask AI) works. */
+  search_ai?: boolean;
 }
 
 export interface Channel {
@@ -73,6 +75,56 @@ export interface Message {
   meta?: MessageMeta | null;
   /* Top-level pages only. */
   reply_count?: number;
+}
+
+/** Message hit from GET /api/search. Search rows carry channel/group names
+    for breadcrumbs and a `snippet` with matched terms wrapped in
+    U+0001…U+0002 — but no attachments (store::search_messages). */
+export interface SearchMessageHit extends Omit<Message, "attachments"> {
+  attachments?: Attachment[];
+  channel_name: string;
+  group_id: string;
+  group_name: string;
+  snippet: string;
+}
+
+export interface SearchChannelHit {
+  id: string;
+  group_id: string;
+  name: string;
+  topic: string;
+  hidden: boolean;
+  group_name: string;
+}
+
+export interface SearchGroupHit {
+  id: string;
+  name: string;
+  description: string;
+  hidden: boolean;
+}
+
+export interface SearchMessagesPage {
+  items: SearchMessageHit[];
+  has_more: boolean;
+  offset: number;
+}
+
+/** GET /api/search — sections are present only for the requested `types`. */
+export interface SearchResponse {
+  query: string;
+  messages?: SearchMessagesPage;
+  channels?: SearchChannelHit[];
+  groups?: SearchGroupHit[];
+}
+
+/** POST /api/search/ask — [n] in `answer` cites sources[n-1]; a null answer
+    means no matching messages (`detail` explains). */
+export interface AskResponse {
+  answer: string | null;
+  model?: string;
+  sources: SearchMessageHit[];
+  detail?: string;
 }
 
 /** One row of GET /api/threads: a thread the user participates in. */

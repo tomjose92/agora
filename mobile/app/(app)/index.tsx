@@ -23,6 +23,7 @@ import {
   Eye,
   EyeOff,
   MessagesSquare,
+  Search,
   Settings,
 } from "lucide-react-native";
 import {
@@ -419,6 +420,11 @@ export default function Home() {
       headerShown: true,
       headerRight: () => (
         <View style={styles.headerBtns}>
+          <Link href="/(app)/search" asChild>
+            <Pressable hitSlop={8}>
+              <Icon icon={Search} size={21} color={colors.text} />
+            </Pressable>
+          </Link>
           <Link href="/(app)/agents" asChild>
             <Pressable hitSlop={8}>
               <Icon icon={Bot} size={21} color={colors.text} />

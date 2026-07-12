@@ -126,6 +126,26 @@ CREATE TABLE IF NOT EXISTS agents (
     has_avatar INTEGER NOT NULL DEFAULT 0,
     avatar_v INTEGER NOT NULL DEFAULT 0
 );
+-- Full-text index over message text (external content: rows live in
+-- `messages`, the index holds only tokens). Porter stemming so "deploy"
+-- finds "deployed"/"deployment". Kept in sync by the triggers below;
+-- migrate() rebuilds it when it drifts (e.g. a database that predates it).
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    text,
+    content='messages',
+    content_rowid='id',
+    tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF text ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+END;
 "#;
 
 /// Columns added after v1 shipped: CREATE TABLE IF NOT EXISTS won't alter
@@ -169,6 +189,19 @@ fn migrate(conn: &Connection) {
     if !has_column("messages", "meta") {
         conn.execute("ALTER TABLE messages ADD COLUMN meta TEXT", []).unwrap();
     }
+    // Databases that predate the FTS index get it created empty by SCHEMA
+    // (the triggers only cover writes from now on), so backfill whenever the
+    // index row count has drifted from the table's.
+    let messages: i64 = conn
+        .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        .unwrap_or(0);
+    let indexed: i64 = conn
+        .query_row("SELECT COUNT(*) FROM messages_fts", [], |r| r.get(0))
+        .unwrap_or(-1);
+    if indexed != messages {
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')", [])
+            .unwrap();
+    }
 }
 
 pub fn now() -> f64 {
@@ -200,6 +233,82 @@ fn new_id(name: &str) -> String {
 pub fn new_token() -> String {
     let bytes: [u8; 16] = rand::random();
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Build a safe FTS5 MATCH expression from raw user input. Double-quoted runs
+/// stay exact phrases; bare words become quoted terms with the last one a
+/// prefix (`"agor"*`) so search-as-you-type works. Quoting every term means
+/// user input can never be parsed as FTS5 syntax (`AND`, `-`, `:` …), so an
+/// arbitrary query string can't error the index.
+pub fn fts_query(raw: &str) -> Option<String> {
+    let mut terms: Vec<(String, bool)> = Vec::new(); // (term, is_phrase)
+    let mut cur = String::new();
+    let mut in_phrase = false;
+    let flush = |cur: &mut String, terms: &mut Vec<(String, bool)>, phrase: bool| {
+        let t: String = cur.chars().filter(|c| *c != '"').collect();
+        if !t.trim().is_empty() {
+            terms.push((t.trim().to_string(), phrase));
+        }
+        cur.clear();
+    };
+    for ch in raw.chars() {
+        match ch {
+            '"' => {
+                flush(&mut cur, &mut terms, in_phrase);
+                in_phrase = !in_phrase;
+            }
+            c if c.is_whitespace() && !in_phrase => flush(&mut cur, &mut terms, false),
+            c => cur.push(c),
+        }
+    }
+    flush(&mut cur, &mut terms, in_phrase);
+    if terms.is_empty() {
+        return None;
+    }
+    let last = terms.len() - 1;
+    Some(
+        terms
+            .iter()
+            .enumerate()
+            .map(|(i, (t, phrase))| {
+                if !phrase && i == last {
+                    format!("\"{t}\"*")
+                } else {
+                    format!("\"{t}\"")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+/// OR-of-terms MATCH expression for recall-oriented retrieval (AI answers):
+/// every word matches independently, bm25 ranks messages hitting more of
+/// them higher. Same quoting rule as [`fts_query`], so input is never syntax.
+pub fn fts_query_any(raw: &str) -> Option<String> {
+    let terms: Vec<String> = raw
+        .split_whitespace()
+        .map(|w| w.chars().filter(|c| *c != '"').collect::<String>())
+        .filter(|w| !w.trim().is_empty())
+        .map(|w| format!("\"{}\"", w.trim()))
+        .collect();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" OR "))
+    }
+}
+
+/// `%…%` LIKE pattern with the wildcards in the user's input neutralized.
+fn like_pattern(raw: &str) -> String {
+    let escaped: String = raw
+        .chars()
+        .flat_map(|c| match c {
+            '\\' | '%' | '_' => vec!['\\', c],
+            c => vec![c],
+        })
+        .collect();
+    format!("%{escaped}%")
 }
 
 fn message_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Value> {
@@ -897,6 +1006,139 @@ impl Store {
         .unwrap_or(0)
     }
 
+    // ------------------------------------------------------------- search
+
+    /// Full-text search over message text, best match first (bm25) unless
+    /// `newest_first`. Each hit is the message plus its channel/group names
+    /// and a `snippet` where matched terms are wrapped in \u{1}…\u{2} (clients
+    /// escape the text, then swap the markers for their highlight markup).
+    ///
+    /// `channel_id`/`group_id`/`author` narrow the scope. `agent_id` restricts
+    /// hits to channels that agent is a member of — the same visibility rule
+    /// as inbound fan-out — for the agent-protocol search frame. `match_any`
+    /// switches from all-terms to any-term matching (AI answer retrieval).
+    #[allow(clippy::too_many_arguments)]
+    pub fn search_messages(
+        &self,
+        query: &str,
+        match_any: bool,
+        channel_id: Option<&str>,
+        group_id: Option<&str>,
+        author: Option<&str>,
+        agent_id: Option<&str>,
+        newest_first: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Vec<Value> {
+        let fts = if match_any { fts_query_any(query) } else { fts_query(query) };
+        let Some(fts) = fts else {
+            return Vec::new();
+        };
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT m.id, m.channel_id, m.thread_id, m.author_type, m.author_id, \
+               m.author_name, m.text, m.ts, m.meta, \
+               c.name, c.group_id, COALESCE(g.name, ''), \
+               snippet(messages_fts, 0, char(1), char(2), '…', 16) \
+             FROM messages_fts \
+             JOIN messages m ON m.id = messages_fts.rowid \
+             JOIN channels c ON c.id = m.channel_id \
+             LEFT JOIN groups g ON g.id = c.group_id \
+             WHERE messages_fts MATCH ?1",
+        );
+        let mut p: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(fts)];
+        if let Some(cid) = channel_id {
+            sql.push_str(&format!(" AND m.channel_id = ?{}", p.len() + 1));
+            p.push(Box::new(cid.to_string()));
+        }
+        if let Some(gid) = group_id {
+            sql.push_str(&format!(" AND c.group_id = ?{}", p.len() + 1));
+            p.push(Box::new(gid.to_string()));
+        }
+        if let Some(a) = author {
+            let i = p.len() + 1;
+            sql.push_str(&format!(" AND (m.author_id = ?{i} OR m.author_name = ?{i})"));
+            p.push(Box::new(a.to_string()));
+        }
+        if let Some(agent) = agent_id {
+            let i = p.len() + 1;
+            sql.push_str(&format!(
+                " AND EXISTS (SELECT 1 FROM memberships ms \
+                   WHERE ms.member_type = 'agent' AND ms.member_id = ?{i} \
+                   AND ms.group_id = c.group_id \
+                   AND (ms.channel_id = '' OR ms.channel_id = m.channel_id))"
+            ));
+            p.push(Box::new(agent.to_string()));
+        }
+        sql.push_str(if newest_first { " ORDER BY m.id DESC" } else { " ORDER BY rank" });
+        sql.push_str(&format!(" LIMIT ?{} OFFSET ?{}", p.len() + 1, p.len() + 2));
+        p.push(Box::new(limit as i64));
+        p.push(Box::new(offset as i64));
+        let mut stmt = conn.prepare(&sql).unwrap();
+        stmt.query_map(params_from_iter(p.iter().map(|b| b.as_ref())), |r| {
+            let mut msg = message_row(r, 0)?;
+            msg["channel_name"] = json!(r.get::<_, String>(9)?);
+            msg["group_id"] = json!(r.get::<_, String>(10)?);
+            msg["group_name"] = json!(r.get::<_, String>(11)?);
+            msg["snippet"] = json!(r.get::<_, String>(12)?);
+            Ok(msg)
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
+    /// Channels whose name or topic contains `query` (case-insensitive).
+    pub fn search_channels(&self, query: &str, limit: usize) -> Vec<Value> {
+        let pattern = like_pattern(query);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT c.id, c.group_id, c.name, c.topic, c.hidden, COALESCE(g.name, '') \
+                 FROM channels c LEFT JOIN groups g ON g.id = c.group_id \
+                 WHERE c.name LIKE ?1 ESCAPE '\\' OR c.topic LIKE ?1 ESCAPE '\\' \
+                 ORDER BY c.name LIMIT ?2",
+            )
+            .unwrap();
+        stmt.query_map(params![pattern, limit as i64], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "group_id": r.get::<_, String>(1)?,
+                "name": r.get::<_, String>(2)?,
+                "topic": r.get::<_, String>(3)?,
+                "hidden": r.get::<_, i64>(4)? != 0,
+                "group_name": r.get::<_, String>(5)?,
+            }))
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
+    /// Groups whose name or description contains `query` (case-insensitive).
+    pub fn search_groups(&self, query: &str, limit: usize) -> Vec<Value> {
+        let pattern = like_pattern(query);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, description, hidden FROM groups \
+                 WHERE name LIKE ?1 ESCAPE '\\' OR description LIKE ?1 ESCAPE '\\' \
+                 ORDER BY name LIMIT ?2",
+            )
+            .unwrap();
+        stmt.query_map(params![pattern, limit as i64], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "description": r.get::<_, String>(2)?,
+                "hidden": r.get::<_, i64>(3)? != 0,
+            }))
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
     // ------------------------------------------------------------- files
 
     pub fn file(&self, file_id: &str) -> Option<Value> {
@@ -1439,6 +1681,82 @@ mod tests {
         let thread = s.messages(cid, Some(root_id), None, 50);
         assert_eq!(thread.len(), 2);
         assert_eq!(s.thread_size(root_id), 2);
+    }
+
+    #[test]
+    fn fts_query_quotes_terms_and_neutralizes_syntax() {
+        assert_eq!(fts_query("hello world"), Some("\"hello\" \"world\"*".into()));
+        assert_eq!(fts_query("\"exact phrase\" tail"), Some("\"exact phrase\" \"tail\"*".into()));
+        // Operators and column syntax arrive as inert quoted terms.
+        assert_eq!(fts_query("a AND b:c -d"), Some("\"a\" \"AND\" \"b:c\" \"-d\"*".into()));
+        assert_eq!(fts_query("   "), None);
+        assert_eq!(fts_query("\"\""), None);
+    }
+
+    #[test]
+    fn search_messages_matches_stems_scopes_and_syncs() {
+        let s = store();
+        let g = s.create_group("Ops", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c1 = s.create_channel(gid, "alpha", "");
+        let c2 = s.create_channel(gid, "beta", "");
+        let c1id = c1["id"].as_str().unwrap();
+        let c2id = c2["id"].as_str().unwrap();
+        s.add_message(c1id, "we deployed the new build", "user", "tom", Some("Tom"), None, &[]);
+        s.add_message(c2id, "the bot deploys on fridays", "agent", "bot", Some("Bot"), None, &[]);
+        s.add_message(c2id, "unrelated chatter", "user", "tom", None, None, &[]);
+
+        // Porter stemming: "deploy" finds both variants; hits carry names + snippet.
+        let hits = s.search_messages("deploy", false, None, None, None, None, false, 10, 0);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0]["group_name"], "Ops");
+        assert!(hits[0]["channel_name"].as_str().is_some());
+        assert!(hits[0]["snippet"].as_str().unwrap().contains('\u{1}'));
+
+        // Channel and author scoping.
+        assert_eq!(s.search_messages("deploy", false, Some(c1id), None, None, None, false, 10, 0).len(), 1);
+        assert_eq!(s.search_messages("deploy", false, None, Some(gid), None, None, false, 10, 0).len(), 2);
+        assert_eq!(s.search_messages("deploy", false, None, None, Some("bot"), None, false, 10, 0).len(), 1);
+
+        // Agent visibility: bot-b is only in beta, so alpha's hit is invisible.
+        s.add_member(gid, "agent", "bot-b", "member", Some(c2id));
+        let scoped = s.search_messages("deploy", false, None, None, None, Some("bot-b"), false, 10, 0);
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0]["channel_id"].as_str().unwrap(), c2id);
+
+        // newest_first orders by id descending.
+        let newest = s.search_messages("deploy", false, None, None, None, None, true, 10, 0);
+        assert!(newest[0]["id"].as_i64().unwrap() > newest[1]["id"].as_i64().unwrap());
+
+        // A raw query full of FTS syntax must not panic, just match nothing.
+        assert!(s.search_messages("AND NOT (", false, None, None, None, None, false, 10, 0).is_empty());
+
+        // match_any: recall mode hits messages containing either word
+        // ("deployed" stems onto "deploys" too, so all three rows hit).
+        let any = s.search_messages("deployed chatter", true, None, None, None, None, false, 10, 0);
+        assert_eq!(any.len(), 3);
+
+        // Deleting the group cascades into the index via the triggers.
+        assert!(s.delete_group(gid));
+        assert!(s.search_messages("deploy", false, None, None, None, None, false, 10, 0).is_empty());
+    }
+
+    #[test]
+    fn search_channels_and_groups_by_name_topic_description() {
+        let s = store();
+        let g = s.create_group("Health", "fitness and 100% wellness", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        s.create_channel(gid, "workouts", "daily training");
+        s.create_channel(gid, "meals", "");
+
+        assert_eq!(s.search_channels("WORK", 10).len(), 1); // case-insensitive name
+        let by_topic = s.search_channels("training", 10);
+        assert_eq!(by_topic.len(), 1);
+        assert_eq!(by_topic[0]["group_name"], "Health");
+        assert_eq!(s.search_groups("fitness", 10).len(), 1); // by description
+        // LIKE wildcards in input are literal, not "match everything".
+        assert!(s.search_channels("%", 10).is_empty());
+        assert_eq!(s.search_groups("100%", 10).len(), 1);
     }
 
     #[test]

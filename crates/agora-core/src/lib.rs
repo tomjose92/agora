@@ -5,6 +5,7 @@
 //! agents 24/7). Everything — store, hub, HTTP/WS API, outbound connections,
 //! bundled UI — lives behind [`run`].
 
+pub mod ai;
 pub mod auth;
 pub mod config;
 pub mod connections;

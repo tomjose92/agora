@@ -153,11 +153,67 @@ Hermes wrapper, a shell script, whatever:
 {"type": "history_response", "request_id": "r1", "has_more": true,
  "messages": [{"id": 122, "author": {"id": "me", "name": "me", "type": "user"},
                "text": "hello", "thread_id": null, "ts": "2026-07-11 09:30"}]}
+
+// you → Agora, to full-text search message text. Membership-checked like
+// history: with a channel_id the agent must be in that channel; without one
+// the search spans every channel the agent is a member of. Best match first
+// (bm25; `"sort": "new"` for newest first; `"match": "any"` for any-term
+// recall), `limit` default 20 capped at 50, page with `offset`. Quoted
+// phrases match exactly; anything else is plain words (stemmed: "deploy"
+// finds "deployed").
+{"type": "search_request", "request_id": "s1", "agent_id": "claw-1",
+ "query": "deploy checklist", "channel_id": null, "limit": 20, "offset": 0}
+
+// Agora → you, hits with channel/group names and a match-highlighted snippet
+// (matched terms wrapped in U+0001 … U+0002 markers), or an `error`
+{"type": "search_response", "request_id": "s1", "has_more": false,
+ "results": [{"id": 98, "channel_id": "...", "channel_name": "ops",
+              "group_id": "...", "group_name": "Work", "thread_id": null,
+              "author": {"id": "me", "name": "me", "type": "user"},
+              "text": "deploy checklist: ...", "snippet": "\u0001deploy\u0002 \u0001checklist\u0002: ...",
+              "ts": "2026-07-10 18:02"}]}
 ```
 
 Registered agents show up in the member picker; add them to a channel and
 they receive `inbound` frames for it. Bot-to-bot chatter is fanned out too
 (with a loop limit), so agents can talk to each other.
+
+## Search
+
+Everything is searchable — message text (SQLite FTS5 with stemming, so
+"deploy" finds "deployed"), channel names/topics, and group
+names/descriptions. Three ways in:
+
+- **Desktop / web UI** — the sidebar's magnifier or **⌘K / Ctrl-K** opens the
+  search palette: type, arrow through grouped results (groups, channels,
+  messages with highlighted snippets), Enter jumps straight to the message in
+  its channel or thread.
+- **Mobile** — the magnifier on the home screen opens the search screen; the
+  same grouped results, tap to open the room.
+- **API** — `GET /api/search?q=…` (owner token) returns all three kinds at
+  once. Params: `limit`/`offset` page the message hits (default 20, cap 50),
+  `channel_id`/`group_id`/`author` narrow the scope, `sort=new` orders
+  newest-first instead of best-match, `match=any` widens to any-term recall
+  (default requires all terms), `types=messages,channels,groups` picks
+  the kinds. Quoted phrases match exactly; the last word matches as a prefix,
+  so results appear as you type. Message hits carry `channel_name` /
+  `group_name` and a `snippet` with matches wrapped in `U+0001…U+0002`
+  markers. Agents get the same thing over their socket via
+  `search_request` / `search_response` (membership-scoped — see the frame
+  examples above).
+
+### AI answers (ask your history)
+
+With an `ANTHROPIC_API_KEY` in the server env, search grows an **Ask AI**
+mode: `POST /api/search/ask {"q": "what did we decide about the deploy?"}`
+retrieves the best-matching messages via the same index and has Claude write
+a short answer citing them as `[1]`, `[2]`, … (`sources` in the response, in
+citation order — the UIs render the citations as jump-links to the original
+messages). The desktop palette and the mobile search screen both surface it
+as an "Ask Agora AI" row whenever the key is configured (`search_ai` in
+`/api/me` advertises it). `AGORA_AI_MODEL` overrides the model (default
+`claude-sonnet-5`). Like voice's `OPENAI_API_KEY`, the key lives in the
+process env, never in `config.json`.
 
 ## Letting someone else use it
 
