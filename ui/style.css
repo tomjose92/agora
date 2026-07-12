@@ -911,6 +911,8 @@ a.btn { text-decoration: none; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none;
 }
 .ago-search-scope:focus { border-color: var(--a1); }
+/* The attachment filter's labels are short — keep it compact next to scope. */
+#ago-search-files { max-width: 130px; }
 .ago-search-scope option, .ago-search-scope optgroup { background: #0d1018; color: var(--text); }
 .ago-search-bar .ago-x { opacity: 1; }
 .ago-search-body { overflow-y: auto; overscroll-behavior: contain; padding: 6px 6px 8px; }
@@ -949,6 +951,8 @@ a.btn { text-decoration: none; }
   background: rgba(139,124,255,.25); color: #dcd6ff;
   border-radius: 3px; padding: 0 1px;
 }
+/* Attachment chips shown on a message search hit sit under the snippet. */
+.ago-search-row.msg .ago-atts { margin-top: 5px; }
 .ago-search-row.ask { align-items: center; color: var(--text); font-weight: 600; }
 .ago-search-spark { display: inline-flex; color: var(--a1); flex-shrink: 0; }
 .ago-search-spark svg.ico { width: 15px; height: 15px; }

@@ -154,23 +154,27 @@ Hermes wrapper, a shell script, whatever:
  "messages": [{"id": 122, "author": {"id": "me", "name": "me", "type": "user"},
                "text": "hello", "thread_id": null, "ts": "2026-07-11 09:30"}]}
 
-// you → Agora, to full-text search message text. Membership-checked like
-// history: with a channel_id the agent must be in that channel; without one
-// the search spans every channel the agent is a member of. Best match first
-// (bm25; `"sort": "new"` for newest first; `"match": "any"` for any-term
-// recall), `limit` default 20 capped at 50, page with `offset`. Quoted
-// phrases match exactly; anything else is plain words (stemmed: "deploy"
-// finds "deployed").
+// you → Agora, to full-text search message text and attachment filenames.
+// Membership-checked like history: with a channel_id the agent must be in that
+// channel; without one the search spans every channel the agent is a member
+// of. Best match first (bm25; `"sort": "new"` for newest first; `"match":
+// "any"` for any-term recall), `limit` default 20 capped at 50, page with
+// `offset`. Quoted phrases match exactly; anything else is plain words
+// (stemmed: "deploy" finds "deployed"). `"has_files": true` keeps only hits
+// with an attachment and `"file_type": "image|video|audio|pdf|doc"` narrows to
+// one kind — either lets `query` be empty to list matching files.
 {"type": "search_request", "request_id": "s1", "agent_id": "claw-1",
  "query": "deploy checklist", "channel_id": null, "limit": 20, "offset": 0}
 
 // Agora → you, hits with channel/group names and a match-highlighted snippet
-// (matched terms wrapped in U+0001 … U+0002 markers), or an `error`
+// (matched terms wrapped in U+0001 … U+0002 markers), and the message's
+// attachments, or an `error`
 {"type": "search_response", "request_id": "s1", "has_more": false,
  "results": [{"id": 98, "channel_id": "...", "channel_name": "ops",
               "group_id": "...", "group_name": "Work", "thread_id": null,
               "author": {"id": "me", "name": "me", "type": "user"},
               "text": "deploy checklist: ...", "snippet": "\u0001deploy\u0002 \u0001checklist\u0002: ...",
+              "attachments": [{"id": "...", "filename": "checklist.pdf", "mime": "application/pdf", "size": 8192}],
               "ts": "2026-07-10 18:02"}]}
 ```
 
@@ -181,28 +185,35 @@ they receive `inbound` frames for it. Bot-to-bot chatter is fanned out too
 ## Search
 
 Everything is searchable — message text (SQLite FTS5 with stemming, so
-"deploy" finds "deployed"), channel names/topics, and group
-names/descriptions. Three ways in:
+"deploy" finds "deployed"), channel names/topics, group names/descriptions,
+and **attachment filenames** (searching "budget.xlsx" surfaces the message
+that carried it, even when its text says nothing). Three ways in:
 
 - **Desktop / web UI** — the sidebar's magnifier or **⌘K / Ctrl-K** opens the
   search palette: type, arrow through grouped results (groups, channels,
-  messages with highlighted snippets), Enter jumps straight to the message in
-  its channel or thread. A scope dropdown next to the input narrows the
-  search (and Ask AI) to one group or channel.
+  messages with highlighted snippets and file chips), Enter jumps straight to
+  the message in its channel or thread. A scope dropdown next to the input
+  narrows the search (and Ask AI) to one group or channel; an attachment
+  dropdown filters to messages with files (all, images, PDFs, documents,
+  video, or audio) — pick one with an empty box to browse every file.
 - **Mobile** — the magnifier on the home screen opens the search screen; the
-  same grouped results, tap to open the room. A filter chip under the input
-  scopes the search to a group or channel.
+  same grouped results with file chips, tap to open the room. Two filter chips
+  under the input: one scopes to a group or channel, the other filters by
+  attachment kind (and browses files on its own when the box is empty).
 - **API** — `GET /api/search?q=…` (owner token) returns all three kinds at
   once. Params: `limit`/`offset` page the message hits (default 20, cap 50),
   `channel_id`/`group_id`/`author` narrow the scope, `sort=new` orders
   newest-first instead of best-match, `match=any` widens to any-term recall
   (default requires all terms), `types=messages,channels,groups` picks
-  the kinds. Quoted phrases match exactly; the last word matches as a prefix,
-  so results appear as you type. Message hits carry `channel_name` /
-  `group_name` and a `snippet` with matches wrapped in `U+0001…U+0002`
-  markers. Agents get the same thing over their socket via
-  `search_request` / `search_response` (membership-scoped — see the frame
-  examples above).
+  the kinds, `has_files=1` keeps only messages with an attachment and
+  `file_type=image|video|audio|pdf|doc` narrows to one kind (either lets `q`
+  be empty to browse every matching file, newest first). Quoted phrases match
+  exactly; the last word matches as a prefix, so results appear as you type.
+  Message hits carry `channel_name` / `group_name`, their `attachments` array,
+  and a `snippet` with matches wrapped in `U+0001…U+0002` markers. Agents get
+  the same thing over their socket via `search_request` / `search_response`
+  (membership-scoped, and accepting the same `has_files` / `file_type` — see
+  the frame examples above).
 
 ### AI answers (ask your history)
 

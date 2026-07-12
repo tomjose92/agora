@@ -342,17 +342,30 @@ function scopeQuery(scope?: SearchScope): string {
   return s;
 }
 
+/** Attachment filter: "" = any content, "any" = only messages with files, or
+    one kind. An active filter lets the search run with an empty query
+    (browse every message carrying a matching attachment). */
+export type FileFilter = "" | "any" | "image" | "pdf" | "doc" | "video" | "audio";
+
+/** `&has_files=1` / `&file_type=…` suffix for GET /api/search, "" when off. */
+function fileQuery(file?: FileFilter): string {
+  if (file === "any") return "&has_files=1";
+  if (file) return `&file_type=${encodeURIComponent(file)}`;
+  return "";
+}
+
 /** First page of GET /api/search for `q`. `keepPreviousData` holds the last
     results on screen while a retyped query is in flight. */
-export function useSearch(q: string, scope?: SearchScope) {
+export function useSearch(q: string, scope?: SearchScope, file?: FileFilter) {
   const api = useApi();
   return useQuery({
-    queryKey: keys.search(q, scopeKey(scope)),
+    queryKey: keys.search(q, scopeKey(scope), file ?? ""),
     queryFn: () =>
       api.get<SearchResponse>(
-        `/api/search?q=${encodeURIComponent(q)}${scopeQuery(scope)}`,
+        `/api/search?q=${encodeURIComponent(q)}${scopeQuery(scope)}${fileQuery(file)}`,
       ),
-    enabled: q.trim().length > 0,
+    // A file filter alone (empty query) is a valid "browse files" search.
+    enabled: q.trim().length > 0 || !!file,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   });
@@ -363,10 +376,15 @@ export function useSearch(q: string, scope?: SearchScope) {
 export function useSearchMore() {
   const api = useApi();
   return useMutation({
-    mutationFn: async (v: { q: string; offset: number; scope?: SearchScope }) =>
+    mutationFn: async (v: {
+      q: string;
+      offset: number;
+      scope?: SearchScope;
+      file?: FileFilter;
+    }) =>
       (
         await api.get<SearchResponse>(
-          `/api/search?q=${encodeURIComponent(v.q)}&offset=${v.offset}&types=messages${scopeQuery(v.scope)}`,
+          `/api/search?q=${encodeURIComponent(v.q)}&offset=${v.offset}&types=messages${scopeQuery(v.scope)}${fileQuery(v.file)}`,
         )
       ).messages,
   });

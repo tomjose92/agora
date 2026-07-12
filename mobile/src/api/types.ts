@@ -81,7 +81,8 @@ export interface Message {
 
 /** Message hit from GET /api/search. Search rows carry channel/group names
     for breadcrumbs and a `snippet` with matched terms wrapped in
-    U+0001…U+0002 — but no attachments (store::search_messages). */
+    U+0001…U+0002, plus the message's `attachments` (filenames are searchable
+    and the file filter matches on them). */
 export interface SearchMessageHit extends Omit<Message, "attachments"> {
   attachments?: Attachment[];
   channel_name: string;
