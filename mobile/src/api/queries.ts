@@ -320,13 +320,38 @@ export function useMarkRead(channelId: string) {
 
 /* ------------------------------------------------------------- search */
 
+/** Optional search scope: restrict message hits (and Ask-AI) to one channel
+    or one whole group. Both unset = everywhere. */
+export interface SearchScope {
+  channelId?: string;
+  groupId?: string;
+}
+
+/** Stable cache-key fragment for a scope, so switching filters re-fetches. */
+function scopeKey(scope?: SearchScope): string {
+  if (scope?.channelId) return `c:${scope.channelId}`;
+  if (scope?.groupId) return `g:${scope.groupId}`;
+  return "";
+}
+
+/** `&channel_id=…` / `&group_id=…` suffix for GET /api/search. */
+function scopeQuery(scope?: SearchScope): string {
+  let s = "";
+  if (scope?.channelId) s += `&channel_id=${encodeURIComponent(scope.channelId)}`;
+  if (scope?.groupId) s += `&group_id=${encodeURIComponent(scope.groupId)}`;
+  return s;
+}
+
 /** First page of GET /api/search for `q`. `keepPreviousData` holds the last
     results on screen while a retyped query is in flight. */
-export function useSearch(q: string) {
+export function useSearch(q: string, scope?: SearchScope) {
   const api = useApi();
   return useQuery({
-    queryKey: keys.search(q),
-    queryFn: () => api.get<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}`),
+    queryKey: keys.search(q, scopeKey(scope)),
+    queryFn: () =>
+      api.get<SearchResponse>(
+        `/api/search?q=${encodeURIComponent(q)}${scopeQuery(scope)}`,
+      ),
     enabled: q.trim().length > 0,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
@@ -338,10 +363,10 @@ export function useSearch(q: string) {
 export function useSearchMore() {
   const api = useApi();
   return useMutation({
-    mutationFn: async (v: { q: string; offset: number }) =>
+    mutationFn: async (v: { q: string; offset: number; scope?: SearchScope }) =>
       (
         await api.get<SearchResponse>(
-          `/api/search?q=${encodeURIComponent(v.q)}&offset=${v.offset}&types=messages`,
+          `/api/search?q=${encodeURIComponent(v.q)}&offset=${v.offset}&types=messages${scopeQuery(v.scope)}`,
         )
       ).messages,
   });
@@ -352,8 +377,12 @@ export function useSearchMore() {
 export function useAskAi() {
   const api = useApi();
   return useMutation({
-    mutationFn: (v: { q: string; channel_id?: string; group_id?: string }) =>
-      api.post<AskResponse>("/api/search/ask", v),
+    mutationFn: (v: { q: string; scope?: SearchScope }) =>
+      api.post<AskResponse>("/api/search/ask", {
+        q: v.q,
+        ...(v.scope?.channelId ? { channel_id: v.scope.channelId } : {}),
+        ...(v.scope?.groupId ? { group_id: v.scope.groupId } : {}),
+      }),
   });
 }
 
