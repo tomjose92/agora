@@ -58,6 +58,17 @@ export function useDeleteGroup() {
   });
 }
 
+/** Hide (or show) a group in the home list — presentation only. */
+export function useSetGroupHidden() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { groupId: string; hidden: boolean }) =>
+      api.patch(`/api/groups/${v.groupId}`, { hidden: v.hidden }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.groups }),
+  });
+}
+
 export function useCreateChannel() {
   const api = useApi();
   const qc = useQueryClient();
@@ -72,10 +83,17 @@ export function useUpdateChannel() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { groupId: string; channelId: string; name?: string; topic?: string }) =>
+    mutationFn: (v: {
+      groupId: string;
+      channelId: string;
+      name?: string;
+      topic?: string;
+      hidden?: boolean;
+    }) =>
       api.patch(`/api/groups/${v.groupId}/channels/${v.channelId}`, {
         name: v.name,
         topic: v.topic,
+        hidden: v.hidden,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.groups });
@@ -304,6 +322,16 @@ export function useMessage(messageId: number, enabled: boolean) {
     queryKey: keys.message(messageId),
     queryFn: () => api.get<Message>(`/api/messages/${messageId}`),
     enabled,
+  });
+}
+
+/** Dismiss a thread from the inbox — the channel keeps its messages. */
+export function useHideThread() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (threadId: number) => api.put(`/api/threads/${threadId}/hide`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.threads }),
   });
 }
 

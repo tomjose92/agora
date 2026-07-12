@@ -57,6 +57,7 @@ let _agoThreadReadTimer = null; // debounce for PUT /threads/:id/read
 let _agoThreadsTimer = null;    // debounce for inbox refetches
 let _agoUnreadsOnly =           // sidebar shows only unread/mentioned channels
   localStorage.getItem("agora_unreads_only") === "1";
+let _agoHiddenOpen = false;     // sidebar "Hidden" section expanded
 let _agoEditingChan = false;    // channel header rename/topic editor open
 let _agoDrag = null;            // drag-reorder state {type, id, gid}
 let _agoAddr = {};              // "talk to" selection: channel or channel:t<id> -> agent ids;
@@ -216,12 +217,16 @@ async function agoLoadGroups() {
     _agoExpanded = _agoExpanded.filter(id => _agoGroups.some(g => g.id === id));
   }
   if (!agoSelGroup()) {
-    _agoSel.g = _agoGroups.length ? _agoGroups[0].id : null;
+    const first = _agoGroups.find(g => !g.hidden) || _agoGroups[0] || null;
+    _agoSel.g = first ? first.id : null;
     _agoSel.c = null;
   }
   const g = agoSelGroup();
   // On the group overview page no channel is selected on purpose.
-  if (g && !agoSelChannel() && !_agoGroupPage) _agoSel.c = (g.channels[0] || {}).id || null;
+  if (g && !agoSelChannel() && !_agoGroupPage) {
+    const firstChan = (g.channels || []).find(c => !c.hidden) || (g.channels || [])[0] || null;
+    _agoSel.c = firstChan ? firstChan.id : null;
+  }
   agoSaveSel();
 }
 
@@ -282,11 +287,14 @@ function agoSeedActivity(activity) {
 /* ---------- unread state ---------- */
 function agoUnreadCount(cid) { const u = _agoUnread[cid]; return u ? u.count : 0; }
 function agoMentionCount(cid) { const u = _agoUnread[cid]; return u ? (u.mentions || 0) : 0; }
+/* Hidden channels don't feed the badges — out of sight, out of mind. */
 function agoGroupUnread(g) {
-  return (g.channels || []).reduce((n, c) => n + agoUnreadCount(c.id), 0);
+  return (g.channels || []).filter(c => !c.hidden)
+    .reduce((n, c) => n + agoUnreadCount(c.id), 0);
 }
 function agoGroupMentions(g) {
-  return (g.channels || []).reduce((n, c) => n + agoMentionCount(c.id), 0);
+  return (g.channels || []).filter(c => !c.hidden)
+    .reduce((n, c) => n + agoMentionCount(c.id), 0);
 }
 /* Slack/Discord-style badges: red only when @you; plain traffic is muted. */
 function agoBadgeHTML(n, mentions) {
@@ -511,12 +519,20 @@ function agoThreadRowHTML(t) {
   const root = t.root || {};
   const badge = agoBadgeHTML(t.unread || 0, 0);
   const when = fmtTs(t.last_reply_ts || root.ts);
+  const g = _agoGroups.find(x => x.id === t.group_id);
+  const armed = agoArmed("thr:" + root.id);
+  const del = (g && g.role === "admin") || isOwner()
+    ? `<button class="ago-x ${armed ? "armed" : ""}"
+         title="${armed ? "Click again to remove this thread" : "Remove from Threads (messages stay in the channel)"}"
+         onclick="event.stopPropagation(); agoHideThread(${root.id})">${armed ? "Sure?" : icon("x")}</button>`
+    : "";
   return `
     <div class="ago-inbox-row ${t.unread ? "unread" : ""}"
          onclick="agoGoToThread('${esc(t.group_id)}','${esc(t.channel_id)}',${root.id})">
       <div class="ago-inbox-top">
         <span class="chan"><span class="hash">#</span>${esc(t.channel_name)}<span class="grp"> · ${esc(t.group_name)}</span></span>
         <span class="ts">${esc(when)}</span>
+        ${del}
       </div>
       <div class="ago-inbox-main">
         <span class="author">${esc(agoAuthorLabel(root))}</span>
@@ -559,12 +575,12 @@ function agoToggleUnreadsOnly() {
 function agoDrawSide() {
   const box = document.getElementById("agora-side");
   if (!box) return;
-  const groupRows = _agoGroups.map(g => {
+  const groupRows = _agoGroups.filter(g => !g.hidden).map(g => {
     const open = agoIsExpanded(g.id);
     const sel = g.id === _agoSel.g;
     const groupUnread = agoGroupUnread(g);
     const groupMentions = agoGroupMentions(g);
-    const channels = open ? (g.channels || []).map(c => {
+    const channels = open ? (g.channels || []).filter(c => !c.hidden).map(c => {
       const armed = agoArmed("chan:" + c.id);
       const unread = agoUnreadCount(c.id);
       const mentions = agoMentionCount(c.id);
@@ -575,19 +591,30 @@ function agoDrawSide() {
       // whatever is selected so nothing on screen becomes unreachable.
       if (_agoUnreadsOnly && !unread && !mentions && !threadUnread && !active) return "";
       const del = (g.role === "admin" || isOwner())
-        ? `<button class="ago-x ${armed ? "armed" : ""}" title="${armed ? "Click again to delete #" + esc(c.name) : "Delete channel"}"
+        ? `<button class="ago-x hide" title="Hide #${esc(c.name)} from the sidebar"
+             onclick="event.stopPropagation(); agoSetChannelHidden('${esc(g.id)}','${esc(c.id)}',true)">${icon("eye-off")}</button>
+           <button class="ago-x ${armed ? "armed" : ""}" title="${armed ? "Click again to delete #" + esc(c.name) : "Delete channel"}"
              onclick="event.stopPropagation(); agoDeleteChannel('${esc(g.id)}','${esc(c.id)}')">${armed ? "Sure?" : icon("x")}</button>`
         : "";
       const threadRows = threads
         .filter(t => !_agoUnreadsOnly || (t.unread || 0) > 0)
-        .map(t => `
+        .map(t => {
+          const tArmed = agoArmed("thr:" + t.root.id);
+          const tDel = (g.role === "admin" || isOwner())
+            ? `<button class="ago-x ${tArmed ? "armed" : ""}"
+                 title="${tArmed ? "Click again to remove this thread" : "Remove thread from the sidebar (messages stay in the channel)"}"
+                 onclick="event.stopPropagation(); agoHideThread(${t.root.id})">${tArmed ? "Sure?" : icon("x")}</button>`
+            : "";
+          return `
         <div class="ago-side-thread ${t.unread ? "unread" : ""}"
              title="${esc(agoPinSnippet(t.root || {}))}"
              onclick="event.stopPropagation(); agoGoToThread('${esc(g.id)}','${esc(c.id)}',${t.root.id})">
           <span class="tico">${icon("corner-down-right")}</span>
           <span class="nm">${esc(agoPinSnippet(t.root || {}))}</span>
           ${agoBadgeHTML(t.unread || 0, 0)}
-        </div>`).join("");
+          ${tDel}
+        </div>`;
+        }).join("");
       return `
       <div class="ago-chan ${active ? "active" : ""} ${unread || mentions ? "unread" : ""}"
            draggable="true"
@@ -631,6 +658,37 @@ function agoDrawSide() {
          onkeydown="if(event.key==='Enter')agoCreateGroup();if(event.key==='Escape')agoCancelCreate()">
        <button class="btn sm" onclick="agoCreateGroup()">Add</button></div>`
     : `<button class="ago-add" onclick="agoOpenCreate('group')">+ New group</button>`;
+  // Hidden groups/channels live in a tucked-away section so they stay
+  // reachable (and un-hideable) without cluttering the main list.
+  const hiddenGroups = _agoGroups.filter(g => g.hidden);
+  const hiddenChans = _agoGroups.filter(g => !g.hidden)
+    .flatMap(g => (g.channels || []).filter(c => c.hidden).map(c => ({ g, c })));
+  const hiddenCount = hiddenGroups.length + hiddenChans.length;
+  const hiddenRows = _agoHiddenOpen ? [
+    ...hiddenGroups.map(g => `
+      <div class="ago-hidden-row" title="Open ${esc(g.name)}"
+           onclick="agoOpenGroupPage('${esc(g.id)}')">
+        <span class="nm">${esc(g.name)}</span>
+        <button class="ago-x show" title="Show ${esc(g.name)} in the sidebar"
+          onclick="event.stopPropagation(); agoSetGroupHidden('${esc(g.id)}',false)">${icon("eye")}</button>
+      </div>`),
+    ...hiddenChans.map(({ g, c }) => `
+      <div class="ago-hidden-row" title="Open #${esc(c.name)}"
+           onclick="agoSelectChannel('${esc(g.id)}','${esc(c.id)}')">
+        <span class="nm"><span class="hash">#</span>${esc(c.name)}<span class="grp"> · ${esc(g.name)}</span></span>
+        <button class="ago-x show" title="Show #${esc(c.name)} in the sidebar"
+          onclick="event.stopPropagation(); agoSetChannelHidden('${esc(g.id)}','${esc(c.id)}',false)">${icon("eye")}</button>
+      </div>`),
+  ].join("") : "";
+  const hiddenSection = hiddenCount ? `
+    <div class="ago-hidden">
+      <button class="ago-hidden-toggle" onclick="agoToggleHiddenSection()"
+        title="${_agoHiddenOpen ? "Collapse" : "Expand"} hidden groups & channels">
+        <span class="ago-caret ${_agoHiddenOpen ? "open" : ""}">${icon("chevron-right")}</span>
+        ${icon("eye-off")} Hidden <span class="cnt">${hiddenCount}</span>
+      </button>
+      ${hiddenRows}
+    </div>` : "";
   const anyUnread = _agoGroups.some(g => agoGroupUnread(g) > 0) || agoThreadUnreadTotal() > 0;
   const anyMention = _agoGroups.some(g => agoGroupMentions(g) > 0);
   const threadTotal = agoThreadUnreadTotal();
@@ -650,6 +708,7 @@ function agoDrawSide() {
     </div>
     <div class="ago-groups">${groupRows ||
       '<div class="dim" style="padding:10px 12px;font-size:12px">No groups yet — create one to start chatting.</div>'}</div>
+    ${hiddenSection}
     <div class="ago-side-foot">${addGroup}</div>`;
   const input = document.getElementById("ago-new-group") || document.getElementById("ago-new-channel");
   if (input) input.focus();
@@ -796,6 +855,56 @@ async function agoDeleteGroup(gid) {
   } catch (e) { agoErr("Delete failed", e); agoDrawMain(); }
 }
 
+/* ---------- hide / show (sidebar tidying, nothing is deleted) ---------- */
+function agoToggleHiddenSection() { _agoHiddenOpen = !_agoHiddenOpen; agoDrawSide(); }
+
+async function agoSetGroupHidden(gid, hidden) {
+  const g = _agoGroups.find(x => x.id === gid);
+  if (!g) return;
+  try {
+    await apiPost(`/api/groups/${encodeURIComponent(gid)}`, { hidden }, "PATCH");
+    if (hidden) _agoHiddenOpen = false;
+    await agoLoadGroups();
+    agoDrawSide();
+    if (_agoGroupPage && _agoSel.g === gid) agoDrawMain();
+    toast(hidden ? `"${g.name}" hidden — find it under Hidden below the groups`
+                 : `"${g.name}" is back in the sidebar`, { variant: "ok" });
+  } catch (e) { agoErr(hidden ? "Couldn't hide group" : "Couldn't show group", e); }
+}
+
+async function agoSetChannelHidden(gid, cid, hidden) {
+  const g = _agoGroups.find(x => x.id === gid);
+  const c = g && (g.channels || []).find(x => x.id === cid);
+  if (!c) return;
+  try {
+    await apiPost(
+      `/api/groups/${encodeURIComponent(gid)}/channels/${encodeURIComponent(cid)}`,
+      { hidden }, "PATCH");
+    await agoLoadGroups();
+    agoDrawSide();
+    if (_agoGroupPage && _agoSel.g === gid) agoDrawMain();
+    toast(hidden ? `#${c.name} hidden — find it under Hidden below the groups`
+                 : `#${c.name} is back in the sidebar`, { variant: "ok" });
+  } catch (e) { agoErr(hidden ? "Couldn't hide channel" : "Couldn't show channel", e); }
+}
+
+/* Dismiss a thread from the sidebar + inbox (two-step confirm). The
+   messages stay in the channel — this only clears the inbox row. */
+async function agoHideThread(rootId) {
+  if (!agoArmed("thr:" + rootId)) {
+    agoArm("thr:" + rootId, () => { agoDrawSide(); if (_agoInboxOpen) agoDrawMain(); });
+    return;
+  }
+  agoDisarm();
+  try {
+    await apiPost(`/api/threads/${rootId}/hide`, {}, "PUT");
+    _agoThreads = _agoThreads.filter(t => !(t.root && t.root.id === rootId));
+    agoDrawSide();
+    if (_agoInboxOpen) agoDrawMain();
+    toast("Thread removed from the sidebar", { variant: "ok" });
+  } catch (e) { agoErr("Couldn't remove thread", e); }
+}
+
 /* ---------- group overview page ---------- */
 function agoDrawGroupPage(box) {
   const g = agoSelGroup();
@@ -806,12 +915,17 @@ function agoDrawGroupPage(box) {
   const chans = (g.channels || []).map(c => {
     const unread = agoUnreadCount(c.id);
     const mentions = agoMentionCount(c.id);
+    const eye = admin
+      ? `<button class="ago-x show" title="${c.hidden ? "Show #" + esc(c.name) + " in the sidebar" : "Hide #" + esc(c.name) + " from the sidebar"}"
+           onclick="event.stopPropagation(); agoSetChannelHidden('${esc(g.id)}','${esc(c.id)}',${c.hidden ? "false" : "true"})">${icon(c.hidden ? "eye" : "eye-off")}</button>`
+      : "";
     return `
-      <div class="ago-inbox-row ago-gp-chan ${unread || mentions ? "unread" : ""}"
+      <div class="ago-inbox-row ago-gp-chan ${unread || mentions ? "unread" : ""} ${c.hidden ? "is-hidden" : ""}"
            onclick="agoSelectChannel('${esc(g.id)}','${esc(c.id)}')" title="Open #${esc(c.name)}">
         <div class="ago-inbox-top">
-          <span class="chan"><span class="hash">#</span>${esc(c.name)}</span>
+          <span class="chan"><span class="hash">#</span>${esc(c.name)}${c.hidden ? '<span class="ago-hidden-tag">hidden</span>' : ""}</span>
           ${agoBadgeHTML(unread, mentions)}
+          ${eye}
         </div>
         ${c.topic ? `<div class="ago-gp-topic">${esc(c.topic)}</div>` : ""}
       </div>`;
@@ -821,12 +935,17 @@ function agoDrawGroupPage(box) {
     <div class="ago-head">
       <button class="btn sm ago-back" title="Back to groups" onclick="agoBackToGroups()">${icon("chevron-left")}</button>
       <div class="ago-head-text">
-        <span class="ago-chan-name">${esc(g.name)}</span>
+        <span class="ago-chan-name">${esc(g.name)}${g.hidden ? '<span class="ago-hidden-tag">hidden</span>' : ""}</span>
         <span class="dim">${n} channel${n === 1 ? "" : "s"}</span>
       </div>
       <div class="ago-head-actions">
         ${admin
-          ? `<button class="btn sm danger ${armed ? "armed" : ""}" onclick="agoDeleteGroup('${esc(g.id)}')">
+          ? `<button class="btn sm" title="${g.hidden
+                 ? "Bring this group back into the sidebar"
+                 : "Tuck this group away — everything stays intact, it just leaves the sidebar"}"
+               onclick="agoSetGroupHidden('${esc(g.id)}',${g.hidden ? "false" : "true"})">
+               ${icon(g.hidden ? "eye" : "eye-off")} ${g.hidden ? "Show group" : "Hide group"}</button>
+             <button class="btn sm danger ${armed ? "armed" : ""}" onclick="agoDeleteGroup('${esc(g.id)}')">
                ${armed ? "Sure? This deletes everything" : "Delete group"}</button>`
           : ""}
       </div>

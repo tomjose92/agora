@@ -15,6 +15,8 @@ export interface Channel {
   name: string;
   topic: string;
   created_at: number;
+  /** Tucked away in the home list (admin toggle); data is untouched. */
+  hidden?: boolean;
   /* Embedded by the groups endpoint only. `unread` counts top-level
      messages; `mentions` counts @you messages (any thread). */
   unread?: number;
@@ -30,6 +32,8 @@ export interface Group {
   created_at: number;
   channels: Channel[];
   role: "admin" | "member";
+  /** Tucked away in the home list (admin toggle); data is untouched. */
+  hidden?: boolean;
 }
 
 export interface Attachment {

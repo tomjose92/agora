@@ -16,13 +16,22 @@ import {
   View,
 } from "react-native";
 import { Link, Stack, router } from "expo-router";
-import { Bot, ChevronDown, ChevronRight, MessagesSquare, Settings } from "lucide-react-native";
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  MessagesSquare,
+  Settings,
+} from "lucide-react-native";
 import {
   useCreateChannel,
   useCreateGroup,
   useDeleteChannel,
   useDeleteGroup,
   useGroups,
+  useSetGroupHidden,
   useThreads,
   useUpdateChannel,
 } from "../../src/api/queries";
@@ -127,10 +136,18 @@ function ChannelRow({ group, channel }: { group: Group; channel: Channel }) {
     }[] = [
       { text: "Rename", onPress: () => { setManaging(true); setEditing("name"); } },
       { text: "Edit topic", onPress: () => { setManaging(true); setEditing("topic"); } },
+      {
+        text: "Hide channel",
+        onPress: () =>
+          updateChannel.mutate(
+            { groupId: group.id, channelId: channel.id, hidden: true },
+            { onError: (e) => toastErr("Hide failed", e) },
+          ),
+      },
       { text: "Delete channel", style: "destructive", onPress: confirmDelete },
       { text: "Cancel", style: "cancel" },
     ];
-    Alert.alert(`#${channel.name}`, undefined, buttons);
+    Alert.alert(`#${channel.name}`, "Hiding tucks it into the Hidden section; nothing is deleted.", buttons);
   };
 
   return (
@@ -189,13 +206,16 @@ function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean 
   const [creating, setCreating] = useState(false);
   const createChannel = useCreateChannel();
   const deleteGroup = useDeleteGroup();
+  const setGroupHidden = useSetGroupHidden();
   const admin = isGroupAdmin(group);
-  const unread = group.channels.reduce((n, c) => n + (c.unread ?? 0), 0);
-  const mentions = group.channels.reduce((n, c) => n + (c.mentions ?? 0), 0);
+  // Hidden channels live in the Hidden section and don't feed the badges.
+  const shownChannels = group.channels.filter((c) => !c.hidden);
+  const unread = shownChannels.reduce((n, c) => n + (c.unread ?? 0), 0);
+  const mentions = shownChannels.reduce((n, c) => n + (c.mentions ?? 0), 0);
   const expanded = !collapsed;
   const visibleChannels = unreadsOnly
-    ? group.channels.filter((c) => (c.unread ?? 0) > 0 || (c.mentions ?? 0) > 0)
-    : group.channels;
+    ? shownChannels.filter((c) => (c.unread ?? 0) > 0 || (c.mentions ?? 0) > 0)
+    : shownChannels;
 
   const confirmDelete = () => {
     Alert.alert(
@@ -231,10 +251,22 @@ function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean 
       },
     ];
     if (admin) {
+      buttons.push({
+        text: "Hide group",
+        onPress: () =>
+          setGroupHidden.mutate(
+            { groupId: group.id, hidden: true },
+            { onError: (e) => toastErr("Hide failed", e) },
+          ),
+      });
       buttons.push({ text: "Delete group", style: "destructive", onPress: confirmDelete });
     }
     buttons.push({ text: "Cancel", style: "cancel" });
-    Alert.alert(group.name, undefined, buttons);
+    Alert.alert(
+      group.name,
+      admin ? "Hiding tucks it into the Hidden section; nothing is deleted." : undefined,
+      buttons,
+    );
   };
 
   if (unreadsOnly && visibleChannels.length === 0) return null;
@@ -279,6 +311,89 @@ function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean 
       {expanded && group.channels.length === 0 ? (
         <Text style={styles.emptyChannels}>No channels yet — tap ＋</Text>
       ) : null}
+    </View>
+  );
+}
+
+/* Collapsed drawer of hidden groups/channels at the bottom of the home list:
+   they stay reachable (tap to open) and restorable (tap the eye) without
+   crowding the main list. */
+function HiddenSection({ groups }: { groups: Group[] }) {
+  const [open, setOpen] = useState(false);
+  const setGroupHidden = useSetGroupHidden();
+  const updateChannel = useUpdateChannel();
+  const hiddenGroups = groups.filter((g) => g.hidden);
+  const hiddenChannels = groups
+    .filter((g) => !g.hidden)
+    .flatMap((g) => g.channels.filter((c) => c.hidden).map((c) => ({ group: g, channel: c })));
+  const count = hiddenGroups.length + hiddenChannels.length;
+  if (!count) return null;
+  return (
+    <View style={styles.hiddenCard}>
+      <Pressable style={styles.hiddenHead} onPress={() => setOpen((o) => !o)}>
+        <View style={styles.chevron}>
+          <Icon icon={open ? ChevronDown : ChevronRight} size={14} color={colors.faint} />
+        </View>
+        <Icon icon={EyeOff} size={14} color={colors.faint} />
+        <Text style={styles.hiddenTitle}>Hidden</Text>
+        <Text style={styles.hiddenCount}>{count}</Text>
+      </Pressable>
+      {open
+        ? hiddenGroups.map((g) => (
+            <View key={g.id} style={styles.hiddenRow}>
+              <Text style={styles.hiddenName} numberOfLines={1}>
+                {g.name}
+              </Text>
+              {isGroupAdmin(g) ? (
+                <Pressable
+                  hitSlop={10}
+                  onPress={() =>
+                    setGroupHidden.mutate(
+                      { groupId: g.id, hidden: false },
+                      { onError: (e) => toastErr("Show failed", e) },
+                    )
+                  }
+                >
+                  <Icon icon={Eye} size={17} color={colors.a1} />
+                </Pressable>
+              ) : null}
+            </View>
+          ))
+        : null}
+      {open
+        ? hiddenChannels.map(({ group, channel }) => (
+            <View key={channel.id} style={styles.hiddenRow}>
+              <Pressable
+                style={styles.hiddenChanBtn}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(app)/channel/[id]",
+                    params: { id: channel.id, name: channel.name, groupId: group.id },
+                  })
+                }
+              >
+                <Text style={styles.hiddenName} numberOfLines={1}>
+                  <Text style={styles.hash}># </Text>
+                  {channel.name}
+                  <Text style={styles.hiddenGroupSuffix}> · {group.name}</Text>
+                </Text>
+              </Pressable>
+              {isGroupAdmin(group) ? (
+                <Pressable
+                  hitSlop={10}
+                  onPress={() =>
+                    updateChannel.mutate(
+                      { groupId: group.id, channelId: channel.id, hidden: false },
+                      { onError: (e) => toastErr("Show failed", e) },
+                    )
+                  }
+                >
+                  <Icon icon={Eye} size={17} color={colors.a1} />
+                </Pressable>
+              ) : null}
+            </View>
+          ))
+        : null}
     </View>
   );
 }
@@ -362,9 +477,11 @@ export default function Home() {
             </Text>
           </Pressable>
         </View>
-        {(groups.data ?? []).map((g) => (
-          <GroupCard key={g.id} group={g} unreadsOnly={unreadsOnly} />
-        ))}
+        {(groups.data ?? [])
+          .filter((g) => !g.hidden)
+          .map((g) => (
+            <GroupCard key={g.id} group={g} unreadsOnly={unreadsOnly} />
+          ))}
         {groups.isSuccess && groups.data.length === 0 ? (
           <Text style={styles.empty}>No groups yet. Create one to get started.</Text>
         ) : null}
@@ -374,6 +491,7 @@ export default function Home() {
         {groups.isError ? (
           <Text style={styles.empty}>Couldn't load groups: {groups.error.message}</Text>
         ) : null}
+        <HiddenSection groups={groups.data ?? []} />
         {creatingGroup ? (
           <InlineCreate
             placeholder="new group name"
@@ -490,4 +608,43 @@ const styles = StyleSheet.create({
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 30, fontSize: 14 },
   newGroup: { alignItems: "center", paddingVertical: 12 },
   newGroupText: { color: colors.a1, fontSize: 14.5, fontWeight: "700" },
+  hiddenCard: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: "dashed",
+    borderRadius: 14,
+    paddingVertical: 6,
+  },
+  hiddenHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  hiddenTitle: { color: colors.dim, fontSize: 13.5, fontWeight: "700", flex: 1 },
+  hiddenCount: {
+    color: colors.faint,
+    fontSize: 11.5,
+    fontWeight: "800",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 9,
+    minWidth: 20,
+    textAlign: "center",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    overflow: "hidden",
+  },
+  hiddenRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingLeft: 34,
+    paddingRight: 14,
+    paddingVertical: 9,
+  },
+  hiddenChanBtn: { flex: 1 },
+  hiddenName: { color: colors.dim, fontSize: 14, flex: 1 },
+  hiddenGroupSuffix: { color: colors.faint, fontSize: 12.5 },
 });

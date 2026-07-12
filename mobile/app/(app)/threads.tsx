@@ -1,10 +1,12 @@
 /* Threads inbox: every thread you started or replied in, newest activity
    first, with per-thread unread badges — the mobile take on Slack's
-   "Threads" view. Tapping a row opens the thread screen directly. */
+   "Threads" view. Tapping a row opens the thread screen directly;
+   long-pressing lets a group admin remove the row from the inbox. */
 
 import React from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -14,9 +16,10 @@ import {
 } from "react-native";
 import { Stack, router } from "expo-router";
 import { MessagesSquare } from "lucide-react-native";
-import { useThreads } from "../../src/api/queries";
+import { useGroups, useHideThread, useThreads } from "../../src/api/queries";
 import type { ThreadRow } from "../../src/api/types";
 import { Icon } from "../../src/components/Icon";
+import { toastErr } from "../../src/components/Toast";
 import { fmtTs } from "../../src/lib/format";
 import { colors } from "../../src/lib/theme";
 
@@ -25,7 +28,26 @@ function snippet(t: ThreadRow): string {
   return text || "(attachment)";
 }
 
-function Row({ thread }: { thread: ThreadRow }) {
+function Row({ thread, admin }: { thread: ThreadRow; admin: boolean }) {
+  const hideThread = useHideThread();
+  const onLongPress = () => {
+    if (!admin) return;
+    Alert.alert(
+      "Remove this thread?",
+      "It disappears from Threads and the sidebar; the messages stay in the channel.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () =>
+            hideThread.mutate(thread.root.id, {
+              onError: (e) => toastErr("Remove failed", e),
+            }),
+        },
+      ],
+    );
+  };
   return (
     <Pressable
       style={[styles.row, thread.unread > 0 ? styles.rowUnread : null]}
@@ -39,6 +61,8 @@ function Row({ thread }: { thread: ThreadRow }) {
           },
         })
       }
+      onLongPress={onLongPress}
+      delayLongPress={350}
     >
       <View style={styles.top}>
         <Text style={styles.chan} numberOfLines={1}>
@@ -74,6 +98,10 @@ function Row({ thread }: { thread: ThreadRow }) {
 
 export default function ThreadsScreen() {
   const threads = useThreads();
+  const groups = useGroups();
+  const adminOf = new Set(
+    (groups.data ?? []).filter((g) => g.role === "admin").map((g) => g.id),
+  );
   return (
     <>
       <Stack.Screen options={{ title: "Threads", headerShown: true }} />
@@ -82,7 +110,9 @@ export default function ThreadsScreen() {
         contentContainerStyle={styles.content}
         data={threads.data ?? []}
         keyExtractor={(t) => String(t.root.id)}
-        renderItem={({ item }) => <Row thread={item} />}
+        renderItem={({ item }) => (
+          <Row thread={item} admin={adminOf.has(item.group_id)} />
+        )}
         refreshControl={
           <RefreshControl
             refreshing={threads.isRefetching}

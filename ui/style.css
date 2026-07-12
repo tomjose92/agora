@@ -367,6 +367,43 @@ a.btn { text-decoration: none; }
 .ago-side-thread .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ago-side-thread.unread { color: var(--dim); }
 .ago-side-thread.unread .nm { color: var(--text); font-weight: 600; }
+.ago-side-thread:hover .ago-x { opacity: 1; }
+
+/* ---------- hidden groups & channels (sidebar section) ---------- */
+.ago-hidden { border-top: 1px solid var(--border); padding: 4px 8px; flex-shrink: 0; }
+.ago-hidden-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px;
+  border: none; background: transparent; color: var(--faint); font: inherit;
+  font-size: 11.5px; font-weight: 600; cursor: pointer; border-radius: 8px;
+}
+.ago-hidden-toggle:hover { color: var(--dim); background: rgba(255,255,255,.03); }
+.ago-hidden-toggle svg.ico { width: 13px; height: 13px; }
+.ago-hidden-toggle .cnt {
+  margin-left: auto; padding: 1px 7px; border-radius: 8px;
+  background: rgba(255,255,255,.08); font-size: 10.5px;
+}
+.ago-hidden-row {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px 5px 26px;
+  border-radius: 8px; cursor: pointer; font-size: 12px; color: var(--faint);
+}
+.ago-hidden-row:hover { background: rgba(255,255,255,.04); color: var(--text); }
+.ago-hidden-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ago-hidden-row .hash { opacity: .5; }
+.ago-hidden-row .grp { color: var(--faint); }
+.ago-hidden-row .ago-x { opacity: 0; }
+.ago-hidden-row:hover .ago-x { opacity: 1; }
+.ago-x.show:hover, .ago-x.hide:hover { color: var(--a1); background: rgba(139,124,255,.12); }
+.ago-hidden-tag {
+  margin-left: 8px; padding: 1px 7px; border-radius: 8px; vertical-align: middle;
+  background: rgba(255,255,255,.08); color: var(--faint);
+  font-size: 10px; font-weight: 600; letter-spacing: .02em;
+}
+.ago-gp-chan.is-hidden { opacity: .6; }
+.ago-gp-chan .ago-x { opacity: 0; }
+.ago-gp-chan:hover .ago-x { opacity: 1; }
+.ago-inbox-row .ago-x { opacity: 0; align-self: center; }
+.ago-inbox-row:hover .ago-x { opacity: 1; }
+.agora-layout.side-collapsed .agora-side .ago-hidden { display: none; }
 
 .ago-inbox-list { gap: 8px; }
 .ago-inbox-row {
@@ -798,6 +835,8 @@ a.btn { text-decoration: none; }
   .ago-side-thread { padding-top: 9px; padding-bottom: 9px; }
   .ago-chan { padding-top: 9px; padding-bottom: 9px; }
   .ago-chan .ago-x, .ago-group-head .ago-x { opacity: 1; }
+  .ago-side-thread .ago-x, .ago-hidden-row .ago-x,
+  .ago-gp-chan .ago-x, .ago-inbox-row .ago-x { opacity: 1; }  /* no hover on touch */
   .ago-chan-edit { flex-wrap: wrap; }
   .ago-chan-edit #ago-edit-name, .ago-chan-edit #ago-edit-topic {
     font-size: 16px;                      /* iOS anti-zoom */
