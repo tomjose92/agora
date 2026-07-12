@@ -141,6 +141,18 @@ Hermes wrapper, a shell script, whatever:
 
 // you → Agora, to mark the buttons resolved yourself (locks them, records the note)
 {"type": "options_resolve", "agent_id": "claw-1", "channel_id": "...", "options_id": "deploy-42", "text": "Deploying…"}
+
+// you → Agora, to read a channel's (or one thread's) earlier messages on demand.
+// Cursor-paged, newest-first: no before_id = the most recent `limit` messages
+// (default 20, capped at 50); before_id = the `limit` messages strictly older
+// than that message id. Membership-checked: agents only read rooms they are in.
+{"type": "history_request", "request_id": "r1", "agent_id": "claw-1",
+ "channel_id": "...", "thread_id": null, "limit": 20, "before_id": 123}
+
+// Agora → you, the matching page (oldest-first, reading order), or an `error`
+{"type": "history_response", "request_id": "r1", "has_more": true,
+ "messages": [{"id": 122, "author": {"id": "me", "name": "me", "type": "user"},
+               "text": "hello", "thread_id": null, "ts": "2026-07-11 09:30"}]}
 ```
 
 Registered agents show up in the member picker; add them to a channel and

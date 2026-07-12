@@ -32,6 +32,12 @@ const ROOT_CONTEXT_MAX_CHARS: usize = 500;
 /// frame (no inline bytes) — remote agents may not be able to reach our HTTP.
 pub const MAX_INLINE_ATTACHMENT: usize = 8 * 1024 * 1024;
 
+/// Page size for an agent `history_request` when it names none, and the hard
+/// cap applied regardless of what it asks for — an agent can page back with
+/// `before_id`, never pull a whole channel in one frame.
+pub const HISTORY_PAGE_DEFAULT: i64 = 20;
+pub const HISTORY_PAGE_MAX: i64 = 50;
+
 /// Minimum gap between notifications for the same channel, so a burst of
 /// agent replies (or a bot exchange) becomes one banner, not a pile.
 const NOTIFY_THROTTLE: Duration = Duration::from_secs(5);
@@ -836,6 +842,12 @@ impl Hub {
             .map(|h| h.agent_name)
             .unwrap_or_else(|| agent_id.clone());
         let channel_id = frame["channel_id"].as_str().unwrap_or_default().to_string();
+        // history_request answers with an error frame instead of the silent
+        // drop below — the asking agent is awaiting a correlated response.
+        if frame["type"].as_str() == Some("history_request") {
+            self.handle_history_request(&agent_id, &channel_id, frame);
+            return;
+        }
         if channel_id.is_empty() || self.store.channel(&channel_id).is_none() {
             return;
         }
@@ -888,6 +900,72 @@ impl Hub {
         }
     }
 
+    /// A `history_request` from an agent: one membership-checked, cursor-paged
+    /// page of a channel's top level (or one thread), answered on the same
+    /// connection as a `history_response` carrying the frame's `request_id`.
+    ///
+    /// Paging is newest-first: no `before_id` returns the most recent `limit`
+    /// messages, `before_id` the `limit` strictly older than it; `messages`
+    /// come back oldest-first (reading order) with `has_more` set while older
+    /// rows remain.
+    fn handle_history_request(&self, agent_id: &str, channel_id: &str, frame: &Value) {
+        let Some(handle) = self.agent_handle(agent_id) else {
+            return; // no live connection to answer on
+        };
+        let mut response = json!({
+            "type": "history_response",
+            "request_id": frame["request_id"],
+        });
+        if channel_id.is_empty() || self.store.channel(channel_id).is_none() {
+            response["error"] = json!("unknown channel");
+            let _ = handle.tx.send(response);
+            return;
+        }
+        // Membership is the read boundary: an agent can only read rooms it
+        // is in, exactly like the inbound fan-out.
+        if !self.store.agents_for_channel(channel_id).iter().any(|a| a == agent_id) {
+            response["error"] = json!("agent is not a member of this channel");
+            let _ = handle.tx.send(response);
+            return;
+        }
+        let thread_id = frame["thread_id"].as_i64();
+        // Pantheo sends the cursor back as it appeared in the transcript hint,
+        // which may make it a string; accept both.
+        let before_id = frame["before_id"]
+            .as_i64()
+            .or_else(|| frame["before_id"].as_str().and_then(|s| s.parse().ok()));
+        let limit = frame["limit"]
+            .as_i64()
+            .unwrap_or(HISTORY_PAGE_DEFAULT)
+            .clamp(1, HISTORY_PAGE_MAX) as usize;
+        // One extra row decides has_more without a second query; rows are
+        // oldest-first, so the surplus row is the head of the page.
+        let mut rows = self.store.messages(channel_id, thread_id, before_id, limit + 1);
+        let has_more = rows.len() > limit;
+        if has_more {
+            rows.remove(0);
+        }
+        let messages: Vec<Value> = rows
+            .iter()
+            .map(|m| {
+                json!({
+                    "id": m["id"],
+                    "author": {
+                        "type": m["author_type"],
+                        "id": m["author_id"],
+                        "name": m["author_name"],
+                    },
+                    "text": m["text"],
+                    "thread_id": m["thread_id"],
+                    "ts": format_ts(m["ts"].as_f64().unwrap_or(0.0)),
+                })
+            })
+            .collect();
+        response["messages"] = json!(messages);
+        response["has_more"] = json!(has_more);
+        let _ = handle.tx.send(response);
+    }
+
     fn resolve_options_by_agent(&self, message_id: i64, text: &str) -> Result<Value, &'static str> {
         let message = self.store.message(message_id).ok_or("Message not found")?;
         let meta = message.get("meta").cloned().unwrap_or(Value::Null);
@@ -911,6 +989,29 @@ impl Hub {
         );
         Ok(updated)
     }
+}
+
+/// Epoch seconds -> "YYYY-MM-DD HH:MM" (UTC). History transcripts are read by
+/// language models, so a plain calendar stamp beats a raw epoch number.
+fn format_ts(epoch: f64) -> String {
+    let secs = epoch as i64;
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let rem = secs.rem_euclid(86_400);
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", rem / 3600, (rem % 3600) / 60)
+}
+
+/// Days since 1970-01-01 -> (year, month, day). Howard Hinnant's civil
+/// calendar algorithm; exact for the whole proleptic Gregorian range.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
 fn drop_agent_activity(st: &mut HubState, channel_id: &str, agent_id: &str) {
@@ -961,6 +1062,149 @@ mod tests {
             h.store.add_member(gid, "agent", a, "member", None);
         }
         c["id"].as_str().unwrap().to_string()
+    }
+
+    /// Drain *rx*, returning the last frame of the given type (posts fan
+    /// inbound frames to member agents, so tests skip past those).
+    fn last_frame(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
+        ftype: &str,
+    ) -> Option<Value> {
+        let mut found = None;
+        while let Ok(f) = rx.try_recv() {
+            if f["type"] == ftype {
+                found = Some(f);
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn history_request_pages_newest_first_with_cursor() {
+        let h = hub();
+        let mut rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        for i in 1..=5 {
+            h.post_user_message(&cid, &format!("m{i}"), "tom", Some("Tom"), None, vec![]);
+        }
+
+        h.handle_agent_frame(&json!({
+            "type": "history_request", "request_id": "r1", "agent_id": "bot-a",
+            "channel_id": cid, "thread_id": null, "limit": 2,
+        }));
+        let resp = last_frame(&mut rx, "history_response").unwrap();
+        assert_eq!(resp["request_id"], "r1");
+        assert_eq!(resp["has_more"], true);
+        let msgs = resp["messages"].as_array().unwrap();
+        // Most recent page, oldest-first within it.
+        let texts: Vec<_> = msgs.iter().map(|m| m["text"].as_str().unwrap()).collect();
+        assert_eq!(texts, ["m4", "m5"]);
+        assert_eq!(msgs[0]["author"]["name"], "Tom");
+        assert_eq!(msgs[0]["author"]["type"], "user");
+        assert!(msgs[0]["ts"].as_str().unwrap().len() == 16); // "YYYY-MM-DD HH:MM"
+
+        // Page back with the cursor (as a string, the way Pantheo relays it).
+        let oldest = msgs[0]["id"].as_i64().unwrap();
+        h.handle_agent_frame(&json!({
+            "type": "history_request", "request_id": "r2", "agent_id": "bot-a",
+            "channel_id": cid, "limit": 2, "before_id": oldest.to_string(),
+        }));
+        let resp = last_frame(&mut rx, "history_response").unwrap();
+        let texts: Vec<_> = resp["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(texts, ["m2", "m3"]);
+        assert_eq!(resp["has_more"], true);
+
+        // Final page exhausts the channel.
+        let oldest = resp["messages"][0]["id"].as_i64().unwrap();
+        h.handle_agent_frame(&json!({
+            "type": "history_request", "request_id": "r3", "agent_id": "bot-a",
+            "channel_id": cid, "limit": 2, "before_id": oldest,
+        }));
+        let resp = last_frame(&mut rx, "history_response").unwrap();
+        let msgs = resp["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["text"], "m1");
+        assert_eq!(resp["has_more"], false);
+    }
+
+    #[test]
+    fn history_request_scopes_to_a_thread() {
+        let h = hub();
+        let mut rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        let root = h.post_user_message(&cid, "root", "tom", None, None, vec![]);
+        let tid = root["id"].as_i64().unwrap();
+        h.post_user_message(&cid, "in thread", "tom", None, Some(tid), vec![]);
+        h.post_user_message(&cid, "top level", "tom", None, None, vec![]);
+
+        h.handle_agent_frame(&json!({
+            "type": "history_request", "request_id": "r1", "agent_id": "bot-a",
+            "channel_id": cid, "thread_id": tid,
+        }));
+        let resp = last_frame(&mut rx, "history_response").unwrap();
+        let msgs = resp["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["text"], "in thread");
+        assert_eq!(msgs[0]["thread_id"].as_i64(), Some(tid));
+    }
+
+    #[test]
+    fn history_request_denied_outside_membership() {
+        let h = hub();
+        let _rx_a = add_agent(&h, "bot-a", "Bot A", false);
+        let mut rx_b = add_agent(&h, "bot-b", "Bot B", false);
+        let cid = setup_channel(&h, &["bot-a"]); // bot-b is live but not a member
+        h.post_user_message(&cid, "secret", "tom", None, None, vec![]);
+
+        h.handle_agent_frame(&json!({
+            "type": "history_request", "request_id": "r1", "agent_id": "bot-b",
+            "channel_id": cid,
+        }));
+        let resp = last_frame(&mut rx_b, "history_response").unwrap();
+        assert_eq!(resp["error"], "agent is not a member of this channel");
+        assert!(resp.get("messages").is_none());
+
+        // Unknown channels answer with an error too (never a silent drop —
+        // the agent side is awaiting this request_id).
+        h.handle_agent_frame(&json!({
+            "type": "history_request", "request_id": "r2", "agent_id": "bot-b",
+            "channel_id": "nope",
+        }));
+        let resp = last_frame(&mut rx_b, "history_response").unwrap();
+        assert_eq!(resp["request_id"], "r2");
+        assert_eq!(resp["error"], "unknown channel");
+    }
+
+    #[test]
+    fn history_request_limit_is_defaulted_and_capped() {
+        let h = hub();
+        let mut rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        for i in 1..=(HISTORY_PAGE_MAX + 5) {
+            h.post_user_message(&cid, &format!("m{i}"), "tom", None, None, vec![]);
+        }
+
+        // No limit named -> the default page size.
+        h.handle_agent_frame(&json!({
+            "type": "history_request", "request_id": "r1", "agent_id": "bot-a",
+            "channel_id": cid,
+        }));
+        let resp = last_frame(&mut rx, "history_response").unwrap();
+        assert_eq!(resp["messages"].as_array().unwrap().len() as i64, HISTORY_PAGE_DEFAULT);
+
+        // An oversized ask is clamped to the cap, never trusted.
+        h.handle_agent_frame(&json!({
+            "type": "history_request", "request_id": "r2", "agent_id": "bot-a",
+            "channel_id": cid, "limit": 9999,
+        }));
+        let resp = last_frame(&mut rx, "history_response").unwrap();
+        assert_eq!(resp["messages"].as_array().unwrap().len() as i64, HISTORY_PAGE_MAX);
+        assert_eq!(resp["has_more"], true);
     }
 
     #[test]
