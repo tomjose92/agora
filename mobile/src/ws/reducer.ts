@@ -11,6 +11,7 @@ import type {
   PinEvent,
   ReadEvent,
   ThreadReadEvent,
+  ThreadRenamedEvent,
   ThreadRow,
   WsEvent,
 } from "../api/types";
@@ -151,6 +152,19 @@ export function applyThreadRead(
   );
 }
 
+/** A thread was renamed: patch the alias on its inbox row's root. */
+export function applyThreadRename(
+  threads: ThreadRow[] | undefined,
+  ev: ThreadRenamedEvent,
+): ThreadRow[] | undefined {
+  if (!threads) return undefined;
+  return threads.map((t) =>
+    t.root.id === ev.thread_id
+      ? { ...t, root: { ...t.root, alias: ev.alias } }
+      : t,
+  );
+}
+
 /* ------------------------------------------------------------- driver */
 
 export interface WsContext {
@@ -217,6 +231,12 @@ export function applyWsEvent(
     case "thread_read": {
       qc.setQueryData<ThreadRow[]>(keys.threads, (threads) =>
         applyThreadRead(threads, ev),
+      );
+      break;
+    }
+    case "thread_renamed": {
+      qc.setQueryData<ThreadRow[]>(keys.threads, (threads) =>
+        applyThreadRename(threads, ev),
       );
       break;
     }

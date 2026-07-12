@@ -420,6 +420,19 @@ export function useHideThread() {
   });
 }
 
+/** Rename a thread with a display alias (empty string clears it back to the
+    root message's first line). The threads cache is patched by the WS
+    "thread_renamed" echo; invalidate as a fallback. */
+export function useRenameThread() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { threadId: number; alias: string }) =>
+      api.patch(`/api/threads/${v.threadId}`, { alias: v.alias }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.threads }),
+  });
+}
+
 export function useMarkThreadRead(threadId: number) {
   const api = useApi();
   return useMutation({

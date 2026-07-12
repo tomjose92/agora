@@ -189,6 +189,11 @@ fn migrate(conn: &Connection) {
     if !has_column("messages", "meta") {
         conn.execute("ALTER TABLE messages ADD COLUMN meta TEXT", []).unwrap();
     }
+    // A user-chosen display name for a thread; only meaningful on root rows
+    // (thread_id IS NULL). NULL = fall back to the root message's first line.
+    if !has_column("messages", "thread_alias") {
+        conn.execute("ALTER TABLE messages ADD COLUMN thread_alias TEXT", []).unwrap();
+    }
     // Databases that predate the FTS index get it created empty by SCHEMA —
     // the triggers only cover writes from then on, so the existing history
     // needs a one-time backfill. Row counts can't detect this (a bare scan of
@@ -575,6 +580,31 @@ impl Store {
         self.channel(channel_id)
     }
 
+    /// Give a thread a display alias (Some = set, None = clear back to the
+    /// root message's first line). Returns the updated root message, or None
+    /// if `thread_id` isn't a real thread root (a top-level message).
+    pub fn rename_thread(&self, thread_id: i64, alias: Option<&str>) -> Option<Value> {
+        {
+            let conn = self.conn.lock().unwrap();
+            let is_root = conn
+                .query_row(
+                    "SELECT 1 FROM messages WHERE id = ?1 AND thread_id IS NULL",
+                    params![thread_id],
+                    |_| Ok(()),
+                )
+                .is_ok();
+            if !is_root {
+                return None;
+            }
+            conn.execute(
+                "UPDATE messages SET thread_alias = ?1 WHERE id = ?2",
+                params![alias, thread_id],
+            )
+            .unwrap();
+        }
+        self.message(thread_id)
+    }
+
     /// Persist a manual order: each id's position becomes its array index.
     /// Ids not listed keep their old position (they sort after by name).
     pub fn reorder_groups(&self, ids: &[String]) {
@@ -932,9 +962,13 @@ impl Store {
         let msg = {
             let conn = self.conn.lock().unwrap();
             conn.query_row(
-                &format!("SELECT {MSG_COLS} FROM messages WHERE id = ?1"),
+                &format!("SELECT {MSG_COLS}, thread_alias FROM messages WHERE id = ?1"),
                 params![message_id],
-                |r| message_row(r, 0),
+                |r| {
+                    let mut m = message_row(r, 0)?;
+                    m["alias"] = json!(r.get::<_, Option<String>>(9)?);
+                    Ok(m)
+                },
             )
             .ok()?
         };
@@ -1436,7 +1470,8 @@ impl Store {
                        COALESCE(tr.last_read_id, 0), \
                        SUM(CASE WHEN m.id > COALESCE(tr.last_read_id, 0) \
                              AND NOT (m.author_type = 'user' AND m.author_id = ?1) \
-                           THEN 1 ELSE 0 END) \
+                           THEN 1 ELSE 0 END), \
+                       r.thread_alias \
                      FROM messages r \
                      JOIN channels c ON c.id = r.channel_id \
                      LEFT JOIN groups g ON g.id = c.group_id \
@@ -1454,6 +1489,7 @@ impl Store {
             stmt.query_map(params![username, limit as i64], |r| {
                 let mut root = message_row(r, 0)?;
                 root["reply_count"] = json!(r.get::<_, i64>(12)?);
+                root["alias"] = json!(r.get::<_, Option<String>>(17)?);
                 Ok(json!({
                     "root": root,
                     "channel_id": r.get::<_, String>(1)?,
@@ -1682,6 +1718,34 @@ mod tests {
         let thread = s.messages(cid, Some(root_id), None, 50);
         assert_eq!(thread.len(), 2);
         assert_eq!(s.thread_size(root_id), 2);
+    }
+
+    #[test]
+    fn rename_thread_sets_clears_and_rejects_non_roots() {
+        let s = store();
+        let g = s.create_group("G", "", None);
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let root = s.add_message(cid, "root", "user", "tom", None, None, &[]);
+        let root_id = root["id"].as_i64().unwrap();
+        let reply = s.add_message(cid, "reply", "user", "tom", None, Some(root_id), &[]);
+        let reply_id = reply["id"].as_i64().unwrap();
+
+        // Set an alias — it comes back on the message and in the inbox row.
+        let updated = s.rename_thread(root_id, Some("Launch plan")).unwrap();
+        assert_eq!(updated["alias"], "Launch plan");
+        let rows = s.my_threads("tom", 50);
+        assert_eq!(rows[0]["root"]["alias"], "Launch plan");
+
+        // Clearing it drops back to null.
+        let cleared = s.rename_thread(root_id, None).unwrap();
+        assert!(cleared["alias"].is_null());
+        assert!(s.my_threads("tom", 50)[0]["root"]["alias"].is_null());
+
+        // A reply id isn't a thread root — refuse it.
+        assert!(s.rename_thread(reply_id, Some("nope")).is_none());
+        assert!(s.rename_thread(999_999, Some("nope")).is_none());
     }
 
     #[test]

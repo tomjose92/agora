@@ -75,6 +75,8 @@ export interface Message {
   meta?: MessageMeta | null;
   /* Top-level pages only. */
   reply_count?: number;
+  /* Thread roots only: a user-chosen display name, else null. */
+  alias?: string | null;
 }
 
 /** Message hit from GET /api/search. Search rows carry channel/group names
@@ -213,6 +215,13 @@ export interface ThreadReadEvent {
   last_read_id: number;
 }
 
+export interface ThreadRenamedEvent {
+  type: "thread_renamed";
+  thread_id: number;
+  channel_id: string;
+  alias: string | null;
+}
+
 export interface PinEvent {
   type: "pin";
   channel_id: string;
@@ -233,6 +242,7 @@ export type WsEvent =
   | MessageUpdateEvent
   | ReadEvent
   | ThreadReadEvent
+  | ThreadRenamedEvent
   | PinEvent;
 
 export interface ChannelActivity {

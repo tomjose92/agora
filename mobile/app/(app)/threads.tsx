@@ -8,15 +8,22 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Stack, router } from "expo-router";
 import { MessagesSquare } from "lucide-react-native";
-import { useGroups, useHideThread, useThreads } from "../../src/api/queries";
+import {
+  useGroups,
+  useHideThread,
+  useRenameThread,
+  useThreads,
+} from "../../src/api/queries";
 import type { ThreadRow } from "../../src/api/types";
 import { Icon } from "../../src/components/Icon";
 import { toastErr } from "../../src/components/Toast";
@@ -24,29 +31,40 @@ import { fmtTs } from "../../src/lib/format";
 import { colors } from "../../src/lib/theme";
 
 function snippet(t: ThreadRow): string {
+  const alias = (t.root.alias ?? "").trim();
+  if (alias) return alias;
   const text = t.root.text.replace(/\s+/g, " ").trim();
   return text || "(attachment)";
 }
 
-function Row({ thread, admin }: { thread: ThreadRow; admin: boolean }) {
+function Row({
+  thread,
+  admin,
+  onRename,
+}: {
+  thread: ThreadRow;
+  admin: boolean;
+  onRename: (t: ThreadRow) => void;
+}) {
   const hideThread = useHideThread();
   const onLongPress = () => {
-    if (!admin) return;
-    Alert.alert(
-      "Remove this thread?",
-      "It disappears from Threads and the sidebar; the messages stay in the channel.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: () =>
-            hideThread.mutate(thread.root.id, {
-              onError: (e) => toastErr("Remove failed", e),
-            }),
-        },
-      ],
-    );
+    const remove = () =>
+      hideThread.mutate(thread.root.id, {
+        onError: (e) => toastErr("Remove failed", e),
+      });
+    Alert.alert("Thread", snippet(thread), [
+      { text: "Rename…", onPress: () => onRename(thread) },
+      ...(admin
+        ? [
+            {
+              text: "Remove",
+              style: "destructive" as const,
+              onPress: remove,
+            },
+          ]
+        : []),
+      { text: "Cancel", style: "cancel" },
+    ]);
   };
   return (
     <Pressable
@@ -96,22 +114,83 @@ function Row({ thread, admin }: { thread: ThreadRow; admin: boolean }) {
   );
 }
 
+/* Rename dialog: prefilled with the current alias; empty Save clears it back
+   to the first message. Anyone who can see the thread may rename it. */
+function RenameModal({
+  thread,
+  onClose,
+}: {
+  thread: ThreadRow | null;
+  onClose: () => void;
+}) {
+  const rename = useRenameThread();
+  const [text, setText] = React.useState("");
+  React.useEffect(() => {
+    setText(thread?.root.alias ?? "");
+  }, [thread]);
+  if (!thread) return null;
+  const save = () => {
+    rename.mutate(
+      { threadId: thread.root.id, alias: text.trim() },
+      { onError: (e) => toastErr("Rename failed", e) },
+    );
+    onClose();
+  };
+  return (
+    <Modal transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        <Pressable style={styles.dialog} onPress={() => {}}>
+          <Text style={styles.dialogTitle}>Rename thread</Text>
+          <Text style={styles.dialogHint}>
+            Leave blank to show the first message.
+          </Text>
+          <TextInput
+            style={styles.dialogInput}
+            value={text}
+            onChangeText={setText}
+            placeholder="Thread name"
+            placeholderTextColor={colors.faint}
+            autoFocus
+            maxLength={140}
+            returnKeyType="done"
+            onSubmitEditing={save}
+          />
+          <View style={styles.dialogBtns}>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <Text style={styles.dialogCancel}>Cancel</Text>
+            </Pressable>
+            <Pressable onPress={save} hitSlop={8}>
+              <Text style={styles.dialogOk}>Save</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 export default function ThreadsScreen() {
   const threads = useThreads();
   const groups = useGroups();
+  const [renaming, setRenaming] = React.useState<ThreadRow | null>(null);
   const adminOf = new Set(
     (groups.data ?? []).filter((g) => g.role === "admin").map((g) => g.id),
   );
   return (
     <>
       <Stack.Screen options={{ title: "Threads", headerShown: true }} />
+      <RenameModal thread={renaming} onClose={() => setRenaming(null)} />
       <FlatList
         style={styles.root}
         contentContainerStyle={styles.content}
         data={threads.data ?? []}
         keyExtractor={(t) => String(t.root.id)}
         renderItem={({ item }) => (
-          <Row thread={item} admin={adminOf.has(item.group_id)} />
+          <Row
+            thread={item}
+            admin={adminOf.has(item.group_id)}
+            onRename={setRenaming}
+          />
         )}
         refreshControl={
           <RefreshControl
@@ -180,4 +259,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     lineHeight: 18,
   },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    padding: 28,
+  },
+  dialog: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    padding: 18,
+    gap: 10,
+  },
+  dialogTitle: { color: colors.text, fontSize: 16, fontWeight: "800" },
+  dialogHint: { color: colors.faint, fontSize: 12.5 },
+  dialogInput: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.text,
+    fontSize: 15,
+  },
+  dialogBtns: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 22,
+    marginTop: 4,
+  },
+  dialogCancel: { color: colors.dim, fontSize: 15, fontWeight: "600" },
+  dialogOk: { color: colors.a1, fontSize: 15, fontWeight: "800" },
 });
