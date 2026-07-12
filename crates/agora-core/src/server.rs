@@ -216,6 +216,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/messages/{message_id}/speech", get(message_speech))
         .route("/api/search", get(search))
         .route("/api/search/ask", post(search_ask))
+        .route("/api/unreads", get(list_unreads))
         .route("/api/threads", get(list_threads))
         .route("/api/threads/{thread_id}", patch(update_thread))
         .route("/api/threads/{thread_id}/read", put(mark_thread_read))
@@ -1112,6 +1113,24 @@ async fn select_message_option(
         Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
         Err(msg) => Err(err(StatusCode::CONFLICT, msg)),
     }
+}
+
+/// GET /api/unreads — every unread message across channels and threads,
+/// newest first, for the unreads-only views. Rows carry channel/group
+/// names (and the thread root's text/alias for replies) so clients can
+/// group them without extra fetches.
+async fn list_unreads(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    let limit: usize = q
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200)
+        .clamp(1, 500);
+    Ok(Json(json!({"unreads": state.hub.store.unread_messages(&user, limit)})))
 }
 
 /// Threads inbox: every thread the user participates in, newest first.

@@ -29,6 +29,7 @@ import type {
   SearchResponse,
   StarredMessage,
   ThreadRow,
+  UnreadMessage,
 } from "./types";
 
 const PAGE_SIZE = 50;
@@ -396,6 +397,18 @@ export function useThreads() {
     queryKey: keys.threads,
     queryFn: async () =>
       (await api.get<{ threads: ThreadRow[] }>("/api/threads?limit=100")).threads,
+  });
+}
+
+/** Every unread message across channels and threads, newest first — the
+    Unreads screen. WS traffic invalidates it (reducer), so it stays live
+    while mounted. */
+export function useUnreads() {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.unreads,
+    queryFn: async () =>
+      (await api.get<{ unreads: UnreadMessage[] }>("/api/unreads?limit=200")).unreads,
   });
 }
 

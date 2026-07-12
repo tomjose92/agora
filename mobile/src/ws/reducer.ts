@@ -212,6 +212,8 @@ export function applyWsEvent(
         useLive.getState().agentDone(message.channel_id, message.author_id);
         ctx.onAgentMessage?.(message);
       }
+      // New traffic changes what's unread; refetch if the screen is mounted.
+      void qc.invalidateQueries({ queryKey: keys.unreads });
       break;
     }
     case "message_update": {
@@ -226,12 +228,14 @@ export function applyWsEvent(
       qc.setQueryData<Group[]>(keys.groups, (groups) =>
         applyReadToGroups(groups, ev),
       );
+      void qc.invalidateQueries({ queryKey: keys.unreads });
       break;
     }
     case "thread_read": {
       qc.setQueryData<ThreadRow[]>(keys.threads, (threads) =>
         applyThreadRead(threads, ev),
       );
+      void qc.invalidateQueries({ queryKey: keys.unreads });
       break;
     }
     case "thread_renamed": {

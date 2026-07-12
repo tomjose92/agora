@@ -430,6 +430,19 @@ a.btn { text-decoration: none; }
 }
 .ago-inbox-foot { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--faint); }
 
+/* ---------- all-unreads view ---------- */
+.ago-inbox-top .chan .tico { opacity: .6; }
+.ago-unreads-msg {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12.5px;
+}
+.ago-unreads-msg .author { font-weight: 600; flex-shrink: 0; color: var(--text); }
+.ago-unreads-msg .snippet {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim);
+}
+.ago-unreads-msg .ts {
+  color: var(--faint); font-size: 11px; flex-shrink: 0; font-variant-numeric: tabular-nums;
+}
+
 /* ---------- group overview page ---------- */
 .ago-gp-desc {
   padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px;
