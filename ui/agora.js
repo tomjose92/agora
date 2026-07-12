@@ -521,6 +521,8 @@ function agoThreadRowHTML(t) {
   const when = fmtTs(t.last_reply_ts || root.ts);
   const g = _agoGroups.find(x => x.id === t.group_id);
   const armed = agoArmed("thr:" + root.id);
+  const rename = `<button class="ago-x" title="Rename this thread"
+       onclick="event.stopPropagation(); agoRenameThread(${root.id})">${icon("pencil")}</button>`;
   const del = (g && g.role === "admin") || isOwner()
     ? `<button class="ago-x ${armed ? "armed" : ""}"
          title="${armed ? "Click again to remove this thread" : "Remove from Threads (messages stay in the channel)"}"
@@ -532,6 +534,7 @@ function agoThreadRowHTML(t) {
       <div class="ago-inbox-top">
         <span class="chan"><span class="hash">#</span>${esc(t.channel_name)}<span class="grp"> · ${esc(t.group_name)}</span></span>
         <span class="ts">${esc(when)}</span>
+        ${rename}
         ${del}
       </div>
       <div class="ago-inbox-main">
@@ -600,6 +603,8 @@ function agoDrawSide() {
         .filter(t => !_agoUnreadsOnly || (t.unread || 0) > 0)
         .map(t => {
           const tArmed = agoArmed("thr:" + t.root.id);
+          const tRename = `<button class="ago-x" title="Rename this thread"
+                 onclick="event.stopPropagation(); agoRenameThread(${t.root.id})">${icon("pencil")}</button>`;
           const tDel = (g.role === "admin" || isOwner())
             ? `<button class="ago-x ${tArmed ? "armed" : ""}"
                  title="${tArmed ? "Click again to remove this thread" : "Remove thread from the sidebar (messages stay in the channel)"}"
@@ -612,6 +617,7 @@ function agoDrawSide() {
           <span class="tico">${icon("corner-down-right")}</span>
           <span class="nm">${esc(agoPinSnippet(t.root || {}))}</span>
           ${agoBadgeHTML(t.unread || 0, 0)}
+          ${tRename}
           ${tDel}
         </div>`;
         }).join("");
@@ -907,6 +913,22 @@ async function agoHideThread(rootId) {
   } catch (e) { agoErr("Couldn't remove thread", e); }
 }
 
+/* Rename a thread with a display alias (blank clears it back to the first
+   message). Anyone who can see the thread may rename it. */
+async function agoRenameThread(rootId) {
+  const t = _agoThreads.find(x => x.root && x.root.id === rootId);
+  const cur = t && t.root ? (t.root.alias || "") : "";
+  const next = window.prompt(
+    "Rename this thread (leave blank to show the first message):", cur);
+  if (next === null) return;
+  try {
+    await apiPost(`/api/threads/${rootId}`, { alias: next.trim() }, "PATCH");
+    if (t && t.root) t.root.alias = next.trim() || null;
+    agoDrawSide();
+    if (_agoInboxOpen) agoDrawMain();
+  } catch (e) { agoErr("Couldn't rename thread", e); }
+}
+
 /* ---------- group overview page ---------- */
 function agoDrawGroupPage(box) {
   const g = agoSelGroup();
@@ -1084,6 +1106,8 @@ async function agoSaveChanEdit() {
 function agoIsPinned(id) { return _agoPins.some(p => p.id === id); }
 
 function agoPinSnippet(m) {
+  const alias = (m.alias || "").trim();
+  if (alias) return alias;
   return (m.text || "").split("\n")[0].slice(0, 140);
 }
 
@@ -2117,6 +2141,15 @@ function agoHandleEvent(data) {
   }
   if (data.type === "read") { agoApplyRead(data.channel_id, data.last_read_id); return; }
   if (data.type === "thread_read") { agoApplyThreadRead(data.thread_id, data.last_read_id); return; }
+  if (data.type === "thread_renamed") {
+    const t = _agoThreads.find(x => x.root && x.root.id === data.thread_id);
+    if (t && t.root) {
+      t.root.alias = data.alias || null;
+      agoDrawSide();
+      if (_agoInboxOpen) agoDrawMain();
+    }
+    return;
+  }
   if (!channel || data.channel_id !== channel.id) return;
   if (data.type === "pin") { agoApplyPin(data); return; }
   if (data.type === "typing") {

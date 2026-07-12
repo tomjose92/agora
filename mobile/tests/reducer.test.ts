@@ -17,6 +17,7 @@ import {
   applyReadToGroups,
   applyReplyToThreads,
   applyThreadRead,
+  applyThreadRename,
   applyWsEvent,
   bumpReplyCount,
   replaceMessage,
@@ -199,6 +200,33 @@ describe("applyThreadRead", () => {
       last_read_id: 20,
     })!;
     expect(out[0]).toMatchObject({ unread: 2, last_read_id: 30 });
+  });
+});
+
+describe("applyThreadRename", () => {
+  it("sets the alias on the matching row's root", () => {
+    const out = applyThreadRename([threadRow()], {
+      type: "thread_renamed",
+      thread_id: 5,
+      channel_id: "general-1a2b",
+      alias: "Launch plan",
+    })!;
+    expect(out[0].root.alias).toBe("Launch plan");
+  });
+
+  it("clears the alias when null and leaves other rows untouched", () => {
+    const rows = [
+      threadRow({ root: msg({ id: 5, alias: "old" }) }),
+      threadRow({ root: msg({ id: 9, alias: "keep" }) }),
+    ];
+    const out = applyThreadRename(rows, {
+      type: "thread_renamed",
+      thread_id: 5,
+      channel_id: "general-1a2b",
+      alias: null,
+    })!;
+    expect(out[0].root.alias).toBeNull();
+    expect(out[1].root.alias).toBe("keep");
   });
 });
 

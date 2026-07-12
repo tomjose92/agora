@@ -217,6 +217,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/search", get(search))
         .route("/api/search/ask", post(search_ask))
         .route("/api/threads", get(list_threads))
+        .route("/api/threads/{thread_id}", patch(update_thread))
         .route("/api/threads/{thread_id}/read", put(mark_thread_read))
         .route(
             "/api/threads/{thread_id}/hide",
@@ -1126,6 +1127,49 @@ async fn list_threads(
         .unwrap_or(100)
         .clamp(1, 500);
     Ok(Json(json!({"threads": state.hub.store.my_threads(&user, limit)})))
+}
+
+/// Give a thread a display alias (or clear it with an empty string) so the
+/// inbox/sidebar show a chosen name instead of the root message's first line.
+/// Any member who can see the channel may rename it; the change is broadcast
+/// so other viewers update live.
+async fn update_thread(
+    State(state): State<AppState>,
+    Path(thread_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let root = state
+        .hub
+        .store
+        .message(thread_id)
+        .filter(|m| m["thread_id"].is_null())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown thread"))?;
+    // Empty/whitespace clears the alias back to the first message; cap the
+    // length at the 140 chars the UIs already truncate snippets to.
+    let alias: Option<String> = payload
+        .get("alias")
+        .and_then(Value::as_str)
+        .map(|a| a.trim().chars().take(140).collect::<String>())
+        .filter(|a| !a.is_empty());
+    let updated = state
+        .hub
+        .store
+        .rename_thread(thread_id, alias.as_deref())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown thread"))?;
+    let channel_id = root["channel_id"].as_str().unwrap_or_default().to_string();
+    state.hub.post_transient(
+        &channel_id,
+        json!({
+            "type": "thread_renamed",
+            "thread_id": thread_id,
+            "channel_id": channel_id,
+            "alias": updated["alias"].clone(),
+        }),
+    );
+    Ok(Json(updated))
 }
 
 async fn mark_thread_read(
