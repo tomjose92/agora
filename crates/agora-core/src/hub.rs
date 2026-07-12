@@ -994,7 +994,10 @@ impl Hub {
             "request_id": frame["request_id"],
         });
         let query = frame["query"].as_str().unwrap_or_default().trim().to_string();
-        if query.is_empty() {
+        let has_files = frame["has_files"].as_bool().unwrap_or(false);
+        let file_type = frame["file_type"].as_str().filter(|s| !s.is_empty());
+        // A query is required unless an attachment filter is doing the work.
+        if query.is_empty() && !has_files && file_type.is_none() {
             response["error"] = json!("query required");
             let _ = handle.tx.send(response);
             return;
@@ -1020,7 +1023,7 @@ impl Hub {
         let newest_first = frame["sort"].as_str() == Some("new");
         let match_any = frame["match"].as_str() == Some("any");
         // One extra row decides has_more without a second query.
-        let mut rows = self.store.search_messages(
+        let mut rows = self.store.search_messages_ext(
             &query,
             match_any,
             (!channel_id.is_empty()).then_some(channel_id),
@@ -1028,6 +1031,8 @@ impl Hub {
             None,
             Some(agent_id),
             newest_first,
+            has_files,
+            file_type,
             limit + 1,
             offset,
         );
@@ -1050,6 +1055,7 @@ impl Hub {
                     },
                     "text": m["text"],
                     "snippet": m["snippet"],
+                    "attachments": m["attachments"],
                     "ts": format_ts(m["ts"].as_f64().unwrap_or(0.0)),
                 })
             })

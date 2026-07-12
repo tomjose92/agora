@@ -18,8 +18,9 @@ import {
   View,
 } from "react-native";
 import { Stack, router } from "expo-router";
-import { ListFilter, Search as SearchIcon, Sparkles, X } from "lucide-react-native";
+import { ListFilter, Paperclip, Search as SearchIcon, Sparkles, X } from "lucide-react-native";
 import {
+  type FileFilter,
   useAskAi,
   useGroups,
   useMe,
@@ -32,7 +33,10 @@ import type {
   SearchGroupHit,
   SearchMessageHit,
 } from "../../src/api/types";
+import { Attachments } from "../../src/components/Attachments";
 import { Icon } from "../../src/components/Icon";
+import { useSession } from "../../src/state/session";
+import type { Session } from "../../src/api/client";
 import { fmtTs } from "../../src/lib/format";
 import { colors } from "../../src/lib/theme";
 
@@ -92,6 +96,48 @@ function ScopeSheet({
                   </Pressable>
                 ))}
               </React.Fragment>
+            ))}
+          </ScrollView>
+        </View>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** Attachment filter choices shown in the file-filter sheet, with their chip
+    labels. `""` (Any content) is the cleared state, handled by the chip. */
+const FILE_OPTS: { value: FileFilter; label: string }[] = [
+  { value: "any", label: "Has files" },
+  { value: "image", label: "Images" },
+  { value: "pdf", label: "PDFs" },
+  { value: "doc", label: "Documents" },
+  { value: "video", label: "Video" },
+  { value: "audio", label: "Audio" },
+];
+const fileLabel = (f: FileFilter): string =>
+  FILE_OPTS.find((o) => o.value === f)?.label ?? "Files";
+
+/** Attachment-filter picker, same bottom-sheet shape as ScopeSheet. */
+function FileSheet({
+  onPick,
+  onClose,
+}: {
+  onPick: (f: FileFilter) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        <View style={styles.sheet}>
+          <Text style={styles.sheetTitle}>Filter by attachment</Text>
+          <ScrollView>
+            <Pressable style={styles.sheetItem} onPress={() => onPick("")}>
+              <Text style={styles.sheetItemText}>Any content</Text>
+            </Pressable>
+            {FILE_OPTS.map((o) => (
+              <Pressable key={o.value} style={styles.sheetItem} onPress={() => onPick(o.value)}>
+                <Text style={styles.sheetItemText}>{o.label}</Text>
+              </Pressable>
             ))}
           </ScrollView>
         </View>
@@ -167,7 +213,16 @@ function Snippet({ text }: { text: string }) {
   );
 }
 
-function MessageRow({ hit, badge }: { hit: SearchMessageHit; badge?: number }) {
+function MessageRow({
+  hit,
+  session,
+  badge,
+}: {
+  hit: SearchMessageHit;
+  session: Session;
+  badge?: number;
+}) {
+  const atts = hit.attachments ?? [];
   return (
     <Pressable style={styles.card} onPress={() => openHit(hit)}>
       <View style={styles.cardTop}>
@@ -182,7 +237,9 @@ function MessageRow({ hit, badge }: { hit: SearchMessageHit; badge?: number }) {
         <Text style={styles.hash}>#</Text>
         {hit.channel_name}
       </Text>
-      <Snippet text={hit.snippet} />
+      {/* Filename-only hits come back with an empty snippet; skip the blank line. */}
+      {hit.snippet ? <Snippet text={hit.snippet} /> : null}
+      {atts.length > 0 ? <Attachments session={session} attachments={atts} /> : null}
     </Pressable>
   );
 }
@@ -226,7 +283,17 @@ export default function SearchScreen() {
     setScopeOpen(false);
   };
 
-  const search = useSearch(query, scope ?? undefined);
+  /* Attachment filter. "" = any content; an active filter also lets the
+     search run with an empty query (browse every matching attachment). */
+  const [file, setFile] = useState<FileFilter>("");
+  const [fileOpen, setFileOpen] = useState(false);
+  const pickFile = (f: FileFilter) => {
+    setFile(f);
+    setFileOpen(false);
+  };
+
+  const session = useSession((s) => s.session)!;
+  const search = useSearch(query, scope ?? undefined, file);
   const me = useMe();
   const ask = useAskAi();
   const searchMore = useSearchMore();
@@ -239,7 +306,7 @@ export default function SearchScreen() {
   useEffect(() => {
     setExtra([]);
     setExtraHasMore(null);
-  }, [query, scope]);
+  }, [query, scope, file]);
 
   /* Ask-AI card. The question is snapshotted at tap time so further typing
      doesn't change what the card claims to answer. */
@@ -275,7 +342,8 @@ export default function SearchScreen() {
   const showAsk = !!me.data?.search_ai && input.trim().length > 0;
 
   const rows = useMemo<Row[]>(() => {
-    if (!query) return [];
+    // A file filter alone (empty query) is a valid "browse files" search.
+    if (!query && !file) return [];
     const out: Row[] = [];
     if (showAsk) out.push({ kind: "ask" });
     if (search.isError) {
@@ -297,13 +365,16 @@ export default function SearchScreen() {
       if (hasMore) out.push({ kind: "more" });
     }
     if (groupHits.length + channelHits.length + messages.length === 0) {
+      const where = scope ? ` in ${scope.label}` : "";
       out.push({
         kind: "notice",
-        text: `No results for “${query}”${scope ? ` in ${scope.label}` : ""}`,
+        text: query
+          ? `No results for “${query}”${where}`
+          : `No messages with ${fileLabel(file).toLowerCase()}${where}`,
       });
     }
     return out;
-  }, [query, scope, showAsk, search.isError, search.error, data, groupHits, channelHits, messages, hasMore]);
+  }, [query, scope, file, showAsk, search.isError, search.error, data, groupHits, channelHits, messages, hasMore]);
 
   const onMore = () => {
     if (searchMore.isPending) return;
@@ -311,7 +382,7 @@ export default function SearchScreen() {
     if (!base) return;
     const offset = base.offset + base.items.length + extra.length;
     searchMore.mutate(
-      { q: query, offset, scope: scope ?? undefined },
+      { q: query, offset, scope: scope ?? undefined, file },
       {
         onSuccess: (page) => {
           if (!page) return;
@@ -382,7 +453,7 @@ export default function SearchScreen() {
           </Pressable>
         );
       case "message":
-        return <MessageRow hit={item.m} />;
+        return <MessageRow hit={item.m} session={session} />;
       case "more":
         return (
           <Pressable style={styles.moreRow} onPress={onMore} disabled={searchMore.isPending}>
@@ -443,6 +514,23 @@ export default function SearchScreen() {
               </Pressable>
             ) : null}
           </Pressable>
+          <Pressable
+            style={[styles.filterChip, file ? styles.filterChipActive : null]}
+            onPress={() => setFileOpen(true)}
+          >
+            <Icon icon={Paperclip} size={14} color={file ? colors.a1 : colors.dim} />
+            <Text
+              style={[styles.filterChipText, file ? styles.filterChipTextActive : null]}
+              numberOfLines={1}
+            >
+              {file ? fileLabel(file) : "Any content"}
+            </Text>
+            {file ? (
+              <Pressable onPress={() => setFile("")} hitSlop={8}>
+                <Icon icon={X} size={13} color={colors.a1} />
+              </Pressable>
+            ) : null}
+          </Pressable>
         </View>
         {scopeOpen ? (
           <ScopeSheet
@@ -450,6 +538,9 @@ export default function SearchScreen() {
             onPick={pickScope}
             onClose={() => setScopeOpen(false)}
           />
+        ) : null}
+        {fileOpen ? (
+          <FileSheet onPick={pickFile} onClose={() => setFileOpen(false)} />
         ) : null}
         {askQuestion != null ? (
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -484,7 +575,7 @@ export default function SearchScreen() {
               <>
                 <Text style={styles.section}>Sources</Text>
                 {askSources.map((s, i) => (
-                  <MessageRow key={`${s.id}:${i}`} hit={s} badge={i + 1} />
+                  <MessageRow key={`${s.id}:${i}`} hit={s} session={session} badge={i + 1} />
                 ))}
               </>
             ) : null}
@@ -499,9 +590,10 @@ export default function SearchScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             ListEmptyComponent={
-              query ? null : (
+              query || file ? null : (
                 <Text style={styles.notice}>
-                  Search message history, channel names and topics, and groups.
+                  Search message history, channel names and topics, and groups —
+                  or filter by attachment.
                 </Text>
               )
             }
@@ -537,6 +629,8 @@ const styles = StyleSheet.create({
   },
   filterRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
     marginHorizontal: 14,
     marginTop: 8,
   },

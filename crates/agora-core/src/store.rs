@@ -305,6 +305,22 @@ pub fn fts_query_any(raw: &str) -> Option<String> {
     }
 }
 
+/// SQL predicate (on a `files` alias `ff`) selecting one attachment *kind*, or
+/// `None` for an unknown value (which means "any attachment"). Keeps the mime
+/// buckets the search UIs expose in one place.
+fn file_kind_predicate(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "image" => "ff.mime LIKE 'image/%'",
+        "video" => "ff.mime LIKE 'video/%'",
+        "audio" => "ff.mime LIKE 'audio/%'",
+        "pdf" => "ff.mime = 'application/pdf'",
+        // Everything a person would call a "document".
+        "doc" => "(ff.mime = 'application/pdf' OR ff.mime LIKE 'application/vnd.%' \
+                   OR ff.mime LIKE 'application/msword%' OR ff.mime LIKE 'text/%')",
+        _ => return None,
+    })
+}
+
 /// `%…%` LIKE pattern with the wildcards in the user's input neutralized.
 fn like_pattern(raw: &str) -> String {
     let escaped: String = raw
@@ -1065,62 +1081,144 @@ impl Store {
         limit: usize,
         offset: usize,
     ) -> Vec<Value> {
-        let fts = if match_any { fts_query_any(query) } else { fts_query(query) };
-        let Some(fts) = fts else {
-            return Vec::new();
+        self.search_messages_ext(
+            query, match_any, channel_id, group_id, author, agent_id, newest_first, false, None,
+            limit, offset,
+        )
+    }
+
+    /// [`search_messages`] plus the attachment controls the search UIs expose:
+    /// `has_files` keeps only messages carrying an attachment, and `file_type`
+    /// (`image`/`video`/`audio`/`pdf`/`doc`) narrows to one kind. Attachment
+    /// *filenames* are always part of the match, so "budget.xlsx" surfaces the
+    /// message that carried it even when the text says nothing. With an empty
+    /// query but `has_files`/`file_type` set, this browses every message with a
+    /// (matching) attachment, newest first. Every hit carries its
+    /// `attachments` array so callers can render file chips.
+    #[allow(clippy::too_many_arguments)]
+    pub fn search_messages_ext(
+        &self,
+        query: &str,
+        match_any: bool,
+        channel_id: Option<&str>,
+        group_id: Option<&str>,
+        author: Option<&str>,
+        agent_id: Option<&str>,
+        newest_first: bool,
+        has_files: bool,
+        file_type: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Vec<Value> {
+        let want_attach = has_files || file_type.is_some();
+        let fts = if query.trim().is_empty() {
+            None
+        } else if match_any {
+            fts_query_any(query)
+        } else {
+            fts_query(query)
         };
-        let conn = self.conn.lock().unwrap();
-        let mut sql = String::from(
-            "SELECT m.id, m.channel_id, m.thread_id, m.author_type, m.author_id, \
-               m.author_name, m.text, m.ts, m.meta, \
-               c.name, c.group_id, COALESCE(g.name, ''), \
-               snippet(messages_fts, 0, char(1), char(2), '…', 16) \
-             FROM messages_fts \
-             JOIN messages m ON m.id = messages_fts.rowid \
-             JOIN channels c ON c.id = m.channel_id \
-             LEFT JOIN groups g ON g.id = c.group_id \
-             WHERE messages_fts MATCH ?1",
-        );
-        let mut p: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(fts)];
-        if let Some(cid) = channel_id {
-            sql.push_str(&format!(" AND m.channel_id = ?{}", p.len() + 1));
-            p.push(Box::new(cid.to_string()));
+        // Nothing to match on: no usable text query and no attachment filter.
+        if fts.is_none() && !want_attach {
+            return Vec::new();
         }
-        if let Some(gid) = group_id {
-            sql.push_str(&format!(" AND c.group_id = ?{}", p.len() + 1));
-            p.push(Box::new(gid.to_string()));
-        }
-        if let Some(a) = author {
-            let i = p.len() + 1;
-            sql.push_str(&format!(" AND (m.author_id = ?{i} OR m.author_name = ?{i})"));
-            p.push(Box::new(a.to_string()));
-        }
-        if let Some(agent) = agent_id {
-            let i = p.len() + 1;
-            sql.push_str(&format!(
-                " AND EXISTS (SELECT 1 FROM memberships ms \
-                   WHERE ms.member_type = 'agent' AND ms.member_id = ?{i} \
-                   AND ms.group_id = c.group_id \
-                   AND (ms.channel_id = '' OR ms.channel_id = m.channel_id))"
-            ));
-            p.push(Box::new(agent.to_string()));
-        }
-        sql.push_str(if newest_first { " ORDER BY m.id DESC" } else { " ORDER BY rank" });
-        sql.push_str(&format!(" LIMIT ?{} OFFSET ?{}", p.len() + 1, p.len() + 2));
-        p.push(Box::new(limit as i64));
-        p.push(Box::new(offset as i64));
-        let mut stmt = conn.prepare(&sql).unwrap();
-        stmt.query_map(params_from_iter(p.iter().map(|b| b.as_ref())), |r| {
-            let mut msg = message_row(r, 0)?;
-            msg["channel_name"] = json!(r.get::<_, String>(9)?);
-            msg["group_id"] = json!(r.get::<_, String>(10)?);
-            msg["group_name"] = json!(r.get::<_, String>(11)?);
-            msg["snippet"] = json!(r.get::<_, String>(12)?);
-            Ok(msg)
-        })
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect()
+
+        // The attachment filter, when asked for, restricts to messages with a
+        // file (optionally of one kind). An unknown `file_type` falls back to
+        // "any attachment" rather than matching nothing.
+        let attach_clause = if want_attach {
+            let kind = file_type.and_then(file_kind_predicate);
+            let extra = kind.map(|k| format!(" AND {k}")).unwrap_or_default();
+            format!(" AND EXISTS (SELECT 1 FROM files ff WHERE ff.message_id = m.id{extra})")
+        } else {
+            String::new()
+        };
+
+        let rows: Vec<Value> = {
+            let conn = self.conn.lock().unwrap();
+            let mut p: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            let mut sql;
+            if let Some(fts) = fts {
+                // Drive off the union of text hits (FTS) and filename hits
+                // (LIKE), then hang the ranked snippet off the text side.
+                p.push(Box::new(fts)); // ?1, used by both the union and `th`
+                p.push(Box::new(like_pattern(query))); // ?2
+                sql = String::from(
+                    "SELECT m.id, m.channel_id, m.thread_id, m.author_type, m.author_id, \
+                       m.author_name, m.text, m.ts, m.meta, \
+                       c.name, c.group_id, COALESCE(g.name, ''), COALESCE(th.snip, '') \
+                     FROM (SELECT rowid AS mid FROM messages_fts WHERE messages_fts MATCH ?1 \
+                           UNION \
+                           SELECT message_id AS mid FROM files WHERE filename LIKE ?2 ESCAPE '\\') hits \
+                     JOIN messages m ON m.id = hits.mid \
+                     JOIN channels c ON c.id = m.channel_id \
+                     LEFT JOIN groups g ON g.id = c.group_id \
+                     LEFT JOIN (SELECT messages_fts.rowid AS mid, rank AS score, \
+                                  snippet(messages_fts, 0, char(1), char(2), '…', 16) AS snip \
+                                FROM messages_fts WHERE messages_fts MATCH ?1) th ON th.mid = m.id \
+                     WHERE 1=1",
+                );
+            } else {
+                // Browse mode: no query, just messages carrying attachments.
+                sql = String::from(
+                    "SELECT m.id, m.channel_id, m.thread_id, m.author_type, m.author_id, \
+                       m.author_name, m.text, m.ts, m.meta, \
+                       c.name, c.group_id, COALESCE(g.name, ''), '' \
+                     FROM messages m \
+                     JOIN channels c ON c.id = m.channel_id \
+                     LEFT JOIN groups g ON g.id = c.group_id \
+                     WHERE 1=1",
+                );
+            }
+            sql.push_str(&attach_clause);
+            if let Some(cid) = channel_id {
+                sql.push_str(&format!(" AND m.channel_id = ?{}", p.len() + 1));
+                p.push(Box::new(cid.to_string()));
+            }
+            if let Some(gid) = group_id {
+                sql.push_str(&format!(" AND c.group_id = ?{}", p.len() + 1));
+                p.push(Box::new(gid.to_string()));
+            }
+            if let Some(a) = author {
+                let i = p.len() + 1;
+                sql.push_str(&format!(" AND (m.author_id = ?{i} OR m.author_name = ?{i})"));
+                p.push(Box::new(a.to_string()));
+            }
+            if let Some(agent) = agent_id {
+                let i = p.len() + 1;
+                sql.push_str(&format!(
+                    " AND EXISTS (SELECT 1 FROM memberships ms \
+                       WHERE ms.member_type = 'agent' AND ms.member_id = ?{i} \
+                       AND ms.group_id = c.group_id \
+                       AND (ms.channel_id = '' OR ms.channel_id = m.channel_id))"
+                ));
+                p.push(Box::new(agent.to_string()));
+            }
+            // Text hits first (best bm25), then filename-only hits; newest_first
+            // and browse mode both just order by recency.
+            if newest_first || query.trim().is_empty() {
+                sql.push_str(" ORDER BY m.id DESC");
+            } else {
+                sql.push_str(" ORDER BY (th.mid IS NOT NULL) DESC, th.score ASC, m.id DESC");
+            }
+            sql.push_str(&format!(" LIMIT ?{} OFFSET ?{}", p.len() + 1, p.len() + 2));
+            p.push(Box::new(limit as i64));
+            p.push(Box::new(offset as i64));
+            let mut stmt = conn.prepare(&sql).unwrap();
+            stmt.query_map(params_from_iter(p.iter().map(|b| b.as_ref())), |r| {
+                let mut msg = message_row(r, 0)?;
+                msg["channel_name"] = json!(r.get::<_, String>(9)?);
+                msg["group_id"] = json!(r.get::<_, String>(10)?);
+                msg["group_name"] = json!(r.get::<_, String>(11)?);
+                msg["snippet"] = json!(r.get::<_, String>(12)?);
+                Ok(msg)
+            })
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+        };
+        // Surface each hit's files so the search UIs can render chips/thumbnails.
+        self.attach_files(rows)
     }
 
     /// Channels whose name or topic contains `query` (case-insensitive).
@@ -1804,6 +1902,54 @@ mod tests {
         // Deleting the group cascades into the index via the triggers.
         assert!(s.delete_group(gid));
         assert!(s.search_messages("deploy", false, None, None, None, None, false, 10, 0).is_empty());
+    }
+
+    #[test]
+    fn search_matches_filenames_and_filters_by_attachment() {
+        let s = store();
+        let g = s.create_group("Work", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "ops", "");
+        let cid = c["id"].as_str().unwrap();
+        let file = |name: &str, mime: &str| NewAttachment {
+            filename: name.into(),
+            mime: mime.into(),
+            data: b"bytes".to_vec(),
+        };
+        // A message whose text says nothing about the file it carries.
+        s.add_message(cid, "here you go", "user", "tom", None, None, &[file("budget-2026.xlsx", "application/vnd.ms-excel")]);
+        s.add_message(cid, "and the diagram", "user", "tom", None, None, &[file("floorplan.png", "image/png")]);
+        s.add_message(cid, "no attachment here, just budget talk", "user", "tom", None, None, &[]);
+
+        // Filename search: "budget" hits the .xlsx message *and* the text one.
+        let by_name = s.search_messages("budget", false, None, None, None, None, false, 20, 0);
+        assert_eq!(by_name.len(), 2);
+        // The attachment array rides along on hits.
+        let xlsx = by_name.iter().find(|m| m["text"] == "here you go").unwrap();
+        assert_eq!(xlsx["attachments"][0]["filename"], "budget-2026.xlsx");
+
+        // "floorplan" only exists as a filename — text search still finds it.
+        let only_file = s.search_messages("floorplan", false, None, None, None, None, false, 20, 0);
+        assert_eq!(only_file.len(), 1);
+        assert_eq!(only_file[0]["text"], "and the diagram");
+
+        // has_files filter drops the text-only "budget" message.
+        let with_files = s.search_messages_ext("budget", false, None, None, None, None, false, true, None, 20, 0);
+        assert_eq!(with_files.len(), 1);
+        assert_eq!(with_files[0]["text"], "here you go");
+
+        // file_type narrows to a kind (no query needed: browse mode).
+        let images = s.search_messages_ext("", false, None, None, None, None, false, false, Some("image"), 20, 0);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0]["attachments"][0]["filename"], "floorplan.png");
+
+        // Browse every attachment, newest first.
+        let all = s.search_messages_ext("", false, None, None, None, None, false, true, None, 20, 0);
+        assert_eq!(all.len(), 2);
+        assert!(all[0]["id"].as_i64().unwrap() > all[1]["id"].as_i64().unwrap());
+
+        // Empty query with no attachment filter still matches nothing.
+        assert!(s.search_messages("", false, None, None, None, None, false, 20, 0).is_empty());
     }
 
     #[test]

@@ -676,6 +676,11 @@ async fn list_messages(
 /// newest-first instead of best-match (bm25); `match=any` widens to
 /// any-term recall (default: all terms); `types` picks result kinds
 /// (comma list of `messages,channels,groups`, default all three).
+/// `has_files=1` keeps only messages carrying an attachment and `file_type`
+/// (`image`/`video`/`audio`/`pdf`/`doc`) narrows to one kind; either one lets
+/// `q` be empty (browse every message with a matching file, newest first).
+/// Attachment filenames are always part of the match, and every message hit
+/// carries its `attachments` array.
 async fn search(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
@@ -683,7 +688,12 @@ async fn search(
 ) -> Result<Json<Value>, ApiError> {
     require_owner(&state, &headers, &q)?;
     let query = q.get("q").map(|s| s.trim()).unwrap_or_default();
-    if query.is_empty() {
+    let has_files = matches!(q.get("has_files").map(String::as_str), Some("1" | "true"));
+    let file_type = q.get("file_type").map(String::as_str).filter(|s| !s.is_empty());
+    let attach_filter = has_files || file_type.is_some();
+    // A query is required unless the attachment filter alone is doing the work
+    // (browse every message that has a file).
+    if query.is_empty() && !attach_filter {
         return Err(err(StatusCode::BAD_REQUEST, "Query required"));
     }
     let limit: usize = q
@@ -703,17 +713,20 @@ async fn search(
     let mut out = json!({"query": query});
     if want("messages") {
         // One extra row decides has_more without a second query.
-        let mut rows = store.search_messages(
-            query, match_any, channel_id, group_id, author, None, newest_first, limit + 1, offset,
+        let mut rows = store.search_messages_ext(
+            query, match_any, channel_id, group_id, author, None, newest_first, has_files,
+            file_type, limit + 1, offset,
         );
         let has_more = rows.len() > limit;
         rows.truncate(limit);
         out["messages"] = json!({"items": rows, "has_more": has_more, "offset": offset});
     }
-    if want("channels") {
+    // Channel/group name matches only make sense with a text query, and are
+    // irrelevant to an attachment filter — skip them when browsing files.
+    if want("channels") && !query.is_empty() {
         out["channels"] = json!(store.search_channels(query, 20));
     }
-    if want("groups") {
+    if want("groups") && !query.is_empty() {
         out["groups"] = json!(store.search_groups(query, 20));
     }
     Ok(Json(out))

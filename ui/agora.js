@@ -2747,6 +2747,7 @@ let _agoSearchView = "results";  // "results" | "ask"
 let _agoSearchAnswer = null;     // /ask response, or "loading"
 let _agoSearchMoreBusy = false;  // "More results" page in flight
 let _agoSearchScope = "";        // "" | "g:<group_id>" | "c:<channel_id>"
+let _agoSearchFile = "";         // "" | "any" | image | video | audio | pdf | doc
 
 function agoSearchEnsure() {
   if (document.getElementById("ago-search-overlay")) return;
@@ -2764,6 +2765,16 @@ function agoSearchEnsure() {
           oninput="agoSearchInput()">
         <select id="ago-search-scope" class="ago-search-scope" title="Search scope"
           onchange="agoSearchScopeChange()"></select>
+        <select id="ago-search-files" class="ago-search-scope" title="Filter by attachment"
+          onchange="agoSearchFilesChange()">
+          <option value="">Any content</option>
+          <option value="any">📎 Has files</option>
+          <option value="image">🖼 Images</option>
+          <option value="pdf">📄 PDFs</option>
+          <option value="doc">📝 Documents</option>
+          <option value="video">🎬 Video</option>
+          <option value="audio">🎵 Audio</option>
+        </select>
         <button class="ago-x" title="Close (Esc)" onclick="agoSearchClose()">${icon("x")}</button>
       </div>
       <div class="ago-search-body" id="ago-search-body"></div>
@@ -2799,6 +2810,31 @@ function agoSearchScopeParam() {
   return "";
 }
 
+/* "&has_files=1" / "&file_type=…" for the GET endpoints, "" when off. An
+   active file filter also lets the search run with an empty query (browse
+   every message that carries a matching attachment). */
+function agoSearchFileParam() {
+  if (_agoSearchFile === "any") return "&has_files=1";
+  if (_agoSearchFile) return `&file_type=${encodeURIComponent(_agoSearchFile)}`;
+  return "";
+}
+function agoSearchFileActive() { return !!_agoSearchFile; }
+function agoSearchFileLabel() {
+  return { any: "attachments", image: "images", pdf: "PDFs", doc: "documents",
+           video: "video", audio: "audio" }[_agoSearchFile] || "attachments";
+}
+
+function agoSearchFilesChange() {
+  const sel = document.getElementById("ago-search-files");
+  _agoSearchFile = (sel && sel.value) || "";
+  clearTimeout(_agoSearchTimer);
+  _agoSearchRes = null;   // same q, new filter: force the re-fetch
+  const input = document.getElementById("ago-search-input");
+  const q = ((input && input.value) || "").trim();
+  agoSearchRun(q).catch(console.error);
+  if (input) input.focus();
+}
+
 /* Human name of the active scope for the empty state ("" when unscoped
    or the scoped group/channel no longer exists in _agoGroups). */
 function agoSearchScopeName() {
@@ -2828,6 +2864,8 @@ function agoSearchShow() {
   if (document.getElementById("auth-gate")) return;
   agoSearchEnsure();
   agoSearchScopeFill();
+  const fsel = document.getElementById("ago-search-files");
+  if (fsel) fsel.value = _agoSearchFile;
   _agoSearchOpen = true;
   document.getElementById("ago-search-overlay").style.display = "";
   // An /ask abandoned mid-flight must not reopen as an eternal spinner.
@@ -2899,11 +2937,12 @@ async function agoSearchRun(q) {
   _agoSearchSel = 0;
   _agoSearchRes = null;
   agoSearchDraw();   // ask row + "Searching…" show while the fetch runs
-  if (!q) return;
+  if (!q && !agoSearchFileActive()) return;
   const seq = ++_agoSearchSeq;
   let res;
   try {
-    res = await api(`/api/search?q=${encodeURIComponent(q)}${agoSearchScopeParam()}`);
+    res = await api(
+      `/api/search?q=${encodeURIComponent(q)}${agoSearchScopeParam()}${agoSearchFileParam()}`);
   } catch (e) {
     res = { error: (e && e.message) || String(e) };
   }
@@ -2921,10 +2960,26 @@ function agoSearchSnippetHTML(s) {
     .replace(/\u0002/g, "</span>");
 }
 
+/* Compact attachment chips for a search hit — filename + size, image icon
+   for images. stopPropagation so downloading a file doesn't also jump to the
+   message (the row's own click). */
+function agoSearchAttsHTML(m) {
+  const files = m.attachments || [];
+  if (!files.length) return "";
+  const parts = files.map(f => {
+    const url = agoFileUrl(f.id);
+    const ico = (f.mime || "").startsWith("image/") ? icon("image") : icon("file-text");
+    return `<a class="ago-att-file" href="${url}" download="${esc(f.filename)}"
+      target="_blank" rel="noopener" onclick="event.stopPropagation()"
+      >${ico} <span class="fname">${esc(f.filename)}</span> <span class="fsize">${agoHumanSize(f.size)}</span></a>`;
+  });
+  return `<div class="ago-atts">${parts.join("")}</div>`;
+}
+
 function agoSearchMsgRowHTML(m, i, num) {
   const crumb = `${m.group_name || ""} / #${m.channel_name || ""}`;
-  const snippet = m.snippet != null
-    ? agoSearchSnippetHTML(m.snippet) : esc(agoPinSnippet(m));
+  // Filename-only hits come back with an empty snippet; fall back to the text.
+  const snippet = m.snippet ? agoSearchSnippetHTML(m.snippet) : esc(agoPinSnippet(m));
   return `
     <div class="ago-search-row msg" data-si="${i}" title="Jump to message"
          onclick="agoSearchActivate(${i})">
@@ -2934,7 +2989,8 @@ function agoSearchMsgRowHTML(m, i, num) {
         <span class="ago-search-crumb">${esc(crumb)}${m.thread_id != null ? " · in thread" : ""}</span>
         <span class="ago-search-ts">${esc(fmtTs(m.ts))}</span>
       </div>
-      <div class="ago-search-snippet">${snippet}</div>
+      ${snippet ? `<div class="ago-search-snippet">${snippet}</div>` : ""}
+      ${agoSearchAttsHTML(m)}
     </div>`;
 }
 
@@ -2944,13 +3000,13 @@ function agoSearchDraw() {
   _agoSearchItems = [];
   if (_agoSearchView === "ask") { agoSearchDrawAsk(box); return; }
   const q = _agoSearchQ;
-  if (!q) {
+  if (!q && !agoSearchFileActive()) {
     box.innerHTML = `<div class="ago-search-hint">
       Search messages, channels, and groups${_agoSearchAI ? " — or ask the AI a question" : ""}.</div>`;
     return;
   }
   let html = "";
-  if (_agoSearchAI) {
+  if (_agoSearchAI && q) {
     const i = _agoSearchItems.push({ kind: "ask" }) - 1;
     html += `
       <div class="ago-search-row ask" data-si="${i}" onclick="agoSearchActivate(${i})"
@@ -3008,7 +3064,10 @@ function agoSearchDraw() {
     html += `<div class="ago-search-hint">Searching…</div>`;
   } else if (!groups.length && !channels.length && !msgs.length) {
     const sn = agoSearchScopeName();
-    html += `<div class="ago-search-hint">No results for “${esc(q)}”${sn ? ` in ${esc(sn)}` : ""}</div>`;
+    const scope = sn ? ` in ${esc(sn)}` : "";
+    html += q
+      ? `<div class="ago-search-hint">No results for “${esc(q)}”${scope}</div>`
+      : `<div class="ago-search-hint">No messages with ${esc(agoSearchFileLabel())} found${scope}</div>`;
   }
   if (_agoSearchSel >= _agoSearchItems.length) {
     _agoSearchSel = Math.max(0, _agoSearchItems.length - 1);
@@ -3065,7 +3124,8 @@ async function agoSearchMore() {
   const offset = (res.messages.items || []).length;
   try {
     const data = await api(
-      `/api/search?q=${encodeURIComponent(q)}&types=messages&offset=${offset}${agoSearchScopeParam()}`);
+      `/api/search?q=${encodeURIComponent(q)}&types=messages&offset=${offset}` +
+      `${agoSearchScopeParam()}${agoSearchFileParam()}`);
     if (q !== _agoSearchQ || _agoSearchRes !== res) return;   // query moved on
     const page = data.messages || {};
     res.messages.items = (res.messages.items || []).concat(page.items || []);
