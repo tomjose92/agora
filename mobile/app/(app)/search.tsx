@@ -9,6 +9,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,9 +18,16 @@ import {
   View,
 } from "react-native";
 import { Stack, router } from "expo-router";
-import { Search as SearchIcon, Sparkles, X } from "lucide-react-native";
-import { useAskAi, useMe, useSearch, useSearchMore } from "../../src/api/queries";
+import { ListFilter, Search as SearchIcon, Sparkles, X } from "lucide-react-native";
+import {
+  useAskAi,
+  useGroups,
+  useMe,
+  useSearch,
+  useSearchMore,
+} from "../../src/api/queries";
 import type {
+  Group,
   SearchChannelHit,
   SearchGroupHit,
   SearchMessageHit,
@@ -37,6 +45,59 @@ function useDebounced<T>(value: T, ms: number): T {
     return () => clearTimeout(t);
   }, [value, ms]);
   return debounced;
+}
+
+/** Active filter: one channel or one whole group, plus the chip label
+    ("All of <group>" / "#<channel>"). null = everywhere. */
+type Scope = { channelId?: string; groupId?: string; label: string };
+
+/** Scope picker: "Everywhere", then each group with its channels indented.
+    Hidden groups/channels are searchable too, so they're listed. */
+function ScopeSheet({
+  groups,
+  onPick,
+  onClose,
+}: {
+  groups: Group[];
+  onPick: (s: Scope | null) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        <View style={styles.sheet}>
+          <Text style={styles.sheetTitle}>Search in</Text>
+          <ScrollView>
+            <Pressable style={styles.sheetItem} onPress={() => onPick(null)}>
+              <Text style={styles.sheetItemText}>Everywhere</Text>
+            </Pressable>
+            {groups.map((g) => (
+              <React.Fragment key={g.id}>
+                <Pressable
+                  style={styles.sheetItem}
+                  onPress={() => onPick({ groupId: g.id, label: `All of ${g.name}` })}
+                >
+                  <Text style={styles.sheetItemText}>All of {g.name}</Text>
+                </Pressable>
+                {g.channels.map((c) => (
+                  <Pressable
+                    key={c.id}
+                    style={[styles.sheetItem, styles.sheetItemIndent]}
+                    onPress={() => onPick({ channelId: c.id, label: `#${c.name}` })}
+                  >
+                    <Text style={styles.sheetItemText}>
+                      <Text style={styles.hash}># </Text>
+                      {c.name}
+                    </Text>
+                  </Pressable>
+                ))}
+              </React.Fragment>
+            ))}
+          </ScrollView>
+        </View>
+      </Pressable>
+    </Modal>
+  );
 }
 
 type Row =
@@ -154,19 +215,31 @@ function AnswerText({
 export default function SearchScreen() {
   const [input, setInput] = useState("");
   const query = useDebounced(input.trim(), 250);
-  const search = useSearch(query);
+
+  /* Channel/group filter. null = everywhere. The picker lists useGroups()
+     data, which is normally already cached from the home screen. */
+  const [scope, setScope] = useState<Scope | null>(null);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const groups = useGroups();
+  const pickScope = (s: Scope | null) => {
+    setScope(s);
+    setScopeOpen(false);
+  };
+
+  const search = useSearch(query, scope ?? undefined);
   const me = useMe();
   const ask = useAskAi();
   const searchMore = useSearchMore();
 
   /* "More results" pages, appended below the base page. Raw (un-deduped) so
-     `offset` stays a plain count of rows fetched; render dedupes by id. */
+     `offset` stays a plain count of rows fetched; render dedupes by id.
+     A scope change re-scopes the base page, so it resets these too. */
   const [extra, setExtra] = useState<SearchMessageHit[]>([]);
   const [extraHasMore, setExtraHasMore] = useState<boolean | null>(null);
   useEffect(() => {
     setExtra([]);
     setExtraHasMore(null);
-  }, [query]);
+  }, [query, scope]);
 
   /* Ask-AI card. The question is snapshotted at tap time so further typing
      doesn't change what the card claims to answer. */
@@ -179,7 +252,7 @@ export default function SearchScreen() {
     const q = input.trim();
     if (!q) return;
     setAskQuestion(q);
-    ask.mutate({ q });
+    ask.mutate({ q, scope: scope ?? undefined });
   };
 
   const data = search.data;
@@ -224,10 +297,13 @@ export default function SearchScreen() {
       if (hasMore) out.push({ kind: "more" });
     }
     if (groupHits.length + channelHits.length + messages.length === 0) {
-      out.push({ kind: "notice", text: `No results for “${query}”` });
+      out.push({
+        kind: "notice",
+        text: `No results for “${query}”${scope ? ` in ${scope.label}` : ""}`,
+      });
     }
     return out;
-  }, [query, showAsk, search.isError, search.error, data, groupHits, channelHits, messages, hasMore]);
+  }, [query, scope, showAsk, search.isError, search.error, data, groupHits, channelHits, messages, hasMore]);
 
   const onMore = () => {
     if (searchMore.isPending) return;
@@ -235,7 +311,7 @@ export default function SearchScreen() {
     if (!base) return;
     const offset = base.offset + base.items.length + extra.length;
     searchMore.mutate(
-      { q: query, offset },
+      { q: query, offset, scope: scope ?? undefined },
       {
         onSuccess: (page) => {
           if (!page) return;
@@ -349,6 +425,32 @@ export default function SearchScreen() {
             </Pressable>
           ) : null}
         </View>
+        <View style={styles.filterRow}>
+          <Pressable
+            style={[styles.filterChip, scope ? styles.filterChipActive : null]}
+            onPress={() => setScopeOpen(true)}
+          >
+            <Icon icon={ListFilter} size={14} color={scope ? colors.a1 : colors.dim} />
+            <Text
+              style={[styles.filterChipText, scope ? styles.filterChipTextActive : null]}
+              numberOfLines={1}
+            >
+              {scope ? scope.label : "Everywhere"}
+            </Text>
+            {scope ? (
+              <Pressable onPress={() => setScope(null)} hitSlop={8}>
+                <Icon icon={X} size={13} color={colors.a1} />
+              </Pressable>
+            ) : null}
+          </Pressable>
+        </View>
+        {scopeOpen ? (
+          <ScopeSheet
+            groups={groups.data ?? []}
+            onPick={pickScope}
+            onClose={() => setScopeOpen(false)}
+          />
+        ) : null}
         {askQuestion != null ? (
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
             <View style={styles.askCard}>
@@ -433,6 +535,56 @@ const styles = StyleSheet.create({
     fontSize: 15,
     paddingVertical: 9,
   },
+  filterRow: {
+    flexDirection: "row",
+    marginHorizontal: 14,
+    marginTop: 8,
+  },
+  filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    maxWidth: "100%",
+  },
+  filterChipActive: {
+    backgroundColor: "rgba(139,124,255,0.10)",
+    borderColor: "rgba(139,124,255,0.45)",
+  },
+  filterChipText: {
+    color: colors.dim,
+    fontSize: 12.5,
+    fontWeight: "700",
+    flexShrink: 1,
+  },
+  filterChipTextActive: { color: colors.a1 },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "#14161d",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 16,
+    gap: 4,
+    paddingBottom: 34,
+    maxHeight: "70%",
+  },
+  sheetTitle: { color: colors.text, fontSize: 16, fontWeight: "800", marginBottom: 8 },
+  sheetItem: {
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  sheetItemIndent: { paddingLeft: 18 },
+  sheetItemText: { color: colors.text, fontSize: 14.5 },
   section: {
     color: colors.faint,
     fontSize: 11.5,

@@ -2713,6 +2713,7 @@ let _agoSearchItems = [];        // flat activation list, rebuilt on each draw
 let _agoSearchView = "results";  // "results" | "ask"
 let _agoSearchAnswer = null;     // /ask response, or "loading"
 let _agoSearchMoreBusy = false;  // "More results" page in flight
+let _agoSearchScope = "";        // "" | "g:<group_id>" | "c:<channel_id>"
 
 function agoSearchEnsure() {
   if (document.getElementById("ago-search-overlay")) return;
@@ -2728,6 +2729,8 @@ function agoSearchEnsure() {
         <input id="ago-search-input" placeholder="Search messages, channels, groups…"
           autocomplete="off" autocapitalize="off" spellcheck="false"
           oninput="agoSearchInput()">
+        <select id="ago-search-scope" class="ago-search-scope" title="Search scope"
+          onchange="agoSearchScopeChange()"></select>
         <button class="ago-x" title="Close (Esc)" onclick="agoSearchClose()">${icon("x")}</button>
       </div>
       <div class="ago-search-body" id="ago-search-body"></div>
@@ -2735,9 +2738,63 @@ function agoSearchEnsure() {
   document.body.appendChild(el);
 }
 
+/* Rebuild the scope <select> from _agoGroups (groups may have changed since
+   the palette last opened). Keeps the current selection when it still exists;
+   a scope pointing at a deleted group/channel falls back to Everywhere. */
+function agoSearchScopeFill() {
+  const sel = document.getElementById("ago-search-scope");
+  if (!sel) return;
+  let html = `<option value="">Everywhere</option>`;
+  for (const g of _agoGroups) {
+    html += `<optgroup label="${esc(g.name)}">
+      <option value="g:${esc(String(g.id))}">All of ${esc(g.name)}</option>`;
+    for (const c of (g.channels || [])) {
+      html += `<option value="c:${esc(String(c.id))}"># ${esc(c.name)}</option>`;
+    }
+    html += `</optgroup>`;
+  }
+  sel.innerHTML = html;
+  sel.value = _agoSearchScope;
+  if (sel.value !== _agoSearchScope) { _agoSearchScope = ""; sel.value = ""; }
+}
+
+/* "&group_id=…" / "&channel_id=…" for the GET endpoints, "" when unscoped. */
+function agoSearchScopeParam() {
+  const s = _agoSearchScope;
+  if (s.startsWith("g:")) return `&group_id=${encodeURIComponent(s.slice(2))}`;
+  if (s.startsWith("c:")) return `&channel_id=${encodeURIComponent(s.slice(2))}`;
+  return "";
+}
+
+/* Human name of the active scope for the empty state ("" when unscoped
+   or the scoped group/channel no longer exists in _agoGroups). */
+function agoSearchScopeName() {
+  const s = _agoSearchScope;
+  if (!s) return "";
+  for (const g of _agoGroups) {
+    if (s === "g:" + g.id) return g.name;
+    for (const c of (g.channels || [])) {
+      if (s === "c:" + c.id) return "#" + c.name;
+    }
+  }
+  return "";
+}
+
+function agoSearchScopeChange() {
+  const sel = document.getElementById("ago-search-scope");
+  _agoSearchScope = (sel && sel.value) || "";
+  clearTimeout(_agoSearchTimer);
+  _agoSearchRes = null;   // same q, new scope: force the re-fetch
+  const input = document.getElementById("ago-search-input");
+  const q = ((input && input.value) || "").trim();
+  agoSearchRun(q).catch(console.error);
+  if (input) input.focus();
+}
+
 function agoSearchShow() {
   if (document.getElementById("auth-gate")) return;
   agoSearchEnsure();
+  agoSearchScopeFill();
   _agoSearchOpen = true;
   document.getElementById("ago-search-overlay").style.display = "";
   // An /ask abandoned mid-flight must not reopen as an eternal spinner.
@@ -2776,6 +2833,8 @@ document.addEventListener("keydown", e => {
     return;
   }
   if (e.isComposing) return;
+  // Arrows/Enter inside the scope <select> belong to the select itself.
+  if (e.target && e.target.id === "ago-search-scope") return;
   if (e.key === "ArrowDown") { e.preventDefault(); agoSearchMove(1); return; }
   if (e.key === "ArrowUp") { e.preventDefault(); agoSearchMove(-1); return; }
   if (e.key === "Enter") {
@@ -2811,7 +2870,7 @@ async function agoSearchRun(q) {
   const seq = ++_agoSearchSeq;
   let res;
   try {
-    res = await api(`/api/search?q=${encodeURIComponent(q)}`);
+    res = await api(`/api/search?q=${encodeURIComponent(q)}${agoSearchScopeParam()}`);
   } catch (e) {
     res = { error: (e && e.message) || String(e) };
   }
@@ -2915,7 +2974,8 @@ function agoSearchDraw() {
   } else if (!res) {
     html += `<div class="ago-search-hint">Searching…</div>`;
   } else if (!groups.length && !channels.length && !msgs.length) {
-    html += `<div class="ago-search-hint">No results for “${esc(q)}”</div>`;
+    const sn = agoSearchScopeName();
+    html += `<div class="ago-search-hint">No results for “${esc(q)}”${sn ? ` in ${esc(sn)}` : ""}</div>`;
   }
   if (_agoSearchSel >= _agoSearchItems.length) {
     _agoSearchSel = Math.max(0, _agoSearchItems.length - 1);
@@ -2972,7 +3032,7 @@ async function agoSearchMore() {
   const offset = (res.messages.items || []).length;
   try {
     const data = await api(
-      `/api/search?q=${encodeURIComponent(q)}&types=messages&offset=${offset}`);
+      `/api/search?q=${encodeURIComponent(q)}&types=messages&offset=${offset}${agoSearchScopeParam()}`);
     if (q !== _agoSearchQ || _agoSearchRes !== res) return;   // query moved on
     const page = data.messages || {};
     res.messages.items = (res.messages.items || []).concat(page.items || []);
@@ -2995,7 +3055,10 @@ async function agoSearchAsk() {
   agoSearchDraw();
   let data;
   try {
-    data = await apiPost("/api/search/ask", { q });
+    const body = { q };
+    if (_agoSearchScope.startsWith("g:")) body.group_id = _agoSearchScope.slice(2);
+    else if (_agoSearchScope.startsWith("c:")) body.channel_id = _agoSearchScope.slice(2);
+    data = await apiPost("/api/search/ask", body);
   } catch (e) {
     if (!_agoSearchOpen || _agoSearchView !== "ask") return;
     agoErr("Ask AI failed", e);

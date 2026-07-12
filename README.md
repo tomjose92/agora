@@ -187,9 +187,11 @@ names/descriptions. Three ways in:
 - **Desktop / web UI** — the sidebar's magnifier or **⌘K / Ctrl-K** opens the
   search palette: type, arrow through grouped results (groups, channels,
   messages with highlighted snippets), Enter jumps straight to the message in
-  its channel or thread.
+  its channel or thread. A scope dropdown next to the input narrows the
+  search (and Ask AI) to one group or channel.
 - **Mobile** — the magnifier on the home screen opens the search screen; the
-  same grouped results, tap to open the room.
+  same grouped results, tap to open the room. A filter chip under the input
+  scopes the search to a group or channel.
 - **API** — `GET /api/search?q=…` (owner token) returns all three kinds at
   once. Params: `limit`/`offset` page the message hits (default 20, cap 50),
   `channel_id`/`group_id`/`author` narrow the scope, `sort=new` orders

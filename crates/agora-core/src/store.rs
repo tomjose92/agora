@@ -189,18 +189,19 @@ fn migrate(conn: &Connection) {
     if !has_column("messages", "meta") {
         conn.execute("ALTER TABLE messages ADD COLUMN meta TEXT", []).unwrap();
     }
-    // Databases that predate the FTS index get it created empty by SCHEMA
-    // (the triggers only cover writes from now on), so backfill whenever the
-    // index row count has drifted from the table's.
-    let messages: i64 = conn
-        .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+    // Databases that predate the FTS index get it created empty by SCHEMA —
+    // the triggers only cover writes from then on, so the existing history
+    // needs a one-time backfill. Row counts can't detect this (a bare scan of
+    // an external-content FTS table reads through to `messages`, so the
+    // counts always agree even when the index is empty); use the schema
+    // version marker instead.
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap_or(0);
-    let indexed: i64 = conn
-        .query_row("SELECT COUNT(*) FROM messages_fts", [], |r| r.get(0))
-        .unwrap_or(-1);
-    if indexed != messages {
+    if version < 1 {
         conn.execute("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')", [])
             .unwrap();
+        conn.execute("PRAGMA user_version = 1", []).unwrap();
     }
 }
 
@@ -1739,6 +1740,50 @@ mod tests {
         // Deleting the group cascades into the index via the triggers.
         assert!(s.delete_group(gid));
         assert!(s.search_messages("deploy", false, None, None, None, None, false, 10, 0).is_empty());
+    }
+
+    #[test]
+    fn search_backfills_history_from_a_pre_index_database() {
+        // A database written before the FTS index existed: old schema, no
+        // messages_fts, no triggers, user_version 0 — like any live install
+        // upgrading to the search release. Opening it must backfill the index
+        // so pre-existing history is searchable, not just new writes.
+        let dir = std::env::temp_dir().join(format!("agora_fts_migrate_{}", new_token()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("agora.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, \
+                   description TEXT NOT NULL DEFAULT '', created_by TEXT, \
+                   created_at REAL NOT NULL, position INTEGER NOT NULL DEFAULT 0, \
+                   hidden INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE channels (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, \
+                   name TEXT NOT NULL, topic TEXT NOT NULL DEFAULT '', \
+                   created_at REAL NOT NULL, position INTEGER NOT NULL DEFAULT 0, \
+                   hidden INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                   channel_id TEXT NOT NULL, thread_id INTEGER, author_type TEXT NOT NULL, \
+                   author_id TEXT NOT NULL, author_name TEXT, text TEXT NOT NULL, \
+                   ts REAL NOT NULL, meta TEXT);
+                 INSERT INTO groups VALUES ('g1', 'Home', '', NULL, 0, 0, 0);
+                 INSERT INTO channels VALUES ('c1', 'g1', 'pets', '', 0, 0, 0);
+                 INSERT INTO messages (channel_id, author_type, author_id, text, ts) \
+                   VALUES ('c1', 'user', 'me', 'my pet turtle escaped', 0);",
+            )
+            .unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        let hits = s.search_messages("pet", false, None, None, None, None, false, 10, 0);
+        assert_eq!(hits.len(), 1, "pre-index history must be backfilled");
+        assert_eq!(hits[0]["text"], "my pet turtle escaped");
+        // Reopening doesn't rebuild again (version marker advanced) but the
+        // index still works, triggers included.
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        s.add_message("c1", "the pet is back", "user", "me", None, None, &[]);
+        assert_eq!(s.search_messages("pet", false, None, None, None, None, false, 10, 0).len(), 2);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
