@@ -84,6 +84,14 @@ CREATE TABLE IF NOT EXISTS thread_reads (
     updated_at REAL NOT NULL,
     PRIMARY KEY (username, thread_id)
 );
+-- Threads dismissed from the user's inbox/sidebar. The messages stay in the
+-- channel; the thread just stops surfacing in `my_threads`.
+CREATE TABLE IF NOT EXISTS thread_hides (
+    username TEXT NOT NULL,
+    thread_id INTEGER NOT NULL,
+    hidden_at REAL NOT NULL,
+    PRIMARY KEY (username, thread_id)
+);
 -- One row per user @mentioned by a message; drives mention-aware badges.
 CREATE TABLE IF NOT EXISTS mentions (
     message_id INTEGER NOT NULL,
@@ -136,6 +144,14 @@ fn migrate(conn: &Connection) {
         if !has_column(table, "position") {
             conn.execute(
                 &format!("ALTER TABLE {table} ADD COLUMN position INTEGER NOT NULL DEFAULT 0"),
+                [],
+            )
+            .unwrap();
+        }
+        // Hidden = tucked away in the sidebar, not deleted.
+        if !has_column(table, "hidden") {
+            conn.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0"),
                 [],
             )
             .unwrap();
@@ -292,7 +308,7 @@ impl Store {
     pub fn group(&self, group_id: &str) -> Option<Value> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, name, description, created_by, created_at FROM groups WHERE id = ?1",
+            "SELECT id, name, description, created_by, created_at, hidden FROM groups WHERE id = ?1",
             params![group_id],
             |r| {
                 Ok(json!({
@@ -300,6 +316,7 @@ impl Store {
                     "description": r.get::<_, String>(2)?,
                     "created_by": r.get::<_, Option<String>>(3)?,
                     "created_at": r.get::<_, f64>(4)?,
+                    "hidden": r.get::<_, i64>(5)? != 0,
                 }))
             },
         )
@@ -310,7 +327,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, created_by, created_at FROM groups ORDER BY position, name",
+                "SELECT id, name, description, created_by, created_at, hidden FROM groups ORDER BY position, name",
             )
             .unwrap();
         stmt.query_map([], |r| {
@@ -319,11 +336,30 @@ impl Store {
                 "description": r.get::<_, String>(2)?,
                 "created_by": r.get::<_, Option<String>>(3)?,
                 "created_at": r.get::<_, f64>(4)?,
+                "hidden": r.get::<_, i64>(5)? != 0,
             }))
         })
         .unwrap()
         .filter_map(Result::ok)
         .collect()
+    }
+
+    /// Tuck a group away in (or restore it to) the sidebar. Purely
+    /// presentational — members, messages, and agent fan-out are untouched.
+    pub fn set_group_hidden(&self, group_id: &str, hidden: bool) -> Option<Value> {
+        {
+            let conn = self.conn.lock().unwrap();
+            let changed = conn
+                .execute(
+                    "UPDATE groups SET hidden = ?1 WHERE id = ?2",
+                    params![hidden as i64, group_id],
+                )
+                .unwrap();
+            if changed == 0 {
+                return None;
+            }
+        }
+        self.group(group_id)
     }
 
     pub fn delete_group(&self, group_id: &str) -> bool {
@@ -393,12 +429,14 @@ impl Store {
         self.channel(&cid).unwrap_or(Value::Null)
     }
 
-    /// Rename a channel and/or set its topic (None = leave unchanged).
+    /// Rename a channel, set its topic, and/or toggle its hidden flag
+    /// (None = leave unchanged).
     pub fn update_channel(
         &self,
         channel_id: &str,
         name: Option<&str>,
         topic: Option<&str>,
+        hidden: Option<bool>,
     ) -> Option<Value> {
         {
             let conn = self.conn.lock().unwrap();
@@ -413,6 +451,13 @@ impl Store {
                 conn.execute(
                     "UPDATE channels SET topic = ?1 WHERE id = ?2",
                     params![t, channel_id],
+                )
+                .unwrap();
+            }
+            if let Some(h) = hidden {
+                conn.execute(
+                    "UPDATE channels SET hidden = ?1 WHERE id = ?2",
+                    params![h as i64, channel_id],
                 )
                 .unwrap();
             }
@@ -447,13 +492,14 @@ impl Store {
     pub fn channel(&self, channel_id: &str) -> Option<Value> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, group_id, name, topic, created_at FROM channels WHERE id = ?1",
+            "SELECT id, group_id, name, topic, created_at, hidden FROM channels WHERE id = ?1",
             params![channel_id],
             |r| {
                 Ok(json!({
                     "id": r.get::<_, String>(0)?, "group_id": r.get::<_, String>(1)?,
                     "name": r.get::<_, String>(2)?, "topic": r.get::<_, String>(3)?,
                     "created_at": r.get::<_, f64>(4)?,
+                    "hidden": r.get::<_, i64>(5)? != 0,
                 }))
             },
         )
@@ -464,7 +510,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, group_id, name, topic, created_at FROM channels \
+                "SELECT id, group_id, name, topic, created_at, hidden FROM channels \
                  WHERE group_id = ?1 ORDER BY position, name",
             )
             .unwrap();
@@ -473,6 +519,7 @@ impl Store {
                 "id": r.get::<_, String>(0)?, "group_id": r.get::<_, String>(1)?,
                 "name": r.get::<_, String>(2)?, "topic": r.get::<_, String>(3)?,
                 "created_at": r.get::<_, f64>(4)?,
+                "hidden": r.get::<_, i64>(5)? != 0,
             }))
         })
         .unwrap()
@@ -1108,10 +1155,32 @@ impl Store {
         .unwrap_or(0)
     }
 
+    /// Dismiss a thread from the user's inbox/sidebar. The messages stay in
+    /// the channel; the row just stops coming back from `my_threads`.
+    pub fn hide_thread(&self, username: &str, thread_id: i64) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO thread_hides (username, thread_id, hidden_at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(username, thread_id) DO NOTHING",
+            params![username, thread_id, now()],
+        )
+        .unwrap();
+    }
+
+    pub fn unhide_thread(&self, username: &str, thread_id: i64) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM thread_hides WHERE username = ?1 AND thread_id = ?2",
+            params![username, thread_id],
+        )
+        .unwrap()
+            > 0
+    }
+
     /// The user's threads inbox: every thread they participate in (authored
-    /// the root or any reply), newest activity first. Each row is the root
-    /// message plus channel/group names, reply stats, and the user's unread
-    /// reply count (own replies excluded).
+    /// the root or any reply), newest activity first, minus threads they
+    /// dismissed. Each row is the root message plus channel/group names,
+    /// reply stats, and the user's unread reply count (own replies excluded).
     pub fn my_threads(&self, username: &str, limit: usize) -> Vec<Value> {
         let rows: Vec<Value> = {
             let conn = self.conn.lock().unwrap();
@@ -1134,6 +1203,8 @@ impl Store {
                        (r.author_type = 'user' AND r.author_id = ?1) \
                        OR EXISTS (SELECT 1 FROM messages p WHERE p.thread_id = r.id \
                             AND p.author_type = 'user' AND p.author_id = ?1)) \
+                     AND NOT EXISTS (SELECT 1 FROM thread_hides h \
+                            WHERE h.username = ?1 AND h.thread_id = r.id) \
                      GROUP BY r.id ORDER BY MAX(m.id) DESC LIMIT ?2",
                 )
                 .unwrap();
@@ -1276,15 +1347,20 @@ impl Store {
     }
 }
 
-/// thread_reads has no channel_id column; scope the delete via the thread's
-/// root message. Must run before the channel's messages are deleted.
+/// thread_reads/thread_hides have no channel_id column; scope the delete via
+/// the thread's root message. Must run before the channel's messages are
+/// deleted.
 fn delete_thread_reads_for_channel(conn: &Connection, channel_id: &str) {
-    conn.execute(
-        "DELETE FROM thread_reads WHERE thread_id IN \
-         (SELECT id FROM messages WHERE channel_id = ?1)",
-        params![channel_id],
-    )
-    .unwrap();
+    for table in ["thread_reads", "thread_hides"] {
+        conn.execute(
+            &format!(
+                "DELETE FROM {table} WHERE thread_id IN \
+                 (SELECT id FROM messages WHERE channel_id = ?1)"
+            ),
+            params![channel_id],
+        )
+        .unwrap();
+    }
 }
 
 fn insert_member(
@@ -1496,12 +1572,62 @@ mod tests {
         let gid = g["id"].as_str().unwrap();
         let c = s.create_channel(gid, "old", "old topic");
         let cid = c["id"].as_str().unwrap();
-        let updated = s.update_channel(cid, Some("new"), None).unwrap();
+        let updated = s.update_channel(cid, Some("new"), None, None).unwrap();
         assert_eq!(updated["name"], "new");
         assert_eq!(updated["topic"], "old topic");
-        let updated = s.update_channel(cid, None, Some("fresh topic")).unwrap();
+        let updated = s.update_channel(cid, None, Some("fresh topic"), None).unwrap();
         assert_eq!(updated["name"], "new");
         assert_eq!(updated["topic"], "fresh topic");
+    }
+
+    #[test]
+    fn hide_groups_and_channels() {
+        let s = store();
+        let g = s.create_group("G", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        assert_eq!(s.group(gid).unwrap()["hidden"], false);
+        assert_eq!(s.channel(cid).unwrap()["hidden"], false);
+        let hidden = s.set_group_hidden(gid, true).unwrap();
+        assert_eq!(hidden["hidden"], true);
+        assert_eq!(s.list_groups()[0]["hidden"], true);
+        assert_eq!(s.set_group_hidden(gid, false).unwrap()["hidden"], false);
+        assert!(s.set_group_hidden("nope", true).is_none());
+        let updated = s.update_channel(cid, None, None, Some(true)).unwrap();
+        assert_eq!(updated["hidden"], true);
+        assert_eq!(updated["name"], "main"); // untouched
+        assert_eq!(s.group_channels(gid)[0]["hidden"], true);
+        assert_eq!(s.update_channel(cid, None, None, Some(false)).unwrap()["hidden"], false);
+    }
+
+    #[test]
+    fn thread_hide_and_unhide() {
+        let s = store();
+        let g = s.create_group("G", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let root = s.add_message(cid, "mine", "user", "tom", None, None, &[]);
+        let root_id = root["id"].as_i64().unwrap();
+        s.add_message(cid, "re", "agent", "bot", None, Some(root_id), &[]);
+        assert_eq!(s.my_threads("tom", 50).len(), 1);
+        s.hide_thread("tom", root_id);
+        s.hide_thread("tom", root_id); // idempotent
+        assert!(s.my_threads("tom", 50).is_empty());
+        // The messages themselves are untouched.
+        assert_eq!(s.messages(cid, Some(root_id), None, 50).len(), 1);
+        assert!(s.unhide_thread("tom", root_id));
+        assert!(!s.unhide_thread("tom", root_id));
+        assert_eq!(s.my_threads("tom", 50).len(), 1);
+        // Channel delete sweeps hide rows too.
+        s.hide_thread("tom", root_id);
+        s.delete_channel(cid);
+        let conn_count: i64 = {
+            let conn = s.conn.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM thread_hides", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(conn_count, 0);
     }
 
     #[test]

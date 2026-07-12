@@ -186,7 +186,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/me", get(me))
         .route("/api/groups", get(list_groups).post(create_group))
         .route("/api/groups/order", put(reorder_groups))
-        .route("/api/groups/{group_id}", delete(delete_group))
+        .route("/api/groups/{group_id}", patch(update_group).delete(delete_group))
         .route("/api/groups/{group_id}/channels", post(create_channel))
         .route("/api/groups/{group_id}/channels/order", put(reorder_channels))
         .route(
@@ -216,6 +216,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/messages/{message_id}/speech", get(message_speech))
         .route("/api/threads", get(list_threads))
         .route("/api/threads/{thread_id}/read", put(mark_thread_read))
+        .route(
+            "/api/threads/{thread_id}/hide",
+            put(hide_thread).delete(unhide_thread),
+        )
         .route("/api/channels/{channel_id}/stars", get(list_stars))
         .route(
             "/api/channels/{channel_id}/stars/{message_id}",
@@ -417,6 +421,28 @@ async fn create_group(
     Ok(Json(group_payload(&state, &group, &user)))
 }
 
+/// Update a group's presentation flags — today just `hidden`, which tucks
+/// the group away in clients' sidebars without touching its data.
+async fn update_group(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    group_or_404(&state, &group_id)?;
+    let Some(hidden) = payload["hidden"].as_bool() else {
+        return Err(err(StatusCode::BAD_REQUEST, "hidden (bool) required"));
+    };
+    let group = state
+        .hub
+        .store
+        .set_group_hidden(&group_id, hidden)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown group"))?;
+    Ok(Json(group_payload(&state, &group, &user)))
+}
+
 async fn delete_group(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
@@ -472,10 +498,11 @@ async fn update_channel(
         .get("topic")
         .and_then(Value::as_str)
         .map(|t| t.trim().to_string());
+    let hidden = payload.get("hidden").and_then(Value::as_bool);
     let updated = state
         .hub
         .store
-        .update_channel(&channel_id, name.as_deref(), topic.as_deref())
+        .update_channel(&channel_id, name.as_deref(), topic.as_deref(), hidden)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown channel"))?;
     Ok(Json(updated))
 }
@@ -1003,6 +1030,35 @@ async fn mark_thread_read(
         .hub
         .mark_thread_read(&user, thread_id, payload["last_read_id"].as_i64());
     Ok(Json(json!({"ok": true, "last_read_id": last})))
+}
+
+/// Dismiss a thread from the caller's inbox/sidebar. The messages stay in
+/// the channel — this only stops the row from coming back in /api/threads.
+async fn hide_thread(
+    State(state): State<AppState>,
+    Path(thread_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    state
+        .hub
+        .store
+        .message(thread_id)
+        .filter(|m| m["thread_id"].is_null())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown thread"))?;
+    state.hub.store.hide_thread(&user, thread_id);
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn unhide_thread(
+    State(state): State<AppState>,
+    Path(thread_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    Ok(Json(json!({"ok": state.hub.store.unhide_thread(&user, thread_id)})))
 }
 
 async fn list_stars(
