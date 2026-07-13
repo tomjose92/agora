@@ -154,12 +154,24 @@ a.btn { text-decoration: none; }
   padding: 9px 11px; margin: 4px 0; overflow-x: auto;
   font-family: var(--mono); font-size: 12px; line-height: 1.5;
 }
-.bubble .md-table-wrap { overflow-x: auto; margin: 6px 0; white-space: normal; }
-.bubble .md-table { border-collapse: collapse; font-size: 12.5px; line-height: 1.45; min-width: 60%; }
+.bubble .md-table-wrap {
+  overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%;
+  margin: 6px 0; white-space: normal; scrollbar-width: thin;
+}
+/* Size the table to its content so a wide table overflows the wrap and the
+   wrap scrolls, instead of columns collapsing to fit (which killed scroll). */
+.bubble .md-table { border-collapse: collapse; font-size: 12.5px; line-height: 1.45; width: max-content; }
 .bubble .md-table th, .bubble .md-table td {
   border: 1px solid var(--border-strong); padding: 5px 10px; text-align: left; vertical-align: top;
+  word-break: normal; overflow-wrap: anywhere; max-width: 340px;
 }
 .bubble .md-table th { background: rgba(0,0,0,.25); font-weight: 600; white-space: nowrap; }
+/* Make the horizontal scrollbar visible (macOS hides overlay bars, and a
+   mouse wheel can't scroll x on its own) so the overflow is discoverable. */
+.bubble .md-table-wrap::-webkit-scrollbar { height: 8px; }
+.bubble .md-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--border-strong); border-radius: 4px;
+}
 .bubble .md-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 .bubble a { color: var(--a2); text-decoration: underline; text-underline-offset: 2px; }
 .bubble .who { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin-bottom: 5px; }
