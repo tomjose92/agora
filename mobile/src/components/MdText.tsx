@@ -55,7 +55,13 @@ export function MdText({ text }: { text: string }) {
             );
           case "table":
             return (
-              <ScrollView key={i} horizontal style={styles.tableWrap}>
+              <ScrollView
+                key={i}
+                horizontal
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator
+                style={styles.tableWrap}
+              >
                 <View>
                   <View style={[styles.tr, styles.thead]}>
                     {b.head.map((cell, c) => (
@@ -120,6 +126,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderStrong,
     borderRadius: 8,
+    // A definite upper bound gives the horizontal ScrollView a viewport to
+    // scroll within, rather than growing to content width and clipping.
+    alignSelf: "flex-start",
+    maxWidth: "100%",
   },
   thead: { backgroundColor: colors.panelStrong },
   tr: {
@@ -127,5 +137,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  cell: { color: colors.text, fontSize: 13.5, paddingVertical: 6, paddingHorizontal: 10, minWidth: 80 },
+  // Columns size to content between a floor and a cap (long cells wrap at the
+  // cap instead of forcing one giant line); flexShrink:0 keeps them from
+  // collapsing so a wide table overflows and the wrap scrolls horizontally.
+  cell: {
+    color: colors.text,
+    fontSize: 13.5,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    minWidth: 80,
+    maxWidth: 260,
+    flexShrink: 0,
+  },
 });
