@@ -37,13 +37,28 @@ function Spans({ spans }: { spans: Span[] }) {
 
 export function MdText({ text }: { text: string }) {
   const blocks = React.useMemo(() => parseMd(text), [text]);
+  // A horizontal ScrollView only scrolls when its own frame is narrower than
+  // its content. Inside a shrink-to-fit bubble nothing hands it a definite
+  // width, so it grows to content width and the bubble just clips it. Measure
+  // the width the bubble actually gives this block (align-items:stretch makes
+  // it the bubble's inner width) and cap the table to that — then a wide table
+  // overflows the frame and scrolls. Undefined until first layout.
+  const [width, setWidth] = React.useState<number>();
   return (
-    <View style={styles.root}>
+    <View
+      style={styles.root}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
       {blocks.map((b, i) => {
         switch (b.kind) {
           case "codeblock":
             return (
-              <ScrollView key={i} horizontal style={styles.pre}>
+              <ScrollView
+                key={i}
+                horizontal
+                showsHorizontalScrollIndicator
+                style={[styles.pre, width ? { maxWidth: width } : null]}
+              >
                 <Text style={styles.preText}>{b.text}</Text>
               </ScrollView>
             );
@@ -60,7 +75,7 @@ export function MdText({ text }: { text: string }) {
                 horizontal
                 nestedScrollEnabled
                 showsHorizontalScrollIndicator
-                style={styles.tableWrap}
+                style={[styles.tableWrap, width ? { maxWidth: width } : null]}
               >
                 <View>
                   <View style={[styles.tr, styles.thead]}>
@@ -126,10 +141,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderStrong,
     borderRadius: 8,
-    // A definite upper bound gives the horizontal ScrollView a viewport to
-    // scroll within, rather than growing to content width and clipping.
+    // flex-start so a wide table fills the measured cap (see maxWidth applied
+    // inline) instead of stretching to whatever the text above happens to be.
     alignSelf: "flex-start",
-    maxWidth: "100%",
   },
   thead: { backgroundColor: colors.panelStrong },
   tr: {

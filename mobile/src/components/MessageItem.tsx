@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
   },
   avatarInitial: { color: colors.a2, fontSize: 14, fontWeight: "700" },
   bubble: {
-    maxWidth: "78%",
+    maxWidth: "86%",
     borderRadius: 16,
     paddingHorizontal: 13,
     paddingVertical: 9,
