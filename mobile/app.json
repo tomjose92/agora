@@ -4,7 +4,7 @@
     "slug": "agora",
     "version": "0.1.0",
     "scheme": "agora",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#101216",
