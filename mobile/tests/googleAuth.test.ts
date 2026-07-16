@@ -18,6 +18,14 @@ describe("parseRedirect", () => {
   it("returns empty for redirects with no query", () => {
     expect(parseRedirect("agora://auth")).toEqual({});
   });
+  it("strips the fragment Safari inherits from Google's redirect chain", () => {
+    // Regression: an empty trailing `#` was glued onto the token, corrupting
+    // it and 401ing every mobile Google sign-in.
+    expect(parseRedirect("agora://auth?token=eyJ1IjoibWUifQ.c2ln#")).toEqual({
+      token: "eyJ1IjoibWUifQ.c2ln",
+    });
+    expect(parseRedirect("agora://auth?token=t0k#some=fragment")).toEqual({ token: "t0k" });
+  });
 });
 
 describe("signInErrorMessage", () => {
