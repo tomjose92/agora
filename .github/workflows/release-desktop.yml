@@ -11,8 +11,8 @@
 # - TAURI_SIGNING_PRIVATE_KEY: contents of ~/.tauri/agora_updater.key
 #   (signs updater artifacts; the matching pubkey is in tauri.conf.json).
 #
-# Apple signing/notarization secrets (Phase 4 — the workflow ad-hoc signs
-# until these exist, which builds fine but downloads hit Gatekeeper):
+# Apple signing/notarization secrets (required — the build signs with the
+# Developer ID cert and notarizes the app so downloads pass Gatekeeper):
 # - APPLE_CERTIFICATE: base64 of the Developer ID Application .p12
 # - APPLE_CERTIFICATE_PASSWORD: password for that .p12
 # - APPLE_SIGNING_IDENTITY: e.g. "Developer ID Application: Tom Jose (TEAM)"
@@ -54,17 +54,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Updater artifact signing (required).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          # Apple code signing: ad-hoc ("-") until the Developer ID secrets
-          # land; the env var overrides the dev identity in tauri.conf.json.
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          # Phase 4 — uncomment once the Developer ID secrets exist. They must
-          # stay absent (not empty) until then: the bundler treats a set-but-
-          # empty APPLE_CERTIFICATE as a real cert and fails importing it.
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Apple code signing + notarization. APPLE_SIGNING_IDENTITY overrides
+          # the dev identity in tauri.conf.json; the cert is imported into a
+          # temporary keychain by tauri-action.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: crates/agora-desktop
           tagName: ${{ github.ref_name }}
