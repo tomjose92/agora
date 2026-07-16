@@ -28,7 +28,7 @@ the upgrade path.
 ## Getting started
 
 ```bash
-# 1. run a server somewhere (prints the owner token on boot)
+# 1. run a server somewhere (prints the admin key on boot)
 cargo run -p agora-server
 
 # 2. run the app
@@ -37,7 +37,7 @@ npm install
 npm run ios        # or: npm run android
 ```
 
-On first launch the app asks for the server URL and owner token; both are
+On first launch the app asks for the server URL and admin key; both are
 kept in the OS keychain. Sign out from Settings to switch servers.
 
 ## Development

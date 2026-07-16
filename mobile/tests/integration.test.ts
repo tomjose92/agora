@@ -56,7 +56,7 @@ async function startServer(): Promise<Server> {
           cwd: REPO_ROOT,
         });
 
-    // The server prints its bound address and owner token on boot.
+    // The server prints its bound address and admin key on boot.
     try {
       const session = await new Promise<Session>((resolve, reject) => {
         let out = "";
@@ -67,7 +67,7 @@ async function startServer(): Promise<Server> {
         timeout.unref();
         const scan = () => {
           const addr = /Agora ready at (http:\/\/[^\s]+)/.exec(out);
-          const token = /Owner token: ([0-9a-f]+)/.exec(out);
+          const token = /Admin key: ([0-9a-f]+)/.exec(out);
           if (addr && token) {
             clearTimeout(timeout);
             resolve({ baseUrl: addr[1], token: token[1] });

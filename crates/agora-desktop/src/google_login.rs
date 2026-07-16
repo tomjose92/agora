@@ -4,7 +4,7 @@
 //! at the remote server's `/api/auth/google/start?next=http://127.0.0.1:PORT/callback`
 //! (Google refuses to run OAuth inside embedded webviews), and waits for the
 //! server's callback to bounce the freshly minted session token back to the
-//! listener. The token then takes the owner token's place in `desktop.json`.
+//! listener. The token then takes the admin key's place in `desktop.json`.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;

@@ -6,7 +6,7 @@
 //!   has exactly one environment.
 //! - **remote**: skip the local hub entirely and point the window at a
 //!   deployed agora-server (the bundled `connect.html` page validates the
-//!   URL + owner token and flips modes).
+//!   URL + admin key and flips modes).
 //!
 //! In embedded mode the hub must outlive the window: agents reply
 //! asynchronously and their messages land in this process's database. So
@@ -29,6 +29,8 @@ mod google_login;
 mod notify;
 mod remote_notify;
 mod settings;
+#[cfg(feature = "updater")]
+mod updater;
 
 use settings::{DesktopSettings, Mode};
 
@@ -70,7 +72,10 @@ fn main() {
         )
         .init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "updater")]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .plugin(tauri_plugin_notification::init())
         // target="_blank" links in the UI open in the system browser instead
         // of dying inside the webview (see capabilities/remote.json).
@@ -88,14 +93,26 @@ fn main() {
             let server = SubmenuBuilder::new(handle, "Server")
                 .text("server-settings", "Server Settings…")
                 .separator()
-                .text("sign-out", "Sign Out")
-                .build()?;
-            menu.append(&server)?;
+                .text("sign-out", "Sign Out");
+            #[cfg(feature = "updater")]
+            let server = server.separator().text("check-updates", "Check for Updates…");
+            menu.append(&server.build()?)?;
             Ok(menu)
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
             "server-settings" => open_main(app, connect_page_url(true)),
             "sign-out" => sign_out(app),
+            #[cfg(feature = "updater")]
+            "check-updates" => {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let notify_handle = handle.clone();
+                    updater::check_from_menu(handle, move |title, body| {
+                        deliver_notification(&notify_handle, title, body);
+                    })
+                    .await;
+                });
+            }
             _ => {}
         })
         .on_window_event(|window, event| {
@@ -129,6 +146,18 @@ fn main() {
             let data_dir = app.path().app_data_dir()?;
             let desktop = settings::load(&data_dir);
             sync_remote_notifier(&handle, &desktop);
+            // Background update check; quiet unless something was installed.
+            #[cfg(feature = "updater")]
+            {
+                let update_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let notify_handle = update_handle.clone();
+                    updater::check_on_startup(update_handle, move |title, body| {
+                        deliver_notification(&notify_handle, title, body);
+                    })
+                    .await;
+                });
+            }
             tauri::async_runtime::spawn(async move {
                 match desktop.mode {
                     // Remote: open the connect page; it validates the stored
@@ -216,7 +245,7 @@ async fn ensure_embedded(handle: &AppHandle) -> anyhow::Result<&'static Embedded
             }));
             Ok(Embedded {
                 addr: core.addr,
-                token: core.state.config.owner_token(),
+                token: core.state.config.admin_key(),
             })
         })
         .await
@@ -239,7 +268,7 @@ async fn set_server_settings(app: AppHandle, settings: DesktopSettings) -> Resul
         Mode::Remote => {
             let url = settings
                 .remote_url()
-                .ok_or("Server URL and owner token are both required")?;
+                .ok_or("Server URL and admin key are both required")?;
             validate_remote(&settings).await?;
             settings::save(&data_dir, &settings).map_err(|e| e.to_string())?;
             open_main(&app, url.parse().map_err(|_| "Invalid server URL")?);
@@ -292,10 +321,10 @@ async fn open_current_server(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Menu sign-out. Remote mode: drop the stored session/owner token (the
+/// Menu sign-out. Remote mode: drop the stored session/admin key (the
 /// server URL stays, so the connect page lands on its sign-in step) and stop
 /// the notifier socket that was using it. Embedded mode has no credential to
-/// drop — the local owner token *is* the server — so just open the picker.
+/// drop — the local admin key *is* the server — so just open the picker.
 fn sign_out(app: &AppHandle) {
     let Ok(data_dir) = app.path().app_data_dir() else { return };
     let mut stored = settings::load(&data_dir);
@@ -316,7 +345,7 @@ fn sign_out(app: &AppHandle) {
 /// What sign-in methods a server offers. The connect page calls this before
 /// showing its sign-in step (the webview can't fetch a remote origin itself —
 /// CORS). Unreachable hosts are an Err; a reachable host that doesn't answer
-/// the probe as expected still allows owner-token sign-in.
+/// the probe as expected still allows admin-key sign-in.
 #[tauri::command]
 async fn probe_server(url: String) -> Result<serde_json::Value, String> {
     let base = url.trim().trim_end_matches('/').to_string();
@@ -347,7 +376,7 @@ async fn probe_server(url: String) -> Result<serde_json::Value, String> {
 
 /// Google sign-in against a remote server: run the loopback OAuth dance in
 /// the system browser, then persist the returned session token exactly like
-/// a pasted owner token (remote mode) and navigate to the server.
+/// a pasted admin key (remote mode) and navigate to the server.
 #[tauri::command]
 async fn google_sign_in(
     app: AppHandle,
@@ -373,7 +402,7 @@ async fn google_sign_in(
     Ok(())
 }
 
-/// GET /api/me with the owner token; distinguishes bad-token from unreachable.
+/// GET /api/me with the admin key; distinguishes bad-token from unreachable.
 async fn validate_remote(settings: &DesktopSettings) -> Result<(), String> {
     let base = settings
         .url
@@ -392,7 +421,7 @@ async fn validate_remote(settings: &DesktopSettings) -> Result<(), String> {
             .call();
         match response {
             Ok(_) => Ok(()),
-            Err(ureq::Error::Status(401, _)) => Err("The server rejected that owner token".into()),
+            Err(ureq::Error::Status(401, _)) => Err("The server rejected that admin key".into()),
             Err(ureq::Error::Status(code, _)) => {
                 Err(format!("Server responded with HTTP {code} — is that an Agora server?"))
             }

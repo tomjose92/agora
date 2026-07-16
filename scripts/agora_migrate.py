@@ -5,7 +5,7 @@ instances — any combination of local data dirs and live servers.
   # laptop desktop app -> hosted Railway deployment
   scripts/agora_migrate.py \
       --from "~/Library/Application Support/app.agora.desktop" \
-      --to https://agora.up.railway.app --to-token OWNERTOKEN
+      --to https://agora.up.railway.app --to-token ADMINKEY
 
   # hosted -> hosted (replace whatever the target has)
   scripts/agora_migrate.py \
@@ -17,7 +17,7 @@ instances — any combination of local data dirs and live servers.
       --from https://agora.up.railway.app --from-token AAA \
       --to "~/Library/Application Support/app.agora.desktop" --replace
 
-Sources/targets starting with http(s):// are live servers (owner token
+Sources/targets starting with http(s):// are live servers (admin key
 required); anything else is a data dir on this machine. Tokens and bind
 settings never migrate — each instance keeps its own config.json.
 
@@ -178,8 +178,8 @@ def main() -> None:
                         help="source: data dir or http(s) URL")
     parser.add_argument("--to", dest="target",
                         help="target: data dir or http(s) URL (optional with --save)")
-    parser.add_argument("--from-token", default="", help="owner token (URL source)")
-    parser.add_argument("--to-token", default="", help="owner token (URL target)")
+    parser.add_argument("--from-token", default="", help="admin key (URL source)")
+    parser.add_argument("--to-token", default="", help="admin key (URL target)")
     parser.add_argument("--replace", action="store_true",
                         help="overwrite a target that already has data")
     parser.add_argument("--save", metavar="FILE",

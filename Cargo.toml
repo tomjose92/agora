@@ -26,6 +26,10 @@ rand = "0.8"
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
+# Sign in with Apple: the identity token is a plain RS256 JWT verified against
+# Apple's public JWKS — unlike Google there is no trusted TLS back-channel, so
+# real signature verification is required.
+jsonwebtoken = "9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"

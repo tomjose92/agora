@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agora — Privacy Policy</title>
+  <meta name="description" content="Privacy policy for the Agora iOS and desktop apps." />
+  <style>
+    :root {
+      --bg: #101216; --panel: #171a20; --border: #262b34;
+      --text: #e7eaf0; --dim: #9aa3b2; --accent: #7aa2f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 24px 80px; }
+    h1 { font-size: 26px; margin: 0 0 4px; }
+    .updated { color: var(--dim); font-size: 14px; margin-bottom: 32px; }
+    h2 { font-size: 19px; margin: 34px 0 10px; }
+    p, li { color: var(--dim); }
+    strong { color: var(--text); font-weight: 600; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    footer { margin-top: 56px; color: var(--dim); font-size: 14px; border-top: 1px solid var(--border); padding-top: 20px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Agora Privacy Policy</h1>
+  <p class="updated">Last updated: July 16, 2026</p>
+
+  <p>
+    Agora is a self-hosted chat application. The short version:
+    <strong>we do not collect, store, or sell any of your data.</strong>
+    The Agora apps are clients for a server that you (or someone you trust)
+    run — your data goes to that server and nowhere else.
+  </p>
+
+  <h2>Data the apps collect</h2>
+  <p>
+    None. The Agora iOS and desktop apps contain no analytics, no advertising,
+    no tracking, and no third-party data collection SDKs. The developer
+    operates no backend that receives your content or usage data.
+  </p>
+
+  <h2>Where your data lives</h2>
+  <p>
+    Everything you create in Agora — messages, attachments, groups, channels,
+    read state — is stored on the Agora server <strong>you configure</strong>
+    when you set up the app. That server is operated by you or by whoever gave
+    you its address, not by the developer of the app. Your server address and
+    sign-in token are stored on your device in the operating system's secure
+    keychain.
+  </p>
+
+  <h2>Sign in with Apple and Google</h2>
+  <p>
+    If your server has them enabled, you can sign in with Apple or Google.
+    These are used solely to prove your identity to <strong>your own
+    server</strong>: the server checks that your account's email address is on
+    its allowlist and issues a session. Apple and Google sign-in tokens are
+    verified and immediately discarded — they are never stored, and no data is
+    shared with the developer. With Sign in with Apple you may use Apple's
+    "Hide My Email" relay.
+  </p>
+
+  <h2>Notifications, microphone and photos</h2>
+  <ul>
+    <li><strong>Notifications</strong> are generated locally on your device from your server's events.</li>
+    <li><strong>Microphone</strong> access is used only when you record a voice message or use live voice; audio is sent to your server.</li>
+    <li><strong>Photo library and camera</strong> access is used only when you attach an image to a message.</li>
+  </ul>
+
+  <h2>Deleting your account and data</h2>
+  <p>
+    In the app, go to <strong>Settings&nbsp;&rarr;&nbsp;Delete account</strong>.
+    This permanently deletes your messages, attachments, stars and read history
+    from the server you are signed in to, revokes every active session, and
+    signs you out. Because the server is self-hosted, its operator can also
+    remove the entire instance — and all data with it — at any time.
+  </p>
+
+  <h2>Children</h2>
+  <p>
+    Agora is not directed at children under 13 and does not knowingly collect
+    information from them (it collects no information from anyone).
+  </p>
+
+  <h2>Changes to this policy</h2>
+  <p>
+    If this policy changes, the updated version will be published at this page
+    with a new "last updated" date.
+  </p>
+
+  <h2>Contact</h2>
+  <p>
+    Questions about privacy? <a href="https://github.com/tomjose92/agora/issues">Open an issue on GitHub</a>.
+  </p>
+
+  <footer>
+    <a href="index.html">Support</a> ·
+    <a href="https://github.com/tomjose92/agora">GitHub</a>
+  </footer>
+</main>
+</body>
+</html>
