@@ -7,7 +7,8 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { ScrollView, StyleSheet } from "react-native";
-import { MdText } from "../src/components/MdText";
+import { columnWidths, MdText } from "../src/components/MdText";
+import { parseInline, type Span } from "../src/lib/mdlite";
 
 const TABLE = "| Category | Transactions | USD |\n|---|---|---|\n| PAI ATM | 3 | $159.00 |";
 
@@ -32,7 +33,9 @@ test("table ScrollView has no definite width before layout, and the measured wid
   expect(maxWidthOf(scroll().props.style)).toBeUndefined();
 
   // The root View carries the onLayout; feeding it the bubble's inner width…
-  const layoutHost = tree.root.findAll((n) => typeof n.props.onLayout === "function")[0];
+  const layoutHost = tree.root.findAll(
+    (n: TestRenderer.ReactTestInstance) => typeof n.props.onLayout === "function",
+  )[0];
   fireLayout(layoutHost, 260);
 
   // …caps the table's ScrollView to that definite pixel width, so a wider
@@ -47,7 +50,88 @@ test("code block ScrollView is capped to the measured width too", () => {
       React.createElement(MdText, { text: "```\na very long line of code goes here\n```" }),
     );
   });
-  const layoutHost = tree.root.findAll((n) => typeof n.props.onLayout === "function")[0];
+  const layoutHost = tree.root.findAll(
+    (n: TestRenderer.ReactTestInstance) => typeof n.props.onLayout === "function",
+  )[0];
   fireLayout(layoutHost, 300);
   expect(maxWidthOf(tree.root.findAllByType(ScrollView)[0].props.style)).toBe(300);
+});
+
+/* ------------------------------------------------------------ column widths
+   Columns must be sized once for the whole table (so rows align), fit their
+   widest typical value, and let a rare outlier wrap instead of dragging the
+   column wide. */
+
+function cells(...texts: string[]): Span[][] {
+  return texts.map(parseInline);
+}
+
+test("every cell in a column gets the same fixed width", () => {
+  const table =
+    "| Date | Item | Amount |\n|---|---|---|\n" +
+    "| 25 Jun | TST*ULA, San Francisco | USD 198.22 |\n" +
+    "| 3 Jul | Netflix, Mumbai | ₹649.00 |";
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(MdText, { text: table }));
+  });
+  const rows = tree.root
+    .findAllByType(ScrollView)[0]
+    .findAll((n: TestRenderer.ReactTestInstance) => {
+      if (typeof n.type !== "string") return false; // host elements only, no composite twins
+      const s = StyleSheet.flatten(n.props.style ?? {}) as { flexDirection?: string };
+      return s.flexDirection === "row";
+    });
+  expect(rows.length).toBe(3); // header + 2 body rows
+  const widthsPerRow = rows.map((row) =>
+    row.children
+      .filter((ch): ch is TestRenderer.ReactTestInstance => typeof ch !== "string")
+      .map((cell) => (StyleSheet.flatten(cell.props.style) as { width?: number }).width),
+  );
+  expect(widthsPerRow[1]).toEqual(widthsPerRow[0]);
+  expect(widthsPerRow[2]).toEqual(widthsPerRow[0]);
+  for (const w of widthsPerRow[0]) expect(typeof w).toBe("number");
+});
+
+test("a column sizes to its widest typical value", () => {
+  const [w] = columnWidths(cells("Amount"), [
+    cells("₹18,741.70"),
+    cells("₹3,810.80"),
+    cells("₹1,531.48"),
+  ]);
+  // Fits the longest value on one line (10 chars ≈ 100px incl. padding).
+  expect(w).toBeGreaterThanOrEqual(100);
+  expect(w).toBeLessThan(140);
+});
+
+test("an outlier value wraps instead of widening the column", () => {
+  const typical = columnWidths(cells("Item"), [
+    cells("Netflix"),
+    cells("PELAGO"),
+    cells("YouTube"),
+  ])[0];
+  const withOutlier = columnWidths(cells("Item"), [
+    cells("Netflix"),
+    cells("PELAGO"),
+    cells("YouTube"),
+    cells("EMI The Store Plumb, Reno — USD 33.00 (24 installments)"),
+  ])[0];
+  // The outlier may nudge the column a little (p75 shifts) but must stay far
+  // below the width that would fit it on one line (56 chars ≈ 470px).
+  expect(withOutlier).toBeLessThan(200);
+  expect(withOutlier).toBeGreaterThanOrEqual(typical);
+});
+
+test("a long header widens the column rather than wrapping", () => {
+  const [w] = columnWidths(cells("Supported fee / GST"), [cells("₹67.47"), cells("₹2.95")]);
+  // 19 header chars ≈ 172px incl. padding — the header must fit.
+  expect(w).toBeGreaterThanOrEqual(19 * 8 + 20);
+});
+
+test("columns are clamped to sane bounds", () => {
+  const [narrow] = columnWidths(cells("#"), [cells("1"), cells("2")]);
+  expect(narrow).toBe(80); // MIN_COL floor
+  const long = "x".repeat(200);
+  const [wide] = columnWidths(cells("Text"), [cells(long), cells(long), cells(long)]);
+  expect(wide).toBe(260); // MAX_COL ceiling — uniform long text still caps
 });

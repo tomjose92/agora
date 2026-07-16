@@ -113,45 +113,55 @@ export function MessageItem({
       </Pressable>
     ) : null;
 
+  /* Long-press-to-star must NOT come from a Pressable wrapping the bubble:
+     on the iOS new architecture a parent Pressable steals the pan gesture
+     from a nested horizontal ScrollView (facebook/react-native#56879), which
+     made wide markdown tables unscrollable. Instead the text blocks carry
+     onLongPress themselves (via MdText) and an absolute-fill backdrop behind
+     the content catches long-presses on the bubble's padding and gaps — the
+     table's ScrollView never has a Pressable ancestor. */
+  const longPress = onLongPress ? () => onLongPress(message) : undefined;
+  const pressBackdrop = longPress ? (
+    <Pressable style={StyleSheet.absoluteFill} onLongPress={longPress} delayLongPress={300} />
+  ) : null;
+
   if (mine) {
     return (
-      <Pressable onLongPress={() => onLongPress?.(message)} delayLongPress={300}>
-        <View style={[styles.row, styles.rowMine]}>
-          <View style={[styles.bubble, styles.bubbleMine]}>
-            <MdText text={message.text} />
-            <Attachments session={session} attachments={message.attachments ?? []} />
-            <MessageOptions message={message} />
-            <View style={styles.foot}>
-              {flags}
-              <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
-            </View>
-            {replies}
+      <View style={[styles.row, styles.rowMine]}>
+        <View style={[styles.bubble, styles.bubbleMine]}>
+          {pressBackdrop}
+          <MdText text={message.text} onLongPress={longPress} />
+          <Attachments session={session} attachments={message.attachments ?? []} />
+          <MessageOptions message={message} />
+          <View style={styles.foot}>
+            {flags}
+            <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
           </View>
+          {replies}
         </View>
-      </Pressable>
+      </View>
     );
   }
 
   return (
-    <Pressable onLongPress={() => onLongPress?.(message)} delayLongPress={300}>
-      <View style={styles.row}>
-        <Avatar message={message} />
-        <View style={[styles.bubble, styles.bubbleOther]}>
-          <View style={styles.head}>
-            <Text style={styles.author} numberOfLines={1}>
-              {message.author_name || message.author_id}
-              {message.author_type === "agent" ? <Text style={styles.agentTag}> · agent</Text> : null}
-            </Text>
-            {flags}
-            <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
-          </View>
-          <MdText text={message.text} />
-          <Attachments session={session} attachments={message.attachments ?? []} />
-          <MessageOptions message={message} />
-          {replies}
+    <View style={styles.row}>
+      <Avatar message={message} />
+      <View style={[styles.bubble, styles.bubbleOther]}>
+        {pressBackdrop}
+        <View style={styles.head}>
+          <Text style={styles.author} numberOfLines={1}>
+            {message.author_name || message.author_id}
+            {message.author_type === "agent" ? <Text style={styles.agentTag}> · agent</Text> : null}
+          </Text>
+          {flags}
+          <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
         </View>
+        <MdText text={message.text} onLongPress={longPress} />
+        <Attachments session={session} attachments={message.attachments ?? []} />
+        <MessageOptions message={message} />
+        {replies}
       </View>
-    </Pressable>
+    </View>
   );
 }
 
