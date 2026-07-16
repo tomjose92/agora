@@ -714,6 +714,78 @@ impl Store {
         deleted
     }
 
+    /// Erase everything keyed to a user, for account deletion: authored
+    /// messages (threads they started go whole — replies pointing at a
+    /// deleted root would dangle) with their attachments, plus stars, read
+    /// markers, hidden threads, mentions, pins and memberships. Groups they
+    /// created stay (they are shared spaces), only the `created_by`
+    /// provenance is cleared.
+    pub fn delete_user_data(&self, username: &str) {
+        let file_ids: Vec<String>;
+        {
+            let conn = self.conn.lock().unwrap();
+            let message_ids: Vec<i64> = {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT id FROM messages WHERE (author_type = 'user' AND author_id = ?1) \
+                           OR thread_id IN (SELECT id FROM messages \
+                                            WHERE author_type = 'user' AND author_id = ?1)",
+                    )
+                    .unwrap();
+                stmt.query_map(params![username], |r| r.get::<_, i64>(0))
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .collect()
+            };
+            file_ids = if message_ids.is_empty() {
+                Vec::new()
+            } else {
+                let placeholders = vec!["?"; message_ids.len()].join(",");
+                let ids = {
+                    let mut stmt = conn
+                        .prepare(&format!(
+                            "SELECT id FROM files WHERE message_id IN ({placeholders})"
+                        ))
+                        .unwrap();
+                    stmt.query_map(params_from_iter(message_ids.iter()), |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .collect()
+                };
+                for table in ["messages", "files", "pins", "stars", "mentions"] {
+                    let column = if table == "messages" { "id" } else { "message_id" };
+                    conn.execute(
+                        &format!("DELETE FROM {table} WHERE {column} IN ({placeholders})"),
+                        params_from_iter(message_ids.iter()),
+                    )
+                    .unwrap();
+                }
+                ids
+            };
+            for table in ["stars", "reads", "thread_reads", "thread_hides", "mentions"] {
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE username = ?1"),
+                    params![username],
+                )
+                .unwrap();
+            }
+            conn.execute("DELETE FROM pins WHERE pinned_by = ?1", params![username]).unwrap();
+            conn.execute(
+                "DELETE FROM memberships WHERE member_type = 'user' AND member_id = ?1",
+                params![username],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE groups SET created_by = NULL WHERE created_by = ?1",
+                params![username],
+            )
+            .unwrap();
+        }
+        self.unlink_files(&file_ids);
+    }
+
     // ------------------------------------------------------------- members
 
     pub fn add_member(
@@ -1780,6 +1852,54 @@ mod tests {
         assert!(s.group(gid).is_none());
         assert!(s.channel(cid).is_none());
         assert_eq!(s.messages(cid, None, None, 50).len(), 0);
+    }
+
+    #[test]
+    fn delete_user_data_sweeps_everything_user_keyed() {
+        let s = store();
+        let g = s.create_group("Health", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+
+        // Tom starts a thread (with an attachment); an agent replies in it and
+        // also posts its own top-level message that Tom stars/pins/mentions.
+        let att = NewAttachment {
+            filename: "note.txt".into(),
+            mime: "text/plain".into(),
+            data: b"hello".to_vec(),
+        };
+        let root = s.add_message(cid, "mine", "user", "tom", Some("Tom"), None, &[att]);
+        let root_id = root["id"].as_i64().unwrap();
+        s.add_message(cid, "reply", "agent", "bot", Some("Bot"), Some(root_id), &[]);
+        let other = s.add_message(cid, "agent news", "agent", "bot", Some("Bot"), None, &[]);
+        let other_id = other["id"].as_i64().unwrap();
+        s.star_message("tom", cid, other_id);
+        s.pin_message(cid, other_id, Some("tom"));
+        s.add_mentions(other_id, cid, &["tom".to_string()]);
+        s.mark_read("tom", cid, Some(other_id));
+        s.mark_thread_read("tom", root_id, Some(root_id));
+        s.hide_thread("tom", root_id);
+        let file_id = root["attachments"][0]["id"].as_str().unwrap().to_string();
+
+        s.delete_user_data("tom");
+
+        // Tom's thread is gone whole (root + agent reply); the agent's own
+        // top-level message survives.
+        assert!(s.message(root_id).is_none());
+        let remaining = s.messages(cid, None, None, 50);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0]["id"].as_i64().unwrap(), other_id);
+        assert!(s.file(&file_id).is_none());
+        // FTS no longer finds the deleted text.
+        assert!(s.search_messages("mine", false, None, None, None, None, false, 10, 0).is_empty());
+
+        // Every user-keyed row is gone; group provenance is cleared.
+        assert!(s.user_stars("tom", cid).is_empty());
+        assert!(s.channel_pins(cid).is_empty());
+        assert!(s.my_threads("tom", 50).is_empty());
+        assert!(!s.user_in_group("tom", gid));
+        assert!(s.group(gid).unwrap()["created_by"].is_null());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-/* Server URL + owner token live in the OS keychain (the token is root on the
+/* Server URL + admin key live in the OS keychain (the token is root on the
    instance — never AsyncStorage). The store exposes a ready ApiClient once
    signed in. */
 
@@ -15,7 +15,9 @@ import type { Me } from "../api/types";
 
 /* Shared with the background poller, which reads credentials without the store. */
 export const KEY_URL = "agora_server_url";
-export const KEY_TOKEN = "agora_owner_token";
+export const KEY_TOKEN = "agora_admin_key";
+/** Pre-rename keychain slot ("owner token" era); migrated in load(). */
+const KEY_TOKEN_LEGACY = "agora_owner_token";
 
 type Status = "loading" | "signedOut" | "signedIn";
 
@@ -44,10 +46,19 @@ export const useSession = create<SessionState>((set) => ({
   savedUrl: "",
 
   async load() {
-    const [baseUrl, token] = await Promise.all([
+    let [baseUrl, token] = await Promise.all([
       SecureStore.getItemAsync(KEY_URL),
       SecureStore.getItemAsync(KEY_TOKEN),
     ]);
+    // One-time keychain migration from the pre-rename slot.
+    if (!token) {
+      const legacy = await SecureStore.getItemAsync(KEY_TOKEN_LEGACY);
+      if (legacy) {
+        token = legacy;
+        await SecureStore.setItemAsync(KEY_TOKEN, legacy);
+        await SecureStore.deleteItemAsync(KEY_TOKEN_LEGACY);
+      }
+    }
     if (!baseUrl || !token) {
       set({ status: "signedOut", session: null, savedUrl: baseUrl || "" });
       return;

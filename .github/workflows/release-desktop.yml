@@ -1,0 +1,72 @@
+# Desktop release pipeline: push a tag like v0.2.0 and this builds the macOS
+# app (universal: Apple Silicon + Intel), produces the DMG + signed updater
+# artifacts + the latest.json feed, and attaches everything to a draft GitHub
+# Release. Publish the draft to ship it — the app's updater polls
+# releases/latest/download/latest.json, which only sees published releases.
+#
+# Before tagging: bump the version in crates/agora-desktop/tauri.conf.json
+# and the workspace version in Cargo.toml so artifacts match the tag.
+#
+# Required repository secret (Settings → Secrets and variables → Actions):
+# - TAURI_SIGNING_PRIVATE_KEY: contents of ~/.tauri/agora_updater.key
+#   (signs updater artifacts; the matching pubkey is in tauri.conf.json).
+#
+# Apple signing/notarization secrets (Phase 4 — the workflow ad-hoc signs
+# until these exist, which builds fine but downloads hit Gatekeeper):
+# - APPLE_CERTIFICATE: base64 of the Developer ID Application .p12
+# - APPLE_CERTIFICATE_PASSWORD: password for that .p12
+# - APPLE_SIGNING_IDENTITY: e.g. "Developer ID Application: Tom Jose (TEAM)"
+# - APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID: notarytool credentials
+#   (APPLE_PASSWORD is an app-specific password for the Apple ID)
+
+name: Release desktop app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (universal targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build, sign and draft the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater artifact signing (required).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # Apple code signing: ad-hoc ("-") until the Developer ID secrets
+          # land; the env var overrides the dev identity in tauri.conf.json.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # Notarization (skipped automatically while these are unset).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: crates/agora-desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "Agora ${{ github.ref_name }}"
+          releaseBody: "See the commit history for changes."
+          releaseDraft: true
+          args: --target universal-apple-darwin

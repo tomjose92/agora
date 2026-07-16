@@ -1,12 +1,20 @@
-//! Google sign-in (OIDC authorization-code flow) + signed session tokens.
+//! Google + Apple sign-in and the signed session tokens both mint.
 //!
-//! Ported from Pantheo's `engine/auth/{oauth,tokens}.py`: the browser is sent
-//! to Google's consent screen, the callback exchanges the returned code for an
-//! `id_token` over a TLS back-channel, and we trust its claims after checking
+//! Google (OIDC authorization-code flow) is ported from Pantheo's
+//! `engine/auth/{oauth,tokens}.py`: the browser is sent to Google's consent
+//! screen, the callback exchanges the returned code for an `id_token` over a
+//! TLS back-channel, and we trust its claims after checking
 //! `iss`/`aud`/`exp`/`email_verified` (no JWKS fetch — the token comes straight
-//! from Google's token endpoint over TLS). A verified email on the configured
-//! allowlist earns a short-lived HMAC session token, accepted everywhere the
-//! owner token is. Google tokens themselves are never stored.
+//! from Google's token endpoint over TLS).
+//!
+//! Sign in with Apple takes the native path instead: the iOS app runs Apple's
+//! system sheet and posts the resulting identity token here. That token
+//! arrives from the client, not from Apple, so its RS256 signature must be
+//! verified against Apple's published JWKS before the claims mean anything.
+//!
+//! Either way, a verified email on the configured allowlist earns a
+//! short-lived HMAC session token, accepted everywhere the admin key is.
+//! Provider tokens themselves are never stored.
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -14,7 +22,7 @@ use hmac::{Hmac, Mac};
 use serde_json::Value;
 use sha2::Sha256;
 
-use crate::config::GoogleConfig;
+use crate::config::{AppleConfig, GoogleConfig};
 use crate::store::new_token;
 
 pub const GOOGLE_AUTH_URI: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -188,6 +196,99 @@ pub fn decode_id_token(id_token: &str, gc: &GoogleConfig) -> anyhow::Result<Stri
     Ok(email)
 }
 
+// ------------------------------------------------------ sign in with apple
+
+pub const APPLE_JWKS_URI: &str = "https://appleid.apple.com/auth/keys";
+const APPLE_ISSUER: &str = "https://appleid.apple.com";
+/// How long a fetched JWKS stays good. Apple rotates keys rarely; an unknown
+/// `kid` forces an early refetch anyway.
+const APPLE_JWKS_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// Fetch Apple's current signing keys (blocking — call via `spawn_blocking`).
+pub fn fetch_apple_jwks() -> anyhow::Result<Value> {
+    let response = ureq::get(APPLE_JWKS_URI)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .map_err(|e| anyhow::anyhow!("apple jwks fetch failed: {e}"))?;
+    Ok(serde_json::from_str(&response.into_string()?)?)
+}
+
+type JwksCache = std::sync::Mutex<Option<(std::time::Instant, Value)>>;
+
+fn apple_jwks_cache() -> &'static JwksCache {
+    static CACHE: std::sync::OnceLock<JwksCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Verify a client-supplied identity token end to end: JWKS lookup (cached,
+/// refetched once on an unknown `kid`), signature, claims, allowlist.
+/// Blocking — call via `spawn_blocking`.
+pub fn verify_apple_token(identity_token: &str, ac: &AppleConfig) -> anyhow::Result<String> {
+    let cached = {
+        let cache = apple_jwks_cache().lock().unwrap();
+        cache
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < APPLE_JWKS_TTL)
+            .map(|(_, jwks)| jwks.clone())
+    };
+    if let Some(jwks) = cached {
+        match verify_apple_identity_token(identity_token, &jwks, ac) {
+            Err(e) if e.to_string().contains("unknown signing key") => {}
+            done => return done,
+        }
+    }
+    let jwks = fetch_apple_jwks()?;
+    *apple_jwks_cache().lock().unwrap() = Some((std::time::Instant::now(), jwks.clone()));
+    verify_apple_identity_token(identity_token, &jwks, ac)
+}
+
+/// Validate an Apple identity token against a JWKS and return the signed-in
+/// email. Unlike the Google path this checks the RS256 signature: the token
+/// was relayed by the client, so nothing about the transport vouches for it.
+pub fn verify_apple_identity_token(
+    identity_token: &str,
+    jwks: &Value,
+    ac: &AppleConfig,
+) -> anyhow::Result<String> {
+    let header = jsonwebtoken::decode_header(identity_token)
+        .map_err(|_| anyhow::anyhow!("malformed identity token"))?;
+    let kid = header.kid.ok_or_else(|| anyhow::anyhow!("token has no kid"))?;
+    let key = jwks["keys"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|k| k["kid"].as_str() == Some(kid.as_str()))
+        .ok_or_else(|| anyhow::anyhow!("unknown signing key"))?;
+    let decoding = jsonwebtoken::DecodingKey::from_rsa_components(
+        key["n"].as_str().unwrap_or_default(),
+        key["e"].as_str().unwrap_or_default(),
+    )
+    .map_err(|_| anyhow::anyhow!("bad jwks key"))?;
+
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_issuer(&[APPLE_ISSUER]);
+    validation.set_audience(&[&ac.bundle_id]);
+    validation.leeway = CLOCK_SKEW as u64;
+    let claims = jsonwebtoken::decode::<Value>(identity_token, &decoding, &validation)
+        .map_err(|e| anyhow::anyhow!("identity token rejected: {e}"))?
+        .claims;
+
+    let email = claims["email"].as_str().unwrap_or_default().trim().to_lowercase();
+    if email.is_empty() {
+        anyhow::bail!("no email in token");
+    }
+    // Apple encodes booleans inconsistently here: sometimes true, sometimes "true".
+    let verified = claims["email_verified"] == Value::Bool(true)
+        || claims["email_verified"].as_str() == Some("true");
+    if !verified {
+        anyhow::bail!("email is not verified");
+    }
+    if !ac.allowed_emails.iter().any(|e| e == &email) {
+        anyhow::bail!("email is not on the allowlist");
+    }
+    Ok(email)
+}
+
 /// Minimal x-www-form-urlencoded builder (no extra dependency).
 pub fn form_urlencoded(pairs: &[(&str, &str)]) -> String {
     pairs
@@ -328,5 +429,122 @@ mod tests {
         assert_ne!(a, b);
         assert!(state_matches(&a, &a));
         assert!(!state_matches(&a, &b));
+    }
+
+    // ---------------------------------------------------------------- apple
+
+    /// Throwaway 2048-bit RSA key for signing test tokens — not a secret.
+    const TEST_RSA_PEM: &str = "-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA6+fO1BaqcQ8eS0acKWuKEJfhM49gJc+57MiwDUM+6xrzx2IF
++7vzGsD9+StigRE681ByuVacz3oKZ9KPeUju8qqkUQViF1NCphDPFkjCPlm1zABi
+ASCNEpoyqETRAa+PXsqQ3dUaYJmW2MN+pnvG/RKn0TdY3NTjNmKNK5g2v30NjGOV
+WLgFp9jj8+gp0WixRrIePiDYDxOiVIAnK9GxF2Qz0HT2iaEQScwX3WhTKzzuqYpq
+Wum6p4KBaQBsMk2JrwRyp6mjW0vWwBRpQnTPxx+pCVF5Tw5leHhTxtb2Jry3w/09
+3F+GaZ6RNb+Ei73NOFO6V9bDU1nCllt+VwsEAwIDAQABAoIBAFunBi5UWAfw7b4l
+Qsq84zkrKO2VSK+oEv4xwmSEuc8x+4B9TwHMtdixHntOJckrXpHlsYzcX7QkICLS
+JbfjZCKXtZtc0g1p5b0LTsnDnuQGiqEljO4PLYAKtJ+3jNRw1uznGn11K/hX88ln
+uq8H6/mq49RfAoFZnKUmiN5lFvAx8LPWfUenzQayOKiYfK+PvxhwWnea5hsb3swy
+AOKsTabC+ZGOxON7hSjiEt3EzlI7gE05D2Y6O6b6ya74H3skYZ4NRiSVSMsmezAS
+GN93XeL3XJ2f+8obVpuFzLWj5jVArnaD5j9oIbvE7istz3KKpqHv3xQgK4SE6IBt
+pJk8phECgYEA+gGKsFmvgHx9IKW43GiLugJVPMOdzOQjQok/zvBMEB5zXhbxaYAS
+RpRjl5D/9wwnbw89wmSuO9syKkMFIz2xKSzPoTzp9X/DcQK8Vn8wj25n75+HYohY
+Br3Hsy5Ski3GXpdMEwBntfK0gM1xyhT3xF7Y5c2Miaehr2xRzwePU+cCgYEA8Y+4
+ut4gBSJbgguic0XzXCtLDj2CZy8Fbbp5D0CY8x/nj8MfTltf7cyUroyjHZ00pBeZ
+7Sl46FW67amDNpV1lIt3ouM5UjL4recyYXOIzrDHp4HAqf0nkriN6vt8DAwJRfBc
+/Gpzyo27DSDwa0stddnqyJiIxBcNqoG1gDAKi4UCgYBJ22S+fnBTk/NfTrYTHyuQ
+Mxo9Tkjy+77S7DsWhnTiGizY8gw1r6k2gqX9Y8/KiyOnMqh7IkU616G1TIFbDOGm
+mV9pcdZoOWtimn1LTF3rMaGw778OQ9tFepFhhODN4IoG7cmCn48D+ISMvKTOH22m
+7KJFGXlYPVaNvYFZmRElpwKBgFJqjsRy9MnLpxz/izV5MEbKHpmFMvCxglClxpgF
+mimZQRAzqoK5eklP+4pyQVThRgyWYNYhyDa8yUI9C5+b7rn3u6G/lNcOvPnYX8AQ
+AyVB+1yTUICu9smAXitGElSp5qAOGiukxkzdfmxESMLSq3gCGbDHGiKNGwSJrLtH
+qNFhAoGBANFJFoLQSruwS5cNWnC8V+FpzIW9Kj88gFsjdwBewiHVocgpyGvr9dvf
+4RvFbwhM2d6rviMN181nVcNKOVrPJvyen3XB/UCK+hiq3H20KPcpecJpUP02X0M6
+UdeGy7DwA1AX/rEVXhJrqnyiDggacXDr7ukM0x5c+GjbsrjO/NR+
+-----END RSA PRIVATE KEY-----";
+    /// Modulus/exponent of [`TEST_RSA_PEM`], base64url — a one-key JWKS.
+    const TEST_RSA_N: &str = "6-fO1BaqcQ8eS0acKWuKEJfhM49gJc-57MiwDUM-6xrzx2IF-7vzGsD9-StigRE681ByuVacz3oKZ9KPeUju8qqkUQViF1NCphDPFkjCPlm1zABiASCNEpoyqETRAa-PXsqQ3dUaYJmW2MN-pnvG_RKn0TdY3NTjNmKNK5g2v30NjGOVWLgFp9jj8-gp0WixRrIePiDYDxOiVIAnK9GxF2Qz0HT2iaEQScwX3WhTKzzuqYpqWum6p4KBaQBsMk2JrwRyp6mjW0vWwBRpQnTPxx-pCVF5Tw5leHhTxtb2Jry3w_093F-GaZ6RNb-Ei73NOFO6V9bDU1nCllt-VwsEAw";
+
+    fn ac() -> AppleConfig {
+        AppleConfig {
+            bundle_id: "app.agora.mobile".into(),
+            allowed_emails: vec!["tom@example.com".into()],
+        }
+    }
+
+    fn test_jwks() -> Value {
+        serde_json::json!({"keys": [
+            {"kty": "RSA", "kid": "testkey", "alg": "RS256", "use": "sig",
+             "n": TEST_RSA_N, "e": "AQAB"},
+        ]})
+    }
+
+    fn apple_claims() -> Value {
+        serde_json::json!({
+            "iss": "https://appleid.apple.com",
+            "aud": "app.agora.mobile",
+            "exp": now_secs() + 3600,
+            "iat": now_secs(),
+            "sub": "001234.abcdef",
+            "email": "Tom@Example.com",
+            "email_verified": "true",
+        })
+    }
+
+    fn sign_apple_token(claims: &Value, kid: &str) -> String {
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(TEST_RSA_PEM.as_bytes()).unwrap();
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+        header.kid = Some(kid.to_string());
+        jsonwebtoken::encode(&header, claims, &key).unwrap()
+    }
+
+    #[test]
+    fn apple_token_happy_path_lowercases_email() {
+        let token = sign_apple_token(&apple_claims(), "testkey");
+        let email = verify_apple_identity_token(&token, &test_jwks(), &ac()).unwrap();
+        assert_eq!(email, "tom@example.com");
+        // Boolean email_verified is accepted too.
+        let mut claims = apple_claims();
+        claims["email_verified"] = Value::Bool(true);
+        let token = sign_apple_token(&claims, "testkey");
+        assert!(verify_apple_identity_token(&token, &test_jwks(), &ac()).is_ok());
+    }
+
+    #[test]
+    fn apple_token_rejects_bad_claims() {
+        for (key, value) in [
+            ("iss", Value::from("https://evil.example")),
+            ("aud", Value::from("app.other.bundle")),
+            ("exp", Value::from(now_secs() - 3600)),
+            ("email", Value::from("intruder@example.com")),
+            ("email_verified", Value::from("false")),
+        ] {
+            let mut claims = apple_claims();
+            claims[key] = value;
+            let token = sign_apple_token(&claims, "testkey");
+            assert!(
+                verify_apple_identity_token(&token, &test_jwks(), &ac()).is_err(),
+                "claim {key} should have failed"
+            );
+        }
+    }
+
+    #[test]
+    fn apple_token_requires_known_key_and_real_signature() {
+        // A kid the JWKS doesn't know: the caller refetches on this error.
+        let token = sign_apple_token(&apple_claims(), "otherkey");
+        let e = verify_apple_identity_token(&token, &test_jwks(), &ac()).unwrap_err();
+        assert!(e.to_string().contains("unknown signing key"));
+
+        // Tampered payload under a valid header/kid must fail verification.
+        let token = sign_apple_token(&apple_claims(), "testkey");
+        let mut parts: Vec<&str> = token.split('.').collect();
+        let mut claims = apple_claims();
+        claims["email"] = Value::from("intruder@example.com");
+        let forged_payload = URL_SAFE_NO_PAD.encode(claims.to_string());
+        parts[1] = &forged_payload;
+        let forged = parts.join(".");
+        assert!(verify_apple_identity_token(&forged, &test_jwks(), &ac()).is_err());
+
+        assert!(verify_apple_identity_token("not-a-jwt", &test_jwks(), &ac()).is_err());
     }
 }

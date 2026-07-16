@@ -1,6 +1,6 @@
 //! App configuration persisted as `config.json` in the data dir.
 //!
-//! The owner token authenticates the (single) local user's UI/API calls; it
+//! The admin key authenticates the (single) local user's UI/API calls; it
 //! is generated on first run. Pairing tokens authenticate dial-in agent
 //! bridges. Connections are the Pantheo (or compatible) endpoints the app
 //! dials out to.
@@ -41,6 +41,18 @@ pub struct GoogleConfig {
     pub allowed_emails: Vec<String>,
 }
 
+/// Resolved Sign in with Apple settings (see [`Config::apple`]). The native
+/// mobile flow needs no client secret: the identity token's audience is the
+/// app's bundle id and its signature is checked against Apple's JWKS.
+#[derive(Clone)]
+pub struct AppleConfig {
+    pub bundle_id: String,
+    pub allowed_emails: Vec<String>,
+}
+
+/// Audience the mobile app's Apple identity tokens carry by default.
+pub const DEFAULT_APPLE_BUNDLE_ID: &str = "app.agora.mobile";
+
 fn default_username() -> String {
     "me".to_string()
 }
@@ -51,8 +63,10 @@ fn default_instance_name() -> String {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConfigData {
-    #[serde(default)]
-    pub owner_token: String,
+    /// Formerly `owner_token`; the alias keeps existing config.json files
+    /// loading (a miss here would regenerate the key and lock clients out).
+    #[serde(default, alias = "owner_token")]
+    pub admin_key: String,
     /// Signs the short-lived session tokens minted by Google sign-in.
     /// Generated once; rotating it signs every session out.
     #[serde(default)]
@@ -97,6 +111,16 @@ pub struct ConfigData {
     /// open list would hand the owner seat to any Google account.
     #[serde(default)]
     pub google_allowed_emails: Vec<String>,
+    /// Sign in with Apple: the only Apple-account emails allowed (lowercased;
+    /// a Hide-My-Email relay address counts — it is stable per Apple ID and
+    /// app). Empty keeps Apple sign-in disabled, same single-user rationale
+    /// as `google_allowed_emails`.
+    #[serde(default)]
+    pub apple_allowed_emails: Vec<String>,
+    /// iOS bundle id the identity token must be issued for. Empty means the
+    /// stock mobile app id ([`DEFAULT_APPLE_BUNDLE_ID`]).
+    #[serde(default)]
+    pub apple_bundle_id: String,
     /// Public base URL (https://agora.example.com) used to build the OAuth
     /// redirect URI behind a proxy. When empty it is derived per request.
     #[serde(default)]
@@ -118,7 +142,7 @@ fn default_max_file_mb() -> u64 {
 impl Default for ConfigData {
     fn default() -> Self {
         Self {
-            owner_token: new_token(),
+            admin_key: new_token(),
             session_secret: new_token(),
             instance_id: new_token(),
             instance_name: default_instance_name(),
@@ -132,6 +156,8 @@ impl Default for ConfigData {
             google_client_id: String::new(),
             google_client_secret: String::new(),
             google_allowed_emails: Vec::new(),
+            apple_allowed_emails: Vec::new(),
+            apple_bundle_id: String::new(),
             public_url: String::new(),
         }
     }
@@ -150,8 +176,8 @@ impl Config {
             Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
             Err(_) => ConfigData::default(),
         };
-        if data.owner_token.is_empty() {
-            data.owner_token = new_token();
+        if data.admin_key.is_empty() {
+            data.admin_key = new_token();
         }
         if data.session_secret.is_empty() {
             data.session_secret = new_token();
@@ -174,8 +200,8 @@ impl Config {
         self.data.lock().unwrap().clone()
     }
 
-    pub fn owner_token(&self) -> String {
-        self.data.lock().unwrap().owner_token.clone()
+    pub fn admin_key(&self) -> String {
+        self.data.lock().unwrap().admin_key.clone()
     }
 
     pub fn username(&self) -> String {
@@ -206,8 +232,8 @@ impl Config {
             .map(|t| t.name.clone())
     }
 
-    pub fn is_owner_token(&self, token: &str) -> bool {
-        constant_time_eq(&self.data.lock().unwrap().owner_token, token)
+    pub fn is_admin_key(&self, token: &str) -> bool {
+        constant_time_eq(&self.data.lock().unwrap().admin_key, token)
     }
 
     pub fn session_secret(&self) -> String {
@@ -229,6 +255,29 @@ impl Config {
             client_secret: data.google_client_secret.clone(),
             allowed_emails: data
                 .google_allowed_emails
+                .iter()
+                .map(|e| e.trim().to_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect(),
+        })
+    }
+
+    /// Sign in with Apple, when configured (a non-empty email allowlist; the
+    /// bundle id has a stock default).
+    pub fn apple(&self) -> Option<AppleConfig> {
+        let data = self.data.lock().unwrap();
+        if data.apple_allowed_emails.is_empty() {
+            return None;
+        }
+        let bundle_id = if data.apple_bundle_id.trim().is_empty() {
+            DEFAULT_APPLE_BUNDLE_ID.to_string()
+        } else {
+            data.apple_bundle_id.trim().to_string()
+        };
+        Some(AppleConfig {
+            bundle_id,
+            allowed_emails: data
+                .apple_allowed_emails
                 .iter()
                 .map(|e| e.trim().to_lowercase())
                 .filter(|e| !e.is_empty())
@@ -298,6 +347,19 @@ mod tests {
     }
 
     #[test]
+    fn apple_requires_allowlist_and_defaults_bundle_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config::load(dir.path()).unwrap();
+        assert!(cfg.apple().is_none());
+        cfg.update(|c| c.apple_allowed_emails = vec![" Tom@Example.COM ".into()]);
+        let ac = cfg.apple().expect("configured");
+        assert_eq!(ac.bundle_id, DEFAULT_APPLE_BUNDLE_ID);
+        assert_eq!(ac.allowed_emails, vec!["tom@example.com"]);
+        cfg.update(|c| c.apple_bundle_id = "app.custom.ios".into());
+        assert_eq!(cfg.apple().unwrap().bundle_id, "app.custom.ios");
+    }
+
+    #[test]
     fn session_secret_is_generated_and_persists() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = Config::load(dir.path()).unwrap();
@@ -313,12 +375,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("config.json"),
-            r#"{"owner_token": "aaaa", "username": "tom"}"#,
+            r#"{"admin_key": "aaaa", "username": "tom"}"#,
         )
         .unwrap();
         let cfg = Config::load(dir.path()).unwrap();
         assert!(!cfg.instance_id().is_empty());
         assert_eq!(cfg.instance_name(), "My Agora");
         assert_eq!(cfg.username(), "tom");
+    }
+
+    #[test]
+    fn legacy_owner_token_field_still_loads_and_is_rewritten() {
+        // Pre-rename config.json: the key must load under its old name (a
+        // miss would regenerate it and lock every client out) and be saved
+        // back under the new one.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"owner_token": "cafe1234", "username": "tom"}"#,
+        )
+        .unwrap();
+        let cfg = Config::load(dir.path()).unwrap();
+        assert_eq!(cfg.admin_key(), "cafe1234");
+        assert!(cfg.is_admin_key("cafe1234"));
+        drop(cfg);
+        let text = std::fs::read_to_string(dir.path().join("config.json")).unwrap();
+        assert!(text.contains("\"admin_key\": \"cafe1234\""));
+        assert!(!text.contains("owner_token"));
     }
 }

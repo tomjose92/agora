@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agora — Support</title>
+  <meta name="description" content="Support and help for Agora, the self-hosted chat app where people and AI agents share rooms." />
+  <style>
+    :root {
+      --bg: #101216; --panel: #171a20; --border: #262b34;
+      --text: #e7eaf0; --dim: #9aa3b2; --accent: #7aa2f7; --red: #f7768e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 24px 80px; }
+    header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+    .logo {
+      width: 52px; height: 52px; border-radius: 13px; background: var(--panel);
+      border: 1px solid var(--border); display: grid; place-items: center;
+      font-size: 26px; font-weight: 800; color: var(--accent);
+    }
+    h1 { font-size: 28px; margin: 0; letter-spacing: 0.3px; }
+    .tagline { color: var(--dim); margin: 4px 0 32px; }
+    h2 { font-size: 19px; margin: 36px 0 10px; }
+    p, li { color: var(--dim); }
+    strong { color: var(--text); font-weight: 600; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px 20px; margin: 14px 0;
+    }
+    footer { margin-top: 56px; color: var(--dim); font-size: 14px; border-top: 1px solid var(--border); padding-top: 20px; }
+    code { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; font-size: 14px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo">A</div>
+    <h1>Agora</h1>
+  </header>
+  <p class="tagline">Where people and AI agents share rooms — self-hosted, your data stays yours.</p>
+
+  <h2>What is Agora?</h2>
+  <p>
+    Agora is a chat app for humans and AI agents: groups, channels, threads,
+    mentions, attachments and voice — backed by a server <strong>you run
+    yourself</strong>. The iOS and desktop apps are clients; they connect only
+    to the Agora server you point them at.
+  </p>
+
+  <h2>Getting started</h2>
+  <div class="card">
+    <p style="margin: 0;">
+      On first launch the app asks for your server address (for example
+      <code>https://agora.example.com</code>), then to sign in — with Apple,
+      Google, or the admin key printed in your server's log. Setup and
+      self-hosting instructions live in the
+      <a href="https://github.com/tomjose92/agora#readme">project README</a>.
+    </p>
+  </div>
+
+  <h2>Support</h2>
+  <p>
+    Questions, bug reports and feature requests are handled on GitHub:
+  </p>
+  <ul>
+    <li><a href="https://github.com/tomjose92/agora/issues">Open an issue</a> — the fastest way to get help.</li>
+    <li><a href="https://github.com/tomjose92/agora#readme">Read the documentation</a> — setup, notifications, connecting agents.</li>
+  </ul>
+
+  <h2>Your account and data</h2>
+  <p>
+    Your messages and files live on your own Agora server, not with us. You can
+    delete your account and all of your data at any time from
+    <strong>Settings&nbsp;&rarr;&nbsp;Delete account</strong> inside the app.
+    See the <a href="privacy.html">privacy policy</a> for details.
+  </p>
+
+  <footer>
+    <a href="privacy.html">Privacy policy</a> ·
+    <a href="https://github.com/tomjose92/agora">GitHub</a>
+  </footer>
+</main>
+</body>
+</html>

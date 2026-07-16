@@ -11,7 +11,7 @@ import { colors } from "../src/lib/theme";
 import "../src/lib/background";
 
 function handleAuthError(error: unknown) {
-  // A revoked/rotated owner token drops the app back to the connect screen.
+  // A revoked/rotated admin key drops the app back to the connect screen.
   if (error instanceof ApiError && error.status === 401) onUnauthorized();
 }
 

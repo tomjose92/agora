@@ -1,6 +1,7 @@
 /* Login: the mobile flavor of the desktop connect page. Two steps —
    pick the server (first run only; a signed-out relaunch remembers it),
-   then sign in: Google when the server offers it, owner token always. */
+   then sign in: Apple/Google when the server offers them, admin key
+   always. */
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -16,9 +17,12 @@ import {
 } from "react-native";
 import { Redirect } from "expo-router";
 import { Image as ExpoImage } from "expo-image";
+import * as AppleAuthentication from "expo-apple-authentication";
 import * as WebBrowser from "expo-web-browser";
 import { normalizeBaseUrl, originOf } from "../src/api/client";
-import { googleEnabled, runGoogleFlow } from "../src/lib/googleAuth";
+import { appleAvailable, runAppleFlow } from "../src/lib/appleAuth";
+import { authMethods } from "../src/lib/authConfig";
+import { runGoogleFlow } from "../src/lib/googleAuth";
 import { useSession } from "../src/state/session";
 import { colors, radius } from "../src/lib/theme";
 
@@ -33,6 +37,7 @@ export default function Connect() {
   const [url, setUrl] = useState(savedUrl);
   const [base, setBase] = useState(savedUrl); // normalized, probed URL
   const [google, setGoogle] = useState(false);
+  const [apple, setApple] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -50,9 +55,13 @@ export default function Connect() {
   }, [savedUrl, url]);
 
   const probe = useCallback(async (target: string) => {
-    const enabled = await googleEnabled(target);
-    setGoogle(enabled);
-    setShowToken(!enabled); // token-only servers show the form outright
+    const methods = await authMethods(target);
+    // The Apple button needs both server support and a build carrying the
+    // Sign in with Apple capability (dev builds on a free team don't).
+    const appleOk = methods.apple && (await appleAvailable());
+    setGoogle(methods.google);
+    setApple(appleOk);
+    setShowToken(!methods.google && !appleOk); // token-only servers show the form outright
   }, []);
 
   useEffect(() => {
@@ -111,6 +120,21 @@ export default function Connect() {
     }
   };
 
+  const submitApple = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const session = await runAppleFlow(base);
+      // A dismissed sheet is not an error — just return to the form.
+      if (session) await signIn(base, session);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.root}
@@ -157,6 +181,15 @@ export default function Connect() {
             <Text style={styles.serverChip}>
               Sign in to <Text style={styles.serverHost}>{base.replace(/^https?:\/\//, "")}</Text>
             </Text>
+            {apple ? (
+              <AppleAuthentication.AppleAuthenticationButton
+                buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+                cornerRadius={10}
+                style={[styles.btnApple, busy && styles.btnOff]}
+                onPress={submitApple}
+              />
+            ) : null}
             {google ? (
               <Pressable style={[styles.btnGoogle, busy && styles.btnOff]} onPress={submitGoogle} disabled={busy}>
                 {busy ? (
@@ -176,7 +209,7 @@ export default function Connect() {
                   style={styles.input}
                   value={token}
                   onChangeText={setToken}
-                  placeholder="admin token (from the server log)"
+                  placeholder="admin key (from the server log)"
                   placeholderTextColor={colors.faint}
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -265,6 +298,8 @@ const styles = StyleSheet.create({
   },
   btnOff: { opacity: 0.4 },
   btnText: { color: colors.onAccent, fontSize: 15, fontWeight: "700" },
+  // Apple's native button draws itself; we only size it to match our rows.
+  btnApple: { width: "100%", height: 44 },
   btnGoogle: {
     backgroundColor: "#fff",
     borderRadius: 10,

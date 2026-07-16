@@ -2,7 +2,7 @@
 <!-- Desktop-shell login. Loaded by the Tauri app over its app protocol (works
      with no server running); talks to Rust via the global Tauri IPC. Two
      steps: pick where your Agora lives (first run only), then sign in —
-     Google when the server offers it, owner token always. Harmless if served
+     Google when the server offers it, admin key always. Harmless if served
      by a plain agora-server — it just shows a note. -->
 <html lang="en">
 <head>
@@ -97,7 +97,7 @@
     </div>
 
     <!-- Step 2: sign in to the chosen server. Google first when offered;
-         the owner token always works. -->
+         the admin key always works. -->
     <div id="step-signin" class="hidden">
       <p class="server-chip">Sign in to <b id="signin-host"></b></p>
       <p class="sub" id="signin-sub">Use the account this instance allows.</p>
@@ -106,10 +106,8 @@
         Continue with Google
       </button>
       <div class="divider hidden" id="token-divider">or</div>
-      <!-- "Admin" in the UI is the owner token underneath — same credential,
-           friendlier name. -->
       <div id="token-form">
-        <label for="token">Admin token</label>
+        <label for="token">Admin key</label>
         <input id="token" type="password" placeholder="printed in the server log / config.json" autocapitalize="off" autocorrect="off" spellcheck="false" />
         <button class="primary" id="connect">Sign in as admin</button>
       </div>
@@ -172,7 +170,7 @@
         $("token-toggle").classList.toggle("hidden", !google);
         $("signin-sub").textContent = google
           ? "Sign in with an allowed Google account."
-          : "Admin sign-in: paste this server's admin token (printed in its log).";
+          : "Admin sign-in: paste this server's admin key (printed in its log).";
         show("signin");
       } catch (e) {
         setStatus(String(e), "error");

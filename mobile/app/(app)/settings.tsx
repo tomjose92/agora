@@ -4,6 +4,7 @@
 
 import React, { useState } from "react";
 import {
+  Alert,
   Pressable,
   ScrollView,
   Share,
@@ -118,6 +119,37 @@ export default function SettingsScreen() {
   const pairing = usePairingTokens();
   const pairingMut = usePairingMutations();
   const [bridgeName, setBridgeName] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  // App Store guideline 5.1.1(v): account deletion must be reachable in-app.
+  // The server wipes everything keyed to this user and revokes all sessions;
+  // we then drop the stored credentials, landing back on onboarding.
+  const deleteAccount = () => {
+    Alert.alert(
+      "Delete account?",
+      "This permanently deletes your messages, attachments, stars and read " +
+        "history from this server, and signs you out on every device. " +
+        "This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setDeleting(true);
+            try {
+              await api.delete("/api/me");
+              await forgetServer();
+            } catch (e) {
+              toastErr("Delete failed", e as Error);
+            } finally {
+              setDeleting(false);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <>
@@ -248,6 +280,16 @@ export default function SettingsScreen() {
             </Text>
             <ArmedButton label="Switch server" onConfirm={() => void forgetServer()} />
           </View>
+          <View style={styles.row}>
+            <Text style={[styles.meta, { flex: 1 }]}>
+              Permanently delete your data on this server and sign out everywhere.
+            </Text>
+            <Pressable style={styles.linkBtn} onPress={deleteAccount} disabled={deleting}>
+              <Text style={[styles.deleteText, deleting && { opacity: 0.4 }]}>
+                {deleting ? "Deleting…" : "Delete account"}
+              </Text>
+            </Pressable>
+          </View>
         </Section>
       </ScrollView>
     </>
@@ -297,4 +339,5 @@ const styles = StyleSheet.create({
   linkBtn: { paddingVertical: 10, alignItems: "center" },
   linkBtnText: { color: colors.a1, fontSize: 14, fontWeight: "700" },
   linkBtnDim: { color: colors.dim, fontSize: 14, fontWeight: "600" },
+  deleteText: { color: colors.red, fontSize: 14, fontWeight: "700" },
 });

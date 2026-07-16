@@ -1,6 +1,6 @@
 # Headless agora-server image (used by Railway; see railway.json).
 #
-# The server keeps everything — config.json (owner token), agora.db, uploaded
+# The server keeps everything — config.json (admin key), agora.db, uploaded
 # files — under /data, so mount a persistent volume there or state is lost on
 # every deploy.
 

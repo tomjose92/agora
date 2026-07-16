@@ -2,15 +2,17 @@
 //!
 //! Usage: agora-server [--data-dir PATH] [--ui-dir PATH]
 //! Bind address/port and tokens live in <data-dir>/config.json (created on
-//! first run; the owner token is printed so a client can connect).
+//! first run; the admin key is printed so a client can connect).
 //!
 //! PaaS-style env overrides (Railway injects `PORT`): `AGORA_BIND`, and
 //! `AGORA_PORT` / `PORT` (the former wins). Google sign-in can likewise be
 //! configured without touching the volume: `AGORA_GOOGLE_CLIENT_ID`,
 //! `AGORA_GOOGLE_CLIENT_SECRET`, `AGORA_GOOGLE_ALLOWED_EMAILS`
 //! (comma-separated), and `AGORA_PUBLIC_URL` (the https origin Google
-//! redirects back to). All are persisted into config.json so dial-in bridges
-//! and printed URLs agree with what the platform routes to.
+//! redirects back to). Sign in with Apple (native iOS flow):
+//! `AGORA_APPLE_ALLOWED_EMAILS` (comma-separated) and optionally
+//! `AGORA_APPLE_BUNDLE_ID`. All are persisted into config.json so dial-in
+//! bridges and printed URLs agree with what the platform routes to.
 
 use std::path::PathBuf;
 
@@ -53,8 +55,8 @@ async fn main() -> anyhow::Result<()> {
     let app = agora_core::run(data_dir, ui_dir).await?;
     let cfg = app.state.config.snapshot();
     println!("Agora ready at http://{}", app.addr);
-    println!("Owner token: {}", cfg.owner_token);
-    println!("Open http://{}/?token={} in a browser", app.addr, cfg.owner_token);
+    println!("Admin key: {}", cfg.admin_key);
+    println!("Open http://{}/?token={} in a browser", app.addr, cfg.admin_key);
     tokio::signal::ctrl_c().await?;
     Ok(())
 }
@@ -67,10 +69,21 @@ fn apply_env_overrides(data_dir: &std::path::Path) -> anyhow::Result<()> {
     let google_id = env("AGORA_GOOGLE_CLIENT_ID");
     let google_secret = env("AGORA_GOOGLE_CLIENT_SECRET");
     let google_emails = env("AGORA_GOOGLE_ALLOWED_EMAILS");
+    let apple_emails = env("AGORA_APPLE_ALLOWED_EMAILS");
+    let apple_bundle_id = env("AGORA_APPLE_BUNDLE_ID");
     let public_url = env("AGORA_PUBLIC_URL");
-    if [&bind, &port, &google_id, &google_secret, &google_emails, &public_url]
-        .iter()
-        .all(|v| v.is_none())
+    if [
+        &bind,
+        &port,
+        &google_id,
+        &google_secret,
+        &google_emails,
+        &apple_emails,
+        &apple_bundle_id,
+        &public_url,
+    ]
+    .iter()
+    .all(|v| v.is_none())
     {
         return Ok(());
     }
@@ -98,6 +111,16 @@ fn apply_env_overrides(data_dir: &std::path::Path) -> anyhow::Result<()> {
                 .map(|e| e.trim().to_lowercase())
                 .filter(|e| !e.is_empty())
                 .collect();
+        }
+        if let Some(v) = apple_emails {
+            c.apple_allowed_emails = v
+                .split(',')
+                .map(|e| e.trim().to_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect();
+        }
+        if let Some(v) = apple_bundle_id {
+            c.apple_bundle_id = v.trim().to_string();
         }
         if let Some(v) = public_url {
             c.public_url = v.trim_end_matches('/').to_string();

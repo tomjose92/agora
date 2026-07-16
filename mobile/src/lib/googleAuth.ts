@@ -3,10 +3,12 @@
    /api/auth/google/start in a system auth session with ?next= pointing at
    this app's deep link (agora://auth, or exp://… in dev); after consent the
    server redirects there with a freshly minted session token, which then
-   takes the owner token's place in the keychain. */
+   takes the admin key's place in the keychain. */
 
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
+
+import { authMethods } from "./authConfig";
 
 export interface RedirectResult {
   token?: string;
@@ -42,14 +44,7 @@ export function signInErrorMessage(reason: string | undefined): string {
 
 /** True when the server offers Google sign-in (unauthenticated probe). */
 export async function googleEnabled(baseUrl: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${baseUrl}/api/auth/config`);
-    if (!res.ok) return false;
-    const cfg = (await res.json()) as { google?: { enabled?: boolean } };
-    return cfg.google?.enabled === true;
-  } catch {
-    return false;
-  }
+  return (await authMethods(baseUrl)).google;
 }
 
 /** Run the browser round-trip and return the session token. Returns null

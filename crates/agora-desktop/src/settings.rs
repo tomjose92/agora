@@ -21,7 +21,7 @@ pub struct DesktopSettings {
     /// Remote server base URL, e.g. https://agora.up.railway.app
     #[serde(default)]
     pub url: Option<String>,
-    /// Owner token of the remote server.
+    /// Admin key of the remote server.
     #[serde(default)]
     pub token: Option<String>,
 }

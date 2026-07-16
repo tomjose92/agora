@@ -16,6 +16,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.icns", "icons/icon.png"],
     "resources": {
       "../../ui": "ui"
@@ -23,6 +24,14 @@
     "macOS": {
       "signingIdentity": "Apple Development: Tom Jose (U36YWR75H6)",
       "entitlements": "./Entitlements.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1MTIxRTYwNjA0MUJBN0UKUldSK3VrRmdZQjRTUmFhSkJLRXh4RXRvMFVzSUVTNFR6dVR2MWs1N3BmUW03cTdqdWZrbW43b28K",
+      "endpoints": [
+        "https://github.com/tomjose92/agora/releases/latest/download/latest.json"
+      ]
     }
   }
 }

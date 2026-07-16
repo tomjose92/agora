@@ -45,7 +45,7 @@ open /Applications/Agora.app
 
 First launch creates the data dir at
 `~/Library/Application Support/app.agora.desktop/` with a `config.json`
-(owner token, port — default `4470`) and the `agora.db` database.
+(admin key, port — default `4470`) and the `agora.db` database.
 
 Coming from Pantheo's old in-process Agora? Its `data/agora.db` (and
 `data/agora_files/`) can be imported — groups, channels, messages, threads,
@@ -65,8 +65,8 @@ signing requirement.
 cargo build --release -p agora-server
 ./target/release/agora-server --data-dir /var/lib/agora
 # Agora ready at http://127.0.0.1:4470
-# Owner token: <printed on first run>
-# Open http://127.0.0.1:4470/?token=<owner-token> in a browser
+# Admin key: <printed on first run>
+# Open http://127.0.0.1:4470/?token=<admin-key> in a browser
 ```
 
 The web UI is the same one the desktop app bundles. Pass `--ui-dir path/to/ui`
@@ -200,7 +200,7 @@ that carried it, even when its text says nothing). Three ways in:
   same grouped results with file chips, tap to open the room. Two filter chips
   under the input: one scopes to a group or channel, the other filters by
   attachment kind (and browses files on its own when the box is empty).
-- **API** — `GET /api/search?q=…` (owner token) returns all three kinds at
+- **API** — `GET /api/search?q=…` (admin key) returns all three kinds at
   once. Params: `limit`/`offset` page the message hits (default 20, cap 50),
   `channel_id`/`group_id`/`author` narrow the scope, `sort=new` orders
   newest-first instead of best-match, `match=any` widens to any-term recall
@@ -253,6 +253,22 @@ Your options, in increasing order of effort:
    This is also the path that ends at the Mac App Store, and later the iOS
    App Store (same codebase — Tauri v2 compiles to iOS/Android).
 
+### Releases and auto-update
+
+Tagged releases are built by CI
+([.github/workflows/release-desktop.yml](.github/workflows/release-desktop.yml)):
+push a `v*` tag and a macOS runner produces a universal DMG plus signed
+updater artifacts and a `latest.json` feed, attached to a **draft** GitHub
+Release — publish the draft to ship. The app checks that feed on every
+launch (silently installing updates for the next start) and on demand via
+**Server → Check for Updates…**. Updater artifacts are signed with the
+project's updater key (`plugins.updater.pubkey` in `tauri.conf.json`); CI
+needs the private key in the `TAURI_SIGNING_PRIVATE_KEY` repo secret. Until
+the Apple signing secrets are configured the workflow ad-hoc signs, so
+downloads still hit Gatekeeper — options 1/2 above apply. A Mac App Store
+build must exclude the updater: `--no-default-features` on `agora-desktop`
+compiles it out.
+
 Each installed app is its **own Agora** — own database, own groups. Two people
 running the desktop app have two separate chat worlds that can talk to the
 *same* Pantheo agents (each adds a connection to the same instance), but they
@@ -302,9 +318,9 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-Then share `https://agora.example.com/?token=<owner-token>` (the token is in
+Then share `https://agora.example.com/?token=<admin-key>` (the token is in
 `/var/lib/agora/config.json`). **Caveat:** v1 is single-user — everyone with
-the owner token *is* the same "me". Real multi-user accounts are future work.
+the admin key *is* the same "me". Real multi-user accounts are future work.
 
 ### Deploying on Railway (or any Docker PaaS)
 
@@ -318,15 +334,15 @@ railway init --name agora
 railway volume add --mount-path /data   # config.json + agora.db + uploads live here
 railway up --detach
 railway domain                          # get the public https URL
-railway logs                            # "Owner token: ..." is printed on first boot
+railway logs                            # "Admin key: ..." is printed on first boot
 ```
 
 Two things matter:
 
 - **The `/data` volume is mandatory.** Without it every deploy regenerates the
-  owner token and wipes messages and attachments.
+  admin key and wipes messages and attachments.
 - **TLS comes free** with the Railway domain, so browsers, the mobile app
-  (`https://<app>.up.railway.app` + owner token), and dial-in bridges
+  (`https://<app>.up.railway.app` + admin key), and dial-in bridges
   (`wss://.../agent/ws?token=...`) all work with no reverse proxy. Outbound
   Pantheo connections are unaffected — the server dials out from Railway the
   same as anywhere else; the Pantheo instance just has to be reachable from
@@ -340,7 +356,7 @@ Settings…** (stored in `desktop.json` next to the data dir):
 - **Embedded** (default) — boots the hub in-process, exactly as before. This
   Mac *is* the Agora; closing the window keeps it running.
 - **Remote** — the app skips the local hub entirely and becomes a pure client
-  for a deployed `agora-server`: enter the server URL and its owner token,
+  for a deployed `agora-server`: enter the server URL and its admin key,
   the app validates them and loads the remote UI. The same server can serve
   the mobile app and any browser simultaneously — one shared Agora, three
   kinds of clients.
@@ -357,9 +373,9 @@ attachments) can be exported as one archive and imported into any other
 instance. Tokens, bind settings, and pairing credentials never migrate —
 each instance keeps its own `config.json`.
 
-- `GET /api/export` (owner token) downloads a `.tar.gz` snapshot — safe on a
+- `GET /api/export` (admin key) downloads a `.tar.gz` snapshot — safe on a
   live server, and handy as a periodic backup.
-- `POST /api/import` (owner token, multipart `archive` field) stages the
+- `POST /api/import` (admin key, multipart `archive` field) stages the
   archive and restarts to apply it. It refuses if the target already has data
   unless you pass `?replace=true`; the previous data is kept in a
   `pre-import-<ts>/` folder inside the data dir.
@@ -373,7 +389,7 @@ every combination of local data dir and live server:
 # laptop desktop app -> hosted Railway deployment
 scripts/agora_migrate.py \
     --from "~/Library/Application Support/app.agora.desktop" \
-    --to https://agora.up.railway.app --to-token OWNERTOKEN
+    --to https://agora.up.railway.app --to-token ADMINKEY
 
 # hosted -> hosted, overwriting the target (old data kept in pre-import-<ts>/)
 scripts/agora_migrate.py --from https://old.example --from-token AAA \
@@ -394,18 +410,18 @@ run the first command above, then flip the desktop app to remote mode
 
 ## Network exposure
 
-Agora authenticates every request with the owner token (or a Google session
+Agora authenticates every request with the admin key (or a Google session
 token), and it defaults to a **loopback bind** so nothing is reachable off-host
 until you opt in.
 
 - **Binding `0.0.0.0`** (LAN bridges, or the Docker image, which forces it for
-  PaaS routing) puts the API on the network. The owner token is then the *only*
+  PaaS routing) puts the API on the network. The admin key is then the *only*
   thing standing between the internet and full control of the instance, so a
   `0.0.0.0` deployment **must** sit behind a firewall and a TLS reverse proxy —
   never expose the raw port directly. On boot the server logs a warning when it
   binds a non-loopback address.
 - **TLS is not terminated by Agora itself.** Over plaintext `ws://`/`http://`
-  the owner token and every message travel in the clear. Front it with TLS
+  the admin key and every message travel in the clear. Front it with TLS
   (see the reverse-proxy config above; Railway/PaaS domains give you TLS for
   free). Outbound Pantheo connections send the instance token as an
   `Authorization: Bearer` header (not a logged `?token=`), and setting
@@ -419,7 +435,7 @@ until you opt in.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `owner_token` | generated | Authenticates the UI/REST API (`?token=` or `Authorization: Bearer`). |
+| `admin_key` | generated | Authenticates the UI/REST API (`?token=` or `Authorization: Bearer`). |
 | `session_secret` | generated | Signs the session tokens minted by Google sign-in; rotate it to sign everyone out. |
 | `username` | `me` | Display name of the local user. |
 | `bind` | `127.0.0.1` | Set `0.0.0.0` to accept LAN/remote agent bridges. See [Network exposure](#network-exposure). |
@@ -431,16 +447,18 @@ until you opt in.
 | `google_client_id` | `""` | Google OAuth client id (see [Google sign-in](#google-sign-in)). |
 | `google_client_secret` | `""` | Google OAuth client secret. |
 | `google_allowed_emails` | `[]` | The only Google accounts allowed in. Empty keeps Google sign-in off. |
+| `apple_allowed_emails` | `[]` | The only Apple-account emails allowed in (see [Sign in with Apple](#sign-in-with-apple)). Empty keeps Apple sign-in off. |
+| `apple_bundle_id` | `""` | iOS bundle id the Apple identity token must be issued for. Empty means the stock app (`app.agora.mobile`). |
 | `public_url` | `""` | Public https origin (behind a proxy) used to build the OAuth redirect URI. |
 
 ## Google sign-in
 
-Instead of pasting the owner token, a deployed server can offer **Sign in with
+Instead of pasting the admin key, a deployed server can offer **Sign in with
 Google** — the same OIDC code flow Pantheo's dashboard uses. The web UI's auth
 gate, the desktop app's server picker, and the mobile connect screen all grow a
 Google button once the server is configured. A successful sign-in mints a
 30-day session token (HMAC-signed with `session_secret`) that is accepted
-everywhere the owner token is; Google credentials are never stored.
+everywhere the admin key is; Google credentials are never stored.
 
 Setup:
 
@@ -485,11 +503,46 @@ Per client:
   mode with a pasted token. Embedded mode needs no sign-in at all.
 - **iPhone** — the connect screen's Google button opens a system auth sheet
   and returns via the `agora://auth` deep link; the session token goes into
-  the keychain in the owner token's place.
+  the keychain in the admin key's place.
 
 Sessions expire after 30 days (or all at once if `session_secret` is rotated);
 clients drop back to their sign-in screen and one Google tap renews them. The
-owner token keeps working unchanged — Google sign-in is additive.
+admin key keeps working unchanged — Google sign-in is additive.
+
+## Sign in with Apple
+
+The iOS app can also sign in with Apple (an App Store requirement once any
+third-party login is offered). It takes the native path, not a browser
+round-trip: the app presents Apple's system sheet, gets back an **identity
+token** (an RS256 JWT audienced to the app's bundle id), and posts it to
+`POST /api/auth/apple`. The server verifies the token's signature against
+Apple's published JWKS — unlike the Google flow there is no trusted TLS
+back-channel, the token arrives from the client — plus issuer, audience,
+expiry and the email allowlist, then mints the same 30-day session a Google
+sign-in would.
+
+Setup needs no Apple-side credentials on the server, just the allowlist:
+
+```bash
+AGORA_APPLE_ALLOWED_EMAILS=you@icloud.com   # comma-separated
+# AGORA_APPLE_BUNDLE_ID=app.agora.mobile    # only if you ship a custom build
+```
+
+(or `apple_allowed_emails` / `apple_bundle_id` in `config.json`). Restart and
+`GET /api/auth/config` reports `{"apple":{"enabled":true}}`; the mobile connect
+screen shows the Apple button. If you use Apple's **Hide My Email**, allowlist
+the relay address — it is stable per Apple ID and app. Note the button only
+renders in builds carrying the Sign in with Apple entitlement (a paid Apple
+Developer team); free-personal-team dev builds strip it and hide the button.
+
+## Account deletion
+
+`DELETE /api/me` (Settings → **Delete account** in the iOS app) erases
+everything keyed to the owner — authored messages and their attachments,
+threads they started, stars, read markers, pins, mentions, memberships — and
+rotates `session_secret`, signing out every device at once. The admin key
+survives: it's the instance's admin credential, not a user account. This is
+what satisfies App Store guideline 5.1.1(v) for the published app.
 
 ## Notifications
 
@@ -526,7 +579,7 @@ signed launch, macOS shows the usual "allow notifications?" prompt.
 
 ## Roadmap
 
-- **Multi-user** — accounts beyond the single owner token.
+- **Multi-user** — accounts beyond the single admin key.
 - **More bridge kits** — a [Claude CLI bridge](bridges/claude-cli/README.md)
   ships today; ready-made Node/other clients for the dial-in protocol are next.
 - **Instant iOS push** — the [mobile app](mobile/README.md) ships now (React

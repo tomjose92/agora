@@ -1,6 +1,6 @@
 //! The app's HTTP + WebSocket surface (axum).
 //!
-//! - `/api/*` — the UI's REST API (owner-token auth; single-user v1).
+//! - `/api/*` — the UI's REST API (admin-key auth; single-user v1).
 //! - `/ws?token=` — the UI's live event socket.
 //! - `/agent/ws?token=` — dial-in agent bridges (pairing-token auth).
 //! - `/` — the bundled web UI (static files).
@@ -147,11 +147,11 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A UI credential is either the static owner token or a session token minted
+/// A UI credential is either the static admin key or a session token minted
 /// by Google sign-in. Both act as the single owner (v1 is single-user), so the
 /// username always comes from the config.
 fn is_ui_token(state: &AppState, token: &str) -> bool {
-    state.config.is_owner_token(token)
+    state.config.is_admin_key(token)
         || crate::auth::verify_session(token, &state.config.session_secret()).is_some()
 }
 
@@ -183,7 +183,7 @@ fn upload_body_limit(state: &AppState) -> axum::extract::DefaultBodyLimit {
 
 pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
-        .route("/api/me", get(me))
+        .route("/api/me", get(me).delete(delete_me))
         .route("/api/groups", get(list_groups).post(create_group))
         .route("/api/groups/order", put(reorder_groups))
         .route("/api/groups/{group_id}", patch(update_group).delete(delete_group))
@@ -255,6 +255,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/config", get(auth_config))
         .route("/api/auth/google/start", get(google_start))
         .route("/api/auth/google/callback", get(google_callback))
+        .route("/api/auth/apple", post(apple_signin))
         .route("/ws", get(ui_ws))
         .route("/agent/ws", get(agent_ws));
     if let Some(dir) = &state.ui_dir {
@@ -393,6 +394,29 @@ async fn me(
         // server env; clients hide their "Ask AI" controls without it.
         "search_ai": crate::ai::api_key().is_some(),
     })))
+}
+
+/// Account deletion (App Store guideline 5.1.1(v)). The instance is
+/// single-user, so "delete my account" means: erase everything keyed to the
+/// owner (authored messages + their attachments, stars, reads, pins,
+/// mentions, memberships) and rotate the session secret so every signed-in
+/// session — this device and all others — is revoked at once. The owner
+/// token survives: it is the instance's admin credential (printed in the
+/// server log), not a user account.
+async fn delete_me(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_owner(&state, &headers, &q)?;
+    let store = state.hub.store.clone();
+    let username = user.clone();
+    tokio::task::spawn_blocking(move || store.delete_user_data(&username))
+        .await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Deletion failed"))?;
+    state.config.update(|c| c.session_secret = new_token());
+    tracing::info!("account data for {user} deleted; sessions revoked");
+    Ok(Json(json!({"ok": true})))
 }
 
 async fn list_groups(
@@ -1822,6 +1846,7 @@ fn redirect_with_cookie(url: &str, cookie: String) -> Response {
 async fn auth_config(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "google": {"enabled": state.config.google().is_some()},
+        "apple": {"enabled": state.config.apple().is_some()},
     }))
 }
 
@@ -1945,6 +1970,53 @@ async fn google_callback(
         _ => format!("/#agora_session={}", crate::auth::urlencode(&session)),
     };
     redirect_with_cookie(&url, set_state_cookie(secure, "", 0))
+}
+
+// -------------------------------------------------------- sign in with apple
+
+/// Native Sign in with Apple: the iOS app runs Apple's system sheet and posts
+/// the resulting identity token here. Verification (JWKS signature, issuer,
+/// bundle-id audience, email allowlist) lives in `auth::verify_apple_token`;
+/// success mints the same session a Google sign-in would.
+async fn apple_signin(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    if !state.auth_limiter.allow(&rate_key(&peer)) {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in attempts — slow down"));
+    }
+    let Some(ac) = state.config.apple() else {
+        return Err(err(StatusCode::NOT_FOUND, "Apple sign-in is not enabled"));
+    };
+    let identity_token = body["identity_token"].as_str().unwrap_or_default().to_string();
+    if identity_token.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "identity_token is required"));
+    }
+    let verified = tokio::task::spawn_blocking(move || {
+        crate::auth::verify_apple_token(&identity_token, &ac)
+    })
+    .await;
+    match verified {
+        Ok(Ok(email)) => {
+            tracing::info!("apple sign-in: {email} accepted");
+            let session = crate::auth::mint_session(
+                &state.config.username(),
+                &state.config.session_secret(),
+            );
+            Ok(Json(json!({"token": session})))
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("apple sign-in: identity token rejected: {e}");
+            let detail = if e.to_string().contains("allowlist") {
+                "That Apple account isn't allowed on this instance"
+            } else {
+                "Apple sign-in failed"
+            };
+            Err(err(StatusCode::UNAUTHORIZED, detail))
+        }
+        Err(_) => Err(err(StatusCode::INTERNAL_SERVER_ERROR, "Apple sign-in failed")),
+    }
 }
 
 // ------------------------------------------------------------- websockets

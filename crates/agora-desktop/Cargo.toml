@@ -12,6 +12,10 @@ agora-core = { path = "../agora-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
+# Direct-download auto-updates (GitHub Releases feed). Mac App Store builds
+# must ship without this — updates flow through the store there — so it sits
+# behind the default-on `updater` feature (MAS: --no-default-features).
+tauri-plugin-updater = { version = "2", optional = true }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -22,6 +26,10 @@ ureq.workspace = true
 tokio-tungstenite.workspace = true
 rustls.workspace = true
 futures-util.workspace = true
+
+[features]
+default = ["updater"]
+updater = ["dep:tauri-plugin-updater"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
