@@ -35,37 +35,98 @@ function Spans({ spans }: { spans: Span[] }) {
   );
 }
 
-export function MdText({ text }: { text: string }) {
+/* ---------------------------------------------------------- table columns
+   RN has no table layout: each row is an independent flex row, so cells that
+   size to their own content drift out of column alignment row by row. Fix
+   the width of every column up front, estimated from the content it holds:
+
+   - a column is sized to fit its widest *typical* value (and its header),
+   - a rare outlier — a value far wider than the column's 75th percentile —
+     does not drag the whole column wide; it wraps inside the column and the
+     row grows taller instead,
+   - everything is clamped to [MIN_COL, MAX_COL] so degenerate content can't
+     produce absurd columns. */
+
+const MIN_COL = 80;
+const MAX_COL = 260;
+const CELL_HPAD = 20; // styles.cell paddingHorizontal * 2
+const CHAR_W = 8; // ~average glyph width of the system font at fontSize 13.5
+
+function estimateWidth(spans: Span[]): number {
+  const chars = spans.reduce((n, s) => n + s.text.length, 0);
+  return chars * CHAR_W + CELL_HPAD;
+}
+
+export function columnWidths(head: Span[][], rows: Span[][][]): number[] {
+  const cols = Math.max(head.length, ...rows.map((r) => r.length), 0);
+  const widths: number[] = [];
+  for (let c = 0; c < cols; c++) {
+    const ests = rows
+      .map((r) => (r[c] ? estimateWidth(r[c]) : 0))
+      .filter((w) => w > 0)
+      .sort((a, b) => a - b);
+    const headerEst = head[c] ? estimateWidth(head[c]) : 0;
+    const p75 = ests.length ? ests[Math.max(0, Math.ceil(ests.length * 0.75) - 1)] : 0;
+    // Widest value that still counts as typical; anything beyond wraps.
+    const typicalMax = Math.min(ests.length ? ests[ests.length - 1] : 0, p75 * 1.5);
+    // Headers get full weight — a wrapped header reads worse than a slightly
+    // wide column of short values.
+    const target = Math.max(typicalMax, headerEst, MIN_COL);
+    widths.push(Math.ceil(Math.min(target, MAX_COL)));
+  }
+  return widths;
+}
+
+export function MdText({ text, onLongPress }: { text: string; onLongPress?: () => void }) {
   const blocks = React.useMemo(() => parseMd(text), [text]);
+  // A horizontal ScrollView only scrolls when its own frame is narrower than
+  // its content. Inside a shrink-to-fit bubble nothing hands it a definite
+  // width, so it grows to content width and the bubble just clips it. Measure
+  // the width the bubble actually gives this block (align-items:stretch makes
+  // it the bubble's inner width) and cap the table to that — then a wide table
+  // overflows the frame and scrolls. Undefined until first layout.
+  const [width, setWidth] = React.useState<number>();
   return (
-    <View style={styles.root}>
+    <View
+      style={styles.root}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
       {blocks.map((b, i) => {
         switch (b.kind) {
           case "codeblock":
             return (
-              <ScrollView key={i} horizontal style={styles.pre}>
+              <ScrollView
+                key={i}
+                horizontal
+                showsHorizontalScrollIndicator
+                style={[styles.pre, width ? { maxWidth: width } : null]}
+              >
                 <Text style={styles.preText}>{b.text}</Text>
               </ScrollView>
             );
           case "heading":
             return (
-              <Text key={i} style={[styles.para, styles.bold]}>
+              <Text key={i} style={[styles.para, styles.bold]} onLongPress={onLongPress}>
                 <Spans spans={b.spans} />
               </Text>
             );
-          case "table":
+          case "table": {
+            const cols = columnWidths(b.head, b.rows);
             return (
               <ScrollView
                 key={i}
                 horizontal
                 nestedScrollEnabled
                 showsHorizontalScrollIndicator
-                style={styles.tableWrap}
+                style={[styles.tableWrap, width ? { maxWidth: width } : null]}
               >
                 <View>
                   <View style={[styles.tr, styles.thead]}>
                     {b.head.map((cell, c) => (
-                      <Text key={c} style={[styles.cell, styles.bold, alignStyle(b.aligns[c])]}>
+                      <Text
+                        key={c}
+                        style={[styles.cell, styles.bold, { width: cols[c] }, alignStyle(b.aligns[c])]}
+                      >
                         <Spans spans={cell} />
                       </Text>
                     ))}
@@ -73,7 +134,10 @@ export function MdText({ text }: { text: string }) {
                   {b.rows.map((row, r) => (
                     <View key={r} style={styles.tr}>
                       {row.map((cell, c) => (
-                        <Text key={c} style={[styles.cell, alignStyle(b.aligns[c])]}>
+                        <Text
+                          key={c}
+                          style={[styles.cell, { width: cols[c] }, alignStyle(b.aligns[c])]}
+                        >
                           <Spans spans={cell} />
                         </Text>
                       ))}
@@ -82,9 +146,10 @@ export function MdText({ text }: { text: string }) {
                 </View>
               </ScrollView>
             );
+          }
           default:
             return (
-              <Text key={i} style={styles.para} selectable>
+              <Text key={i} style={styles.para} selectable onLongPress={onLongPress}>
                 <Spans spans={b.spans} />
               </Text>
             );
@@ -126,10 +191,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderStrong,
     borderRadius: 8,
-    // A definite upper bound gives the horizontal ScrollView a viewport to
-    // scroll within, rather than growing to content width and clipping.
+    // flex-start so a wide table fills the measured cap (see maxWidth applied
+    // inline) instead of stretching to whatever the text above happens to be.
     alignSelf: "flex-start",
-    maxWidth: "100%",
   },
   thead: { backgroundColor: colors.panelStrong },
   tr: {
@@ -137,16 +201,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  // Columns size to content between a floor and a cap (long cells wrap at the
-  // cap instead of forcing one giant line); flexShrink:0 keeps them from
-  // collapsing so a wide table overflows and the wrap scrolls horizontally.
+  // Width is fixed per column (see columnWidths) so rows stay aligned; a
+  // value wider than its column wraps, growing the row.
   cell: {
     color: colors.text,
     fontSize: 13.5,
     paddingVertical: 6,
     paddingHorizontal: 10,
-    minWidth: 80,
-    maxWidth: 260,
-    flexShrink: 0,
   },
 });
