@@ -417,12 +417,17 @@ impl Hub {
         thread_id: Option<i64>,
         attachments: Vec<NewAttachment>,
     ) -> Value {
-        self.post_user_message_opts(channel_id, text, username, user_name, thread_id, attachments, false)
+        self.post_user_message_opts(channel_id, text, username, user_name, thread_id, attachments, false, None)
     }
 
     /// `voice` marks a spoken (live voice) turn: it rides on the inbound
     /// fan-out only — the stored message is a normal transcript — steering
     /// agents toward plain spoken prose, since replies will be read aloud.
+    ///
+    /// `timezone` is the sender's IANA timezone, sent hidden by clients with
+    /// each message. It's kept in message `meta` (never rendered by the UI)
+    /// and forwarded to agents on the inbound frame so they can reason about
+    /// the sender's local time.
     #[allow(clippy::too_many_arguments)]
     pub fn post_user_message_opts(
         &self,
@@ -433,8 +438,10 @@ impl Hub {
         thread_id: Option<i64>,
         attachments: Vec<NewAttachment>,
         voice: bool,
+        timezone: Option<&str>,
     ) -> Value {
-        let message = self.store.add_message(
+        let meta = timezone.map(|tz| json!({"client": {"tz": tz}}));
+        let message = self.store.add_message_with_meta(
             channel_id,
             text,
             "user",
@@ -442,6 +449,7 @@ impl Hub {
             Some(user_name.unwrap_or(username)),
             thread_id,
             &attachments,
+            meta.as_ref(),
         );
         {
             let mut st = self.state.lock().unwrap();
@@ -726,6 +734,11 @@ impl Hub {
             "from_bot": from_bot,
             "voice_live": voice,
             "attachments": atts,
+            // Server receipt time (unix epoch seconds) and the sender's IANA
+            // timezone (when the client sent one) — agent-only context, never
+            // rendered in chat.
+            "ts": message["ts"],
+            "timezone": message["meta"]["client"]["tz"],
         })
     }
 
@@ -1427,7 +1440,7 @@ mod tests {
         assert_eq!(frame["voice_live"], false);
         assert!(frame["context_note"].as_str().unwrap().contains("Markdown"));
         // Live voice turn: flagged, spoken-prose steering replaces the hint.
-        let msg = h.post_user_message_opts(&cid, "spoken words", "tom", None, None, vec![], true);
+        let msg = h.post_user_message_opts(&cid, "spoken words", "tom", None, None, vec![], true, None);
         // The stored message is a plain transcript — nothing voice-specific.
         assert_eq!(msg["text"], "spoken words");
         let frame = rx.try_recv().unwrap();
@@ -1435,6 +1448,28 @@ mod tests {
         let note = frame["context_note"].as_str().unwrap();
         assert!(note.contains("read out by text-to-speech"));
         assert!(!note.contains("Markdown"));
+    }
+
+    #[test]
+    fn timezone_rides_meta_and_inbound_frame() {
+        let h = hub();
+        let mut rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        let msg = h.post_user_message_opts(
+            &cid, "what time is it?", "tom", None, None, vec![], false,
+            Some("Asia/Kolkata"),
+        );
+        // Stored hidden in meta (the UI only renders meta.options/resolved).
+        assert_eq!(msg["meta"]["client"]["tz"], "Asia/Kolkata");
+        // Forwarded to agents with the server receipt time.
+        let frame = rx.try_recv().unwrap();
+        assert_eq!(frame["timezone"], "Asia/Kolkata");
+        assert!(frame["ts"].as_f64().unwrap() > 0.0);
+        // No timezone: frame field is null, meta stays empty.
+        let msg = h.post_user_message(&cid, "plain", "tom", None, None, vec![]);
+        assert!(msg["meta"].is_null());
+        let frame = rx.try_recv().unwrap();
+        assert!(frame["timezone"].is_null());
     }
 
     #[test]
