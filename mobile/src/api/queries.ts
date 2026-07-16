@@ -219,6 +219,16 @@ function formFile(f: OutgoingFile): Blob {
   return new FSFile(f.uri) as unknown as Blob;
 }
 
+/** Sender's IANA timezone, attached hidden to every outgoing message so
+    agents can reason about the user's local time. Never rendered in chat. */
+function clientTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+}
+
 export function useSendMessage(channelId: string) {
   const api = useApi();
   const qc = useQueryClient();
@@ -228,10 +238,12 @@ export function useSendMessage(channelId: string) {
       threadId: number | null;
       files?: OutgoingFile[];
     }) => {
+      const tz = clientTimezone();
       if (v.files && v.files.length > 0) {
         const form = new FormData();
         form.append("text", v.text);
         if (v.threadId != null) form.append("thread_id", String(v.threadId));
+        if (tz) form.append("timezone", tz);
         for (const f of v.files) {
           form.append("files", formFile(f));
         }
@@ -240,6 +252,7 @@ export function useSendMessage(channelId: string) {
       return api.post<Message>(`/api/channels/${channelId}/messages`, {
         text: v.text,
         thread_id: v.threadId,
+        ...(tz ? { timezone: tz } : {}),
       });
     },
     onSuccess: (message, v) => {
@@ -292,6 +305,8 @@ export function useSendVoice(channelId: string) {
       if (v.threadId != null) form.append("thread_id", String(v.threadId));
       if (v.live) form.append("live", "true");
       if (v.mentions) form.append("mentions", v.mentions);
+      const tz = clientTimezone();
+      if (tz) form.append("timezone", tz);
       return api.upload<Message>(`/api/channels/${channelId}/voice`, form);
     },
     onSuccess: (message, v) => {

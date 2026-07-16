@@ -39,6 +39,7 @@ import {
 import type { Channel, Group } from "../../src/api/types";
 import { Icon } from "../../src/components/Icon";
 import { toastErr } from "../../src/components/Toast";
+import { headerActions } from "../../src/lib/headerItems";
 import { totalThreadUnread } from "../../src/lib/unread";
 import { colors } from "../../src/lib/theme";
 import { usePrefs } from "../../src/state/prefs";
@@ -418,7 +419,7 @@ export default function Home() {
     () => ({
       title: "Agora",
       headerShown: true,
-      headerRight: () => (
+      ...headerActions(
         <View style={styles.headerBtns}>
           <Link href="/(app)/search" asChild>
             <Pressable hitSlop={8}>
@@ -435,7 +436,7 @@ export default function Home() {
               <Icon icon={Settings} size={21} color={colors.text} />
             </Pressable>
           </Link>
-        </View>
+        </View>,
       ),
     }),
     [],

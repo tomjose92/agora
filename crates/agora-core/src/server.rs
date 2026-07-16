@@ -834,10 +834,28 @@ async fn post_message(
         return Err(err(StatusCode::BAD_REQUEST, "Message too long"));
     }
     let thread_id = resolve_thread(&state, &channel_id, payload["thread_id"].as_i64())?;
-    let message = state
-        .hub
-        .post_user_message(&channel_id, &text, &user, None, thread_id, vec![]);
+    let timezone = client_timezone(payload["timezone"].as_str().unwrap_or(""));
+    let message = state.hub.post_user_message_opts(
+        &channel_id,
+        &text,
+        &user,
+        None,
+        thread_id,
+        vec![],
+        false,
+        timezone.as_deref(),
+    );
     Ok(Json(message))
+}
+
+/// Normalize a client-supplied IANA timezone: opaque to us beyond a sanity
+/// length cap (it only ever reaches agents, never the UI).
+fn client_timezone(raw: &str) -> Option<String> {
+    let tz = raw.trim();
+    if tz.is_empty() || tz.chars().count() > 64 {
+        return None;
+    }
+    Some(tz.to_string())
 }
 
 async fn post_message_upload(
@@ -856,6 +874,7 @@ async fn post_message_upload(
     let max_bytes = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
     let mut text = String::new();
     let mut thread_id: Option<i64> = None;
+    let mut timezone: Option<String> = None;
     let mut attachments: Vec<NewAttachment> = Vec::new();
     while let Some(field) = multipart
         .next_field()
@@ -873,6 +892,7 @@ async fn post_message_upload(
                     );
                 }
             }
+            "timezone" => timezone = client_timezone(&field.text().await.unwrap_or_default()),
             "files" => {
                 if attachments.len() >= MAX_FILES_PER_MESSAGE {
                     return Err(err(StatusCode::BAD_REQUEST, "Too many files (max 5 per message)"));
@@ -902,9 +922,16 @@ async fn post_message_upload(
         return Err(err(StatusCode::BAD_REQUEST, "Message text required"));
     }
     let thread_id = resolve_thread(&state, &channel_id, thread_id)?;
-    let message = state
-        .hub
-        .post_user_message(&channel_id, &text, &user, None, thread_id, attachments);
+    let message = state.hub.post_user_message_opts(
+        &channel_id,
+        &text,
+        &user,
+        None,
+        thread_id,
+        attachments,
+        false,
+        timezone.as_deref(),
+    );
     Ok(Json(message))
 }
 
@@ -936,6 +963,7 @@ async fn post_voice_message(
     let mut thread_id: Option<i64> = None;
     let mut live = false;
     let mut mentions = String::new();
+    let mut timezone: Option<String> = None;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -961,6 +989,7 @@ async fn post_voice_message(
             }
             "live" => live = field.text().await.unwrap_or_default() == "true",
             "mentions" => mentions = field.text().await.unwrap_or_default(),
+            "timezone" => timezone = client_timezone(&field.text().await.unwrap_or_default()),
             _ => {}
         }
     }
@@ -991,9 +1020,16 @@ async fn post_voice_message(
         Some(prefix) => format!("{prefix}, {text}"),
         None => text,
     };
-    let message = state
-        .hub
-        .post_user_message_opts(&channel_id, &text, &user, None, thread_id, vec![], live);
+    let message = state.hub.post_user_message_opts(
+        &channel_id,
+        &text,
+        &user,
+        None,
+        thread_id,
+        vec![],
+        live,
+        timezone.as_deref(),
+    );
     Ok(Json(message))
 }
 

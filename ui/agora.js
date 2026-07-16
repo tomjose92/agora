@@ -1528,6 +1528,12 @@ function agoKeydown(e, threadId) {
   if (e.key === "Escape" && _agoAddrOpen) { agoAddrTogglePop(threadId); return; }
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agoSend(threadId); }
 }
+/* Sender's IANA timezone, attached hidden to every outgoing message so agents
+   can reason about the user's local time. Never rendered in the chat. */
+function agoTimezone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; }
+}
+
 async function agoSend(threadId) {
   agoCloseMention();
   if (_agoSpeakAll) await agoUnlockPlayback();   // mobile: Send tap unlocks playback
@@ -1545,10 +1551,12 @@ async function agoSend(threadId) {
   autoGrow(input);
   try {
     let msg;
+    const tz = agoTimezone();
     if (files.length) {
       const fd = new FormData();
       fd.append("text", outText);
       if (threadId != null) fd.append("thread_id", threadId);
+      if (tz) fd.append("timezone", tz);
       for (const f of files) fd.append("files", f, f.name);
       const res = await fetch(`/api/channels/${encodeURIComponent(channel.id)}/messages/upload`, {
         method: "POST", headers: authHeaders(), body: fd,
@@ -1562,9 +1570,10 @@ async function agoSend(threadId) {
       agoClearFiles(threadId);
       agoRedrawComposer(threadId);
     } else {
+      const body = threadId ? { text: outText, thread_id: threadId } : { text: outText };
+      if (tz) body.timezone = tz;
       msg = await apiPost(
-        `/api/channels/${encodeURIComponent(channel.id)}/messages`,
-        threadId ? { text: outText, thread_id: threadId } : { text: outText });
+        `/api/channels/${encodeURIComponent(channel.id)}/messages`, body);
     }
     agoIngestMessage(msg);   // websocket will dedupe by id
   } catch (e) {
@@ -2273,6 +2282,8 @@ async function agoVoiceUpload(rec) {
     const fd = new FormData();
     fd.append("file", blob, "voice-note." + ext);
     if (rec.threadId != null) fd.append("thread_id", rec.threadId);
+    const tz = agoTimezone();
+    if (tz) fd.append("timezone", tz);
     // FormData sets its own multipart boundary — only add the auth header.
     const res = await fetch(`/api/channels/${encodeURIComponent(channel.id)}/voice`, {
       method: "POST", headers: authHeaders(), body: fd,
@@ -2649,6 +2660,8 @@ async function agoLivePump(live) {
     fd.append("file", blob, "utterance." + ext);
     fd.append("live", "true");
     if (live.threadId != null) fd.append("thread_id", live.threadId);
+    const tz = agoTimezone();
+    if (tz) fd.append("timezone", tz);
     const res = await fetch(`/api/channels/${encodeURIComponent(live.channelId)}/voice`, {
       method: "POST", headers: authHeaders(), body: fd,
     });
