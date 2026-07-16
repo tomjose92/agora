@@ -57,12 +57,14 @@ jobs:
           # Apple code signing: ad-hoc ("-") until the Developer ID secrets
           # land; the env var overrides the dev identity in tauri.conf.json.
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # Notarization (skipped automatically while these are unset).
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Phase 4 — uncomment once the Developer ID secrets exist. They must
+          # stay absent (not empty) until then: the bundler treats a set-but-
+          # empty APPLE_CERTIFICATE as a real cert and fails importing it.
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: crates/agora-desktop
           tagName: ${{ github.ref_name }}
