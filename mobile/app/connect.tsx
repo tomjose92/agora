@@ -21,7 +21,7 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import * as WebBrowser from "expo-web-browser";
 import { normalizeBaseUrl, originOf } from "../src/api/client";
 import { appleAvailable, runAppleFlow } from "../src/lib/appleAuth";
-import { authMethods } from "../src/lib/authConfig";
+import { probeAuth } from "../src/lib/authConfig";
 import { runGoogleFlow } from "../src/lib/googleAuth";
 import { useSession } from "../src/state/session";
 import { colors, radius } from "../src/lib/theme";
@@ -55,7 +55,15 @@ export default function Connect() {
   }, [savedUrl, url]);
 
   const probe = useCallback(async (target: string) => {
-    const methods = await authMethods(target);
+    const methods = await probeAuth(target);
+    // A signed-out relaunch reuses the keychain URL verbatim; if it carries a
+    // stale scheme (http:// against a host that 301s to https), sign-in would
+    // 401 forever — iOS strips the Authorization header across redirects. Swap
+    // in the origin the server actually answered from before any sign-in runs.
+    if (methods.origin !== target) {
+      setBase(methods.origin);
+      return; // the base effect re-probes with the canonical origin
+    }
     // The Apple button needs both server support and a build carrying the
     // Sign in with Apple capability (dev builds on a free team don't).
     const appleOk = methods.apple && (await appleAvailable());
