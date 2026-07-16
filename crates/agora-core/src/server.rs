@@ -252,6 +252,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/pairing", get(list_pairing).post(create_pairing))
         .route("/api/pairing/{token}", delete(revoke_pairing))
+        .route("/api/push-tokens", post(register_push_token).delete(unregister_push_token))
         .route("/api/auth/config", get(auth_config))
         .route("/api/auth/google/start", get(google_start))
         .route("/api/auth/google/callback", get(google_callback))
@@ -1821,6 +1822,45 @@ async fn revoke_pairing(
     Ok(Json(json!({"ok": true})))
 }
 
+// ----------------------------------------------------------- push tokens
+
+/// Expo push tokens look like `ExponentPushToken[...]` (legacy: `ExpoPushToken[...]`).
+fn valid_expo_push_token(token: &str) -> bool {
+    let t = token.trim();
+    (t.starts_with("ExponentPushToken[") || t.starts_with("ExpoPushToken[")) && t.ends_with(']')
+}
+
+async fn register_push_token(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let token = payload["token"].as_str().unwrap_or("").trim().to_string();
+    if !valid_expo_push_token(&token) {
+        return Err(err(StatusCode::BAD_REQUEST, "Invalid Expo push token"));
+    }
+    let platform = payload["platform"].as_str().unwrap_or("").trim().to_string();
+    state.hub.store.upsert_push_token(&token, &platform);
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn unregister_push_token(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_owner(&state, &headers, &q)?;
+    let token = payload["token"].as_str().unwrap_or("").trim().to_string();
+    if token.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "token required"));
+    }
+    state.hub.store.delete_push_token(&token);
+    Ok(Json(json!({"ok": true})))
+}
+
 // ----------------------------------------------------------- google sign-in
 
 /// Short-lived CSRF cookie binding a Google round-trip to the browser that
@@ -2169,6 +2209,15 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expo_push_token_shape() {
+        assert!(valid_expo_push_token("ExponentPushToken[xxxxxx]"));
+        assert!(valid_expo_push_token("ExpoPushToken[legacy]"));
+        assert!(!valid_expo_push_token(""));
+        assert!(!valid_expo_push_token("not-a-token"));
+        assert!(!valid_expo_push_token("ExponentPushToken[no-close"));
+    }
 
     #[test]
     fn mention_prefix_normalizes_and_rejects_smuggled_text() {

@@ -51,10 +51,12 @@ const NOTIFY_THROTTLE: Duration = Duration::from_secs(5);
 const NOTIFY_BODY_MAX_CHARS: usize = 180;
 
 /// A new-message notification for the platform layer (the desktop shell
-/// shows it natively; headless deployments simply don't set a notifier).
+/// shows it natively; headless deployments fan the same payload out via
+/// Expo push when mobile tokens are registered).
 #[derive(Clone, Debug)]
 pub struct NotifyEvent {
     pub channel_id: String,
+    pub thread_id: Option<i64>,
     /// "Author — Group / #channel"
     pub title: String,
     /// Message snippet.
@@ -163,18 +165,21 @@ impl Hub {
         self.ui_active.store(active, Ordering::Relaxed);
     }
 
-    /// Notify about a freshly posted message when nobody is looking.
+    /// Notify about a freshly posted agent message when nobody is looking.
     ///
-    /// Mirrors the seen/unseen model: a message is "seen" only when the app
-    /// is focused (the UI acks reads under the same visibility rule), so an
-    /// unfocused window means this message is landing unread. Throttled per
-    /// channel so bursts collapse into one banner.
+    /// Desktop: banners only while the window is unfocused (and a notifier
+    /// is installed). Mobile: Expo push whenever device tokens are stored —
+    /// independent of `ui_active`, because a headless server never flips that
+    /// flag and a phone can be suspended while the desktop is focused.
+    /// Throttled per channel so bursts collapse into one banner / push.
     fn maybe_notify(&self, message: &Value) {
-        if self.ui_active.load(Ordering::Relaxed) {
+        let want_desktop = !self.ui_active.load(Ordering::Relaxed)
+            && self.notifier.lock().unwrap().is_some();
+        let tokens = self.store.list_push_tokens();
+        let want_push = !tokens.is_empty();
+        if !want_desktop && !want_push {
             return;
         }
-        let notifier = self.notifier.lock().unwrap();
-        let Some(notify) = notifier.as_ref() else { return };
         let channel_id = message["channel_id"].as_str().unwrap_or_default();
         {
             let mut st = self.state.lock().unwrap();
@@ -212,11 +217,33 @@ impl Hub {
         {
             body.push('…');
         }
-        notify(NotifyEvent {
+        let event = NotifyEvent {
             channel_id: channel_id.to_string(),
+            thread_id: message["thread_id"].as_i64(),
             title: format!("{author} — {place}"),
             body,
-        });
+        };
+        if want_desktop {
+            let notifier = self.notifier.lock().unwrap();
+            if let Some(notify) = notifier.as_ref() {
+                notify(event.clone());
+            }
+        }
+        if want_push {
+            let store = Arc::clone(&self.store);
+            let push = crate::push::PushMessage {
+                title: event.title,
+                body: event.body,
+                channel_id: event.channel_id,
+                thread_id: event.thread_id,
+            };
+            std::thread::spawn(move || {
+                let dead = crate::push::send(&push, &tokens);
+                for token in dead {
+                    store.delete_push_token(&token);
+                }
+            });
+        }
     }
 
     // ------------------------------------------------------------- agents

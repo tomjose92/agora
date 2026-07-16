@@ -68,7 +68,7 @@
 
   <h2>Notifications, microphone and photos</h2>
   <ul>
-    <li><strong>Notifications</strong> are generated locally on your device from your server's events.</li>
+    <li><strong>Notifications</strong> for new agent messages are sent by your Agora server through Expo's push service (Apple APNs / Google FCM) to wake the device when the app is suspended. While the app is open, updates arrive over your connection to the server instead.</li>
     <li><strong>Microphone</strong> access is used only when you record a voice message or use live voice; audio is sent to your server.</li>
     <li><strong>Photo library and camera</strong> access is used only when you attach an image to a message.</li>
   </ul>

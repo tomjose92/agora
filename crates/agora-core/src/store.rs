@@ -126,6 +126,13 @@ CREATE TABLE IF NOT EXISTS agents (
     has_avatar INTEGER NOT NULL DEFAULT 0,
     avatar_v INTEGER NOT NULL DEFAULT 0
 );
+-- Expo push tokens from mobile clients (APNs/FCM via Expo). Single-user v1
+-- scopes these to the instance; sign-out / DeviceNotRegistered prune rows.
+CREATE TABLE IF NOT EXISTS push_tokens (
+    token TEXT PRIMARY KEY,
+    platform TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL
+);
 -- Full-text index over message text (external content: rows live in
 -- `messages`, the index holds only tokens). Porter stemming so "deploy"
 -- finds "deployed"/"deployment". Kept in sync by the triggers below;
@@ -782,6 +789,8 @@ impl Store {
                 params![username],
             )
             .unwrap();
+            // Instance is single-user: wiping the account drops every device token.
+            conn.execute("DELETE FROM push_tokens", []).unwrap();
         }
         self.unlink_files(&file_ids);
     }
@@ -1794,6 +1803,33 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM agents WHERE id = ?1", params![id]).unwrap() > 0
     }
+
+    // ------------------------------------------------------------- push tokens
+
+    pub fn upsert_push_token(&self, token: &str, platform: &str) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO push_tokens (token, platform, updated_at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(token) DO UPDATE SET platform = excluded.platform, \
+             updated_at = excluded.updated_at",
+            params![token, platform, now()],
+        )
+        .unwrap();
+    }
+
+    pub fn delete_push_token(&self, token: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM push_tokens WHERE token = ?1", params![token]).unwrap() > 0
+    }
+
+    pub fn list_push_tokens(&self) -> Vec<String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT token FROM push_tokens").unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+    }
 }
 
 /// thread_reads/thread_hides have no channel_id column; scope the delete via
@@ -2397,5 +2433,26 @@ mod tests {
         assert_eq!(agents[0]["avatar_v"], 1234);
         assert!(s.remove_agent("mimir"));
         assert!(s.known_agents().is_empty());
+    }
+
+    #[test]
+    fn push_tokens_upsert_list_delete() {
+        let s = store();
+        s.upsert_push_token("ExponentPushToken[a]", "ios");
+        s.upsert_push_token("ExponentPushToken[b]", "android");
+        s.upsert_push_token("ExponentPushToken[a]", "ios"); // refresh
+        let mut tokens = s.list_push_tokens();
+        tokens.sort();
+        assert_eq!(
+            tokens,
+            vec![
+                "ExponentPushToken[a]".to_string(),
+                "ExponentPushToken[b]".to_string()
+            ]
+        );
+        assert!(s.delete_push_token("ExponentPushToken[a]"));
+        assert_eq!(s.list_push_tokens(), vec!["ExponentPushToken[b]".to_string()]);
+        s.delete_user_data("tom");
+        assert!(s.list_push_tokens().is_empty());
     }
 }

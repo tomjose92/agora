@@ -11,6 +11,7 @@ pub mod config;
 pub mod connections;
 pub mod hub;
 pub mod migrate;
+pub mod push;
 pub mod server;
 pub mod store;
 pub mod voice;

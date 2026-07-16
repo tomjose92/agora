@@ -556,20 +556,16 @@ Agent replies that land while nobody is looking pop native banners. What
 | --- | --- | --- |
 | Desktop, embedded mode | Banner when the window is unfocused or hidden (in-process hub notifier). | Same — the hub keeps running after the window closes; Cmd-Q stops it. |
 | Desktop, remote mode | Banner when unfocused, via the shell's own event socket to the remote server (per-channel throttle, same title shape). | Same, as long as the app is running (closing the window only hides it). |
-| iOS app | Banner while the app process is alive and the socket is connected (foregrounded or briefly backgrounded). | Periodic catch-up: a background task polls unread counts and posts "N new messages in Group / #channel" banners. iOS schedules it opportunistically (15-minute floor, no guarantee) — expect "within a while", not instant. |
+| iOS / Android app | No banner while focused (socket still updates the UI). | Instant remote push via Expo → APNs/FCM for agent messages. The app registers an Expo push token at `POST /api/push-tokens`; `agora-server` fans out on notify-worthy messages (per-channel throttle). If push registration fails (simulator, denied permission), a background unread poll remains as fallback. |
 | Browser tab | Nothing (no notification path). | Nothing. |
 
-Tapping an iOS banner opens the channel (or thread) it came from, and the
+Tapping a mobile banner opens the channel (or thread) it came from, and the
 app icon badge tracks total unread across devices.
 
-**Instant push while the iPhone app is suspended** is the one gap, and it's
-an Apple-credentials problem, not a code one: APNs requires the push
-entitlement, which free personal signing teams can't carry (the paid
-Developer Program, $99/yr, can). The upgrade path when enrolled: drop the
-`withNoPushEntitlement` plugin from `mobile/app.json`, register Expo push
-tokens with the server (new `POST /api/push-tokens`), and have `agora-server`
-POST to Expo's push API for agent messages when no UI socket is connected.
-Until then the background poll above is the honest fallback.
+Remote push needs a paid Apple Developer Program membership for iOS (APNs
+entitlement + EAS push credentials) and a native rebuild after enabling the
+`expo-notifications` plugin. Sign-out calls `DELETE /api/push-tokens` so the
+server stops waking that device.
 
 **macOS signing requirement:** banners post through the modern
 `UNUserNotificationCenter` framework, and macOS only delivers those for apps
@@ -585,6 +581,6 @@ signed launch, macOS shows the usual "allow notifications?" prompt.
 - **Multi-user** — accounts beyond the single admin key.
 - **More bridge kits** — a [Claude CLI bridge](bridges/claude-cli/README.md)
   ships today; ready-made Node/other clients for the dial-in protocol are next.
-- **Instant iOS push** — the [mobile app](mobile/README.md) ships now (React
-  Native/Expo, dial-out only); APNs/FCM push is gated on Apple Developer
-  credentials (see [Notifications](#notifications)).
+- **Richer mobile push** — agent-message Expo push ships today (see
+  [Notifications](#notifications)); optional polish is badge counts in the
+  push payload and Android FCM credential automation in EAS.
