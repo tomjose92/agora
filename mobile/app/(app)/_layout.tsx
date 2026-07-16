@@ -13,6 +13,7 @@ import { notifyAgentMessage, setBadge, setupNotifications } from "../../src/lib/
 import { registerBackgroundPolling, saveUnreadSnapshot } from "../../src/lib/background";
 import { notificationTarget, totalThreadUnread, totalUnread } from "../../src/lib/unread";
 import { useGroups, useThreads } from "../../src/api/queries";
+import { headerBack } from "../../src/lib/headerItems";
 import { colors } from "../../src/lib/theme";
 
 function LiveSocket() {
@@ -79,6 +80,7 @@ export default function AppLayout() {
           headerTitleStyle: { fontWeight: "700" },
           headerShadowVisible: false,
           contentStyle: { backgroundColor: colors.bg },
+          ...headerBack(),
         }}
       />
     </>

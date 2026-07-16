@@ -44,6 +44,7 @@ import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows"
 import { MessageItem } from "../../../../src/components/MessageItem";
 import { toastErr } from "../../../../src/components/Toast";
 import { onAgentMessage } from "../../../../src/lib/agentBus";
+import { headerActions } from "../../../../src/lib/headerItems";
 import { useHeaderKeyboardOffset } from "../../../../src/lib/keyboard";
 import {
   enqueueSpeech,
@@ -197,7 +198,7 @@ export default function ThreadScreen() {
         options={{
           title: params.channelName ? `Thread · # ${params.channelName}` : "Thread",
           headerShown: true,
-          headerRight: () =>
+          ...headerActions(
             voiceOk ? (
               <View style={styles.headerBtns}>
                 <Pressable
@@ -216,6 +217,7 @@ export default function ThreadScreen() {
                 </Pressable>
               </View>
             ) : null,
+          ),
         }}
       />
       <KeyboardAvoidingView

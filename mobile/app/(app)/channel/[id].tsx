@@ -47,6 +47,7 @@ import { MessageItem } from "../../../src/components/MessageItem";
 import { toastErr } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
 import { fmtTs } from "../../../src/lib/format";
+import { headerActions } from "../../../src/lib/headerItems";
 import { useHeaderKeyboardOffset } from "../../../src/lib/keyboard";
 import { enqueueSpeech, prepareSpeechAudio, stopSpeech } from "../../../src/lib/speech";
 import { colors } from "../../../src/lib/theme";
@@ -360,7 +361,7 @@ export default function ChannelScreen() {
         options={{
           title: `# ${channelName}`,
           headerShown: true,
-          headerRight: () => (
+          ...headerActions(
             <View style={styles.headerBtns}>
               {voiceOk ? (
                 <Pressable
@@ -391,7 +392,7 @@ export default function ChannelScreen() {
                   <Icon icon={Users} size={20} color={colors.text} />
                 </Pressable>
               ) : null}
-            </View>
+            </View>,
           ),
         }}
       />
