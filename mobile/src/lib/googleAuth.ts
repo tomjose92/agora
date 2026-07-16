@@ -18,7 +18,10 @@ export interface RedirectResult {
 /** Pull token/error out of the server's redirect back to our deep link.
     Hand-parsed: Hermes' URL support is too patchy to trust here. */
 export function parseRedirect(url: string): RedirectResult {
-  const query = url.split(/[?]/).slice(1).join("?");
+  // Drop any fragment first: Safari carries an empty `#` over from Google's
+  // redirect chain (RFC 7231 fragment inheritance), and it would otherwise
+  // glue itself onto the last query value — corrupting the token.
+  const query = url.split("#")[0].split(/[?]/).slice(1).join("?");
   const out: RedirectResult = {};
   for (const pair of query.split("&")) {
     const eq = pair.indexOf("=");
