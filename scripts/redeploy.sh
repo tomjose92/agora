@@ -53,7 +53,11 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 1
 fi
 # --yes so npx never stops to prompt for the tauri CLI install.
-( cd "$DESKTOP_DIR" && npx --yes @tauri-apps/cli@latest build --bundles app )
+# `-- --no-default-features` (forwarded to cargo) compiles the updater OUT of
+# local dev installs: a build with the updater enabled would silently replace
+# itself with the latest published GitHub release on next launch, wiping your
+# local changes.
+( cd "$DESKTOP_DIR" && npx --yes @tauri-apps/cli@latest build --bundles app -- --no-default-features )
 
 if [[ ! -d "$BUILD_APP" ]]; then
   echo "error: expected bundle not found at $BUILD_APP" >&2

@@ -261,7 +261,10 @@ push a `v*` tag and a macOS runner produces a universal DMG plus signed
 updater artifacts and a `latest.json` feed, attached to a **draft** GitHub
 Release — publish the draft to ship. The app checks that feed on every
 launch (silently installing updates for the next start) and on demand via
-**Server → Check for Updates…**. Updater artifacts are signed with the
+**Agora → Check for Updates…** in the app menu, which walks through native
+install/restart dialogs. Local `scripts/redeploy.sh` builds compile the
+updater out (`--no-default-features`) so a dev install is never silently
+replaced by a published release. Updater artifacts are signed with the
 project's updater key (`plugins.updater.pubkey` in `tauri.conf.json`); CI
 needs the private key in the `TAURI_SIGNING_PRIVATE_KEY` repo secret. Until
 the Apple signing secrets are configured the workflow ad-hoc signs, so

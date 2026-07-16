@@ -74,7 +74,9 @@ fn main() {
 
     let builder = tauri::Builder::default();
     #[cfg(feature = "updater")]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init());
     builder
         .plugin(tauri_plugin_notification::init())
         // target="_blank" links in the UI open in the system browser instead
@@ -94,9 +96,25 @@ fn main() {
                 .text("server-settings", "Server Settings…")
                 .separator()
                 .text("sign-out", "Sign Out");
-            #[cfg(feature = "updater")]
+            // "Check for Updates…" follows the macOS (Sparkle) convention:
+            // it lives in the app menu, right under "About Agora". Elsewhere
+            // there is no app menu, so it rides in the Server submenu.
+            #[cfg(all(feature = "updater", not(target_os = "macos")))]
             let server = server.separator().text("check-updates", "Check for Updates…");
             menu.append(&server.build()?)?;
+            #[cfg(all(feature = "updater", target_os = "macos"))]
+            if let Some(tauri::menu::MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
+                app_menu.insert(
+                    &tauri::menu::MenuItem::with_id(
+                        handle,
+                        "check-updates",
+                        "Check for Updates…",
+                        true,
+                        None::<&str>,
+                    )?,
+                    1,
+                )?;
+            }
             Ok(menu)
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -105,13 +123,7 @@ fn main() {
             #[cfg(feature = "updater")]
             "check-updates" => {
                 let handle = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let notify_handle = handle.clone();
-                    updater::check_from_menu(handle, move |title, body| {
-                        deliver_notification(&notify_handle, title, body);
-                    })
-                    .await;
-                });
+                tauri::async_runtime::spawn(updater::check_from_menu(handle));
             }
             _ => {}
         })

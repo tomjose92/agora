@@ -5,6 +5,7 @@
 import React, { useState } from "react";
 import {
   Alert,
+  Linking,
   Pressable,
   ScrollView,
   Share,
@@ -14,6 +15,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import * as Application from "expo-application";
 import { Stack } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { keys } from "../../src/api/keys";
@@ -26,6 +28,7 @@ import {
 import type { Me } from "../../src/api/types";
 import { ArmedButton } from "../../src/components/ArmedButton";
 import { toast, toastErr } from "../../src/components/Toast";
+import { compareVersions, lookupStoreVersion } from "../../src/lib/appVersion";
 import { fmtTs } from "../../src/lib/format";
 import { colors, mono } from "../../src/lib/theme";
 import { useApi, useSession } from "../../src/state/session";
@@ -120,6 +123,39 @@ export default function SettingsScreen() {
   const pairingMut = usePairingMutations();
   const [bridgeName, setBridgeName] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+
+  const appVersion = Application.nativeApplicationVersion ?? "0.0.0";
+  const appBuild = Application.nativeBuildVersion ?? "?";
+
+  // App Store apps can't self-update; the best we can do is compare against
+  // the published store version and deep-link to the listing. Pre-publish
+  // (no listing yet) reads as "up to date" on purpose.
+  const checkForUpdates = async () => {
+    setCheckingUpdate(true);
+    try {
+      const bundleId = Application.applicationId ?? "app.agora.mobile";
+      const listing = await lookupStoreVersion(bundleId);
+      if (listing && compareVersions(listing.version, appVersion) > 0) {
+        Alert.alert(
+          "Update available",
+          `Version ${listing.version} is available (you have ${appVersion}).`,
+          [
+            { text: "Later", style: "cancel" },
+            ...(listing.url
+              ? [{ text: "Open App Store", onPress: () => void Linking.openURL(listing.url) }]
+              : []),
+          ],
+        );
+      } else {
+        toast("You're on the latest version");
+      }
+    } catch (e) {
+      toastErr("Couldn't check for updates", e as Error);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   // App Store guideline 5.1.1(v): account deletion must be reachable in-app.
   // The server wipes everything keyed to this user and revokes all sessions;
@@ -288,6 +324,37 @@ export default function SettingsScreen() {
               <Text style={[styles.deleteText, deleting && { opacity: 0.4 }]}>
                 {deleting ? "Deleting…" : "Delete account"}
               </Text>
+            </Pressable>
+          </View>
+        </Section>
+
+        <Section title="About">
+          <View style={styles.row}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.name}>
+                Agora {appVersion} (build {appBuild})
+              </Text>
+            </View>
+            <Pressable style={styles.linkBtn} onPress={checkForUpdates} disabled={checkingUpdate}>
+              <Text style={[styles.linkBtnText, checkingUpdate && { opacity: 0.4 }]}>
+                {checkingUpdate ? "Checking…" : "Check for updates"}
+              </Text>
+            </Pressable>
+          </View>
+          {/* App Review expects the policy/support pages to be reachable in-app. */}
+          <View style={styles.row}>
+            <Pressable
+              style={styles.linkBtn}
+              onPress={() => void Linking.openURL("https://tomjose92.github.io/agora/privacy.html")}
+            >
+              <Text style={styles.linkBtnText}>Privacy policy</Text>
+            </Pressable>
+            <View style={{ flex: 1 }} />
+            <Pressable
+              style={styles.linkBtn}
+              onPress={() => void Linking.openURL("https://tomjose92.github.io/agora/")}
+            >
+              <Text style={styles.linkBtnText}>Support</Text>
             </Pressable>
           </View>
         </Section>

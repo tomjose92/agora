@@ -15,7 +15,9 @@ tauri-plugin-opener = "2"
 # Direct-download auto-updates (GitHub Releases feed). Mac App Store builds
 # must ship without this — updates flow through the store there — so it sits
 # behind the default-on `updater` feature (MAS: --no-default-features).
+# The dialog plugin drives the interactive "Check for Updates…" prompts.
 tauri-plugin-updater = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -29,7 +31,7 @@ futures-util.workspace = true
 
 [features]
 default = ["updater"]
-updater = ["dep:tauri-plugin-updater"]
+updater = ["dep:tauri-plugin-updater", "dep:tauri-plugin-dialog"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
