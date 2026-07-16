@@ -16,14 +16,13 @@ and progress bubbles, agent management, Pantheo connections and pairing
 tokens. Markdown-lite rendering (bold/italic/code/links/tables) matches the
 desktop `mdLite`. Voice features stay stubbed, same as desktop v1.
 
-Notifications fire locally while the socket is alive (foreground / recently
-backgrounded); tapping one opens its channel or thread, and the app icon
-badge tracks total unread. While the app is suspended, a background task
-(`expo-background-task`) polls unread counts and posts per-channel catch-up
-banners — iOS runs it opportunistically (15-minute floor, no guarantee).
-True instant push (APNs/FCM) needs the paid Apple Developer Program plus a
-small server-side addition; see the root README's Notifications section for
-the upgrade path.
+Agent replies while the app is suspended arrive as remote Expo push
+(APNs/FCM under the hood): the app registers a token at `POST /api/push-tokens`
+and `agora-server` sends via Expo's push API. Tapping a banner opens its
+channel or thread; the app icon badge tracks total unread. If push
+registration fails (simulator, denied permission), a background unread poll
+(`expo-background-task`) remains as catch-up. A paid Apple Developer account
+and an EAS build with push credentials are required for iOS APNs.
 
 ## Getting started
 

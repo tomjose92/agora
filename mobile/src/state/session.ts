@@ -12,6 +12,7 @@ import {
   type Session,
 } from "../api/client";
 import type { Me } from "../api/types";
+import { unregisterPushToken } from "../lib/notifications";
 
 /* Shared with the background poller, which reads credentials without the store. */
 export const KEY_URL = "agora_server_url";
@@ -123,12 +124,16 @@ export const useSession = create<SessionState>((set) => ({
   },
 
   async signOut() {
+    const session = useSession.getState().session;
+    await unregisterPushToken(session);
     // Keep KEY_URL: the login screen should only ask for credentials again.
     await SecureStore.deleteItemAsync(KEY_TOKEN);
     set({ status: "signedOut", session: null, username: "", voiceOk: false });
   },
 
   async forgetServer() {
+    const session = useSession.getState().session;
+    await unregisterPushToken(session);
     await Promise.all([
       SecureStore.deleteItemAsync(KEY_URL),
       SecureStore.deleteItemAsync(KEY_TOKEN),

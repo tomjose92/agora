@@ -8,9 +8,8 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import { parseError } from "../api/client";
 
 /** True when this build can present the native sheet: iOS 13+ with the
-    Sign in with Apple entitlement. Dev builds signed by a free personal
-    team strip that entitlement (see plugins/withNoPushEntitlement.js), so
-    the button simply doesn't render there. */
+    Sign in with Apple entitlement. Free Personal Team builds without that
+    capability report false, so the button simply doesn't render there. */
 export async function appleAvailable(): Promise<boolean> {
   try {
     return await AppleAuthentication.isAvailableAsync();

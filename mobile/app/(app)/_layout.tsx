@@ -1,7 +1,6 @@
 /* Signed-in shell: guards the group, keeps the live socket mounted for the
-   whole session, and wires agent messages to local notifications — plus
-   notification-tap routing, the unread app badge, and the background
-   unread poller. */
+   whole session, registers Expo push (with unread-poll fallback), and wires
+   notification-tap routing plus the unread app badge. */
 
 import React, { useEffect, useRef } from "react";
 import { Redirect, Stack, router, type Href } from "expo-router";
@@ -9,8 +8,17 @@ import * as Notifications from "expo-notifications";
 import { useSession } from "../../src/state/session";
 import { useAgoraSocket } from "../../src/ws/useAgoraSocket";
 import { emitAgentMessage } from "../../src/lib/agentBus";
-import { notifyAgentMessage, setBadge, setupNotifications } from "../../src/lib/notifications";
-import { registerBackgroundPolling, saveUnreadSnapshot } from "../../src/lib/background";
+import {
+  notifyAgentMessage,
+  registerPushToken,
+  setBadge,
+  setupNotifications,
+} from "../../src/lib/notifications";
+import {
+  registerBackgroundPolling,
+  saveUnreadSnapshot,
+  unregisterBackgroundPolling,
+} from "../../src/lib/background";
 import { notificationTarget, totalThreadUnread, totalUnread } from "../../src/lib/unread";
 import { useGroups, useThreads } from "../../src/api/queries";
 import { headerBack } from "../../src/lib/headerItems";
@@ -26,8 +34,8 @@ function LiveSocket() {
   return null;
 }
 
-/** Badge = channel unreads + thread unreads; snapshot feeds the background
-    poller's diff so messages read here don't come back as stale banners. */
+/** Badge = channel unreads + thread unreads; snapshot feeds the poll
+    fallback's diff so messages read here don't come back as stale banners. */
 function UnreadSync() {
   const groups = useGroups().data;
   const threads = useThreads().data;
@@ -57,13 +65,26 @@ function NotificationTapRouter() {
 
 export default function AppLayout() {
   const status = useSession((s) => s.status);
+  const session = useSession((s) => s.session);
   useEffect(() => {
     void setupNotifications();
   }, []);
   useEffect(() => {
-    if (status !== "signedIn") return;
-    void registerBackgroundPolling();
-  }, [status]);
+    if (status !== "signedIn" || !session) return;
+    let cancelled = false;
+    void (async () => {
+      const pushOk = await registerPushToken(session);
+      if (cancelled) return;
+      if (pushOk) {
+        await unregisterBackgroundPolling();
+      } else {
+        await registerBackgroundPolling();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [status, session]);
 
   if (status === "loading") return null;
   if (status !== "signedIn") return <Redirect href="/connect" />;

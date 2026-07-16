@@ -8,6 +8,18 @@ jest.mock("expo-secure-store", () => ({
   deleteItemAsync: jest.fn(async () => undefined),
 }));
 
+jest.mock("expo-notifications", () => ({
+  setNotificationHandler: jest.fn(),
+  requestPermissionsAsync: jest.fn(async () => ({})),
+  getExpoPushTokenAsync: jest.fn(async () => ({ data: "ExponentPushToken[test]" })),
+  scheduleNotificationAsync: jest.fn(),
+  setBadgeCountAsync: jest.fn(async () => {}),
+}));
+
+jest.mock("expo-constants", () => ({
+  expoConfig: { extra: { eas: { projectId: "test-project" } } },
+}));
+
 import * as SecureStore from "expo-secure-store";
 import { KEY_URL, useSession } from "../src/state/session";
 

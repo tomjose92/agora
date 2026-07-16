@@ -16,11 +16,18 @@
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true,
           "NSExceptionDomains": {
-            "10.0.0.0/8": { "NSExceptionAllowsInsecureHTTPLoads": true },
-            "172.16.0.0/12": { "NSExceptionAllowsInsecureHTTPLoads": true },
-            "192.168.0.0/16": { "NSExceptionAllowsInsecureHTTPLoads": true }
+            "10.0.0.0/8": {
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            },
+            "172.16.0.0/12": {
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            },
+            "192.168.0.0/16": {
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            }
           }
-        }
+        },
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -31,7 +38,13 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -41,7 +54,12 @@
       "expo-secure-store",
       "expo-sharing",
       "expo-image",
-      "./plugins/withNoPushEntitlement",
+      [
+        "expo-notifications",
+        {
+          "color": "#101216"
+        }
+      ],
       "expo-background-task",
       "expo-web-browser",
       "expo-apple-authentication",
@@ -58,6 +76,12 @@
           "cameraPermission": "Agora uses the camera to take photos to attach to messages."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "81d2da32-6efd-465a-b127-51c011bb0297"
+      }
+    }
   }
 }

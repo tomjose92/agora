@@ -1,9 +1,6 @@
-/* Background unread polling: iOS suspends the app (and its socket) shortly
-   after backgrounding, so a registered background task periodically fetches
-   /api/groups, diffs unread counts against the last snapshot, and fires one
-   local catch-up banner per channel with new activity. iOS schedules these
-   opportunistically (15-minute floor, no guarantee) — instant-while-suspended
-   delivery needs APNs, which the free signing profile can't carry.
+/* Background unread polling — fallback when Expo push registration fails
+   (simulator, denied permission, older builds). Prefer remote push; the
+   signed-in shell only registers this task when push is unavailable.
 
    The snapshot also gets refreshed from the foreground groups cache (see the
    UnreadSync component), so reading messages in-app suppresses stale banners. */
@@ -89,5 +86,14 @@ export async function registerBackgroundPolling(): Promise<void> {
     await BackgroundTask.registerTaskAsync(TASK_NAME, { minimumInterval: 15 });
   } catch {
     /* unsupported platform — foreground notifications still work */
+  }
+}
+
+/** Drop the poller once remote push is registered. */
+export async function unregisterBackgroundPolling(): Promise<void> {
+  try {
+    await BackgroundTask.unregisterTaskAsync(TASK_NAME);
+  } catch {
+    /* not registered */
   }
 }

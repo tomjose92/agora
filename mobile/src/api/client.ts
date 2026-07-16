@@ -111,8 +111,11 @@ export class ApiClient {
     });
   }
 
-  delete<T>(path: string): Promise<T> {
-    return this.request<T>(path, { method: "DELETE" });
+  delete<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>(path, {
+      method: "DELETE",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   }
 
   /** Multipart message post: text + up to 5 files (server-enforced). */
