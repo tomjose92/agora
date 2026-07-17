@@ -662,6 +662,14 @@ class Bridge:
 
     @classmethod
     def _perm_prompt_text(cls, tool: str, tool_input: dict, description: str | None) -> str:
+        if tool == "ExitPlanMode":
+            # The CLI's plan-mode exit gate: "ExitPlanMode" reads like jargon in
+            # a channel, so present it as what it is — a plan awaiting approval.
+            lines = ["Claude finished planning and wants approval to **start implementing this plan**:"]
+            plan = str(tool_input.get("plan") or "").strip()
+            if plan:
+                lines.append(cls._clip(plan, 1500))
+            return "\n".join(lines)
         lines = [f"Claude wants to use **{tool}**:", *cls._perm_detail_lines(tool, tool_input)]
         if description and description not in "\n".join(lines):
             lines.append(f"_{cls._clip(description, 200)}_")
@@ -735,11 +743,15 @@ class Bridge:
             "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
             "text": self._perm_prompt_text(tool, tool_input, req.get("description")),
             "options_id": options_id,
-            "options": [
+            # Plan approval is a per-plan decision, so no "always" shortcut there.
+            "options": ([
+                {"id": "allow", "label": "Approve plan", "style": "primary"},
+                {"id": "deny", "label": "Reject"},
+            ] if tool == "ExitPlanMode" else [
                 {"id": "allow", "label": "Approve", "style": "primary"},
                 {"id": "allow_always", "label": f"Always allow {tool} (this session)"},
                 {"id": "deny", "label": "Reject"},
-            ],
+            ]),
         })
         try:
             _, option_id, who = await asyncio.wait_for(fut, self.permission_timeout)
