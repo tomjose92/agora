@@ -20,6 +20,10 @@ needs approval it emits a `control_request` (subtype `can_use_tool`) on stdout;
 the bridge posts Approve/Always/Reject buttons to the channel and answers with
 a `control_response` on stdin once someone taps (deny on timeout).
 
+AskUserQuestion is not a permission ask — the CLI is waiting for answers. The
+bridge posts each question with one button per option (a typed reply also
+answers, verbatim) and returns the selections in `updatedInput.answers`.
+
 Only dependency: `pip install websockets`.
 """
 from __future__ import annotations
@@ -271,9 +275,14 @@ class Bridge:
         self.listings: dict[str, list[dict]] = {}  # binding key -> last /sessions result
         self.busy: set[str] = set()
         self.outbox: asyncio.Queue = asyncio.Queue()
-        # In-flight permission asks: options_id -> (future, channel_id, thread_id).
-        # The future resolves to (option_id, user_name) when someone taps a button.
+        # In-flight asks awaiting a channel response: options_id ->
+        # (future, channel_id, thread_id). Futures resolve to
+        # ("option", option_id, user) on a button tap, or ("text", reply, user)
+        # when a typed message answers a pending question.
         self.pending_perms: dict[str, tuple[asyncio.Future, str, int | None]] = {}
+        # Unanswered AskUserQuestion entries per binding key, oldest first, so
+        # a plain channel message can answer one as free text while a run is busy.
+        self.pending_questions: dict[str, list[dict]] = {}
         # "Always allow" tool names granted per binding key; memory-only so a
         # bridge restart re-asks rather than silently trusting old grants.
         self.session_allows: dict[str, set[str]] = {}
@@ -443,6 +452,8 @@ class Bridge:
     # ------------------------------------------------------------ claude
 
     async def forward_to_claude(self, key: str, frame: dict, text: str) -> None:
+        if self._answer_pending_question(key, frame, text):
+            return
         binding = self.bindings.get(key)
         if not binding:
             self.post(frame, "No session bound here yet. Run /sessions then /use <n>.")
@@ -546,8 +557,8 @@ class Bridge:
                                 self._handle_control_request(key, frame, proc, event, perm_ids)
                             ))
                         elif kind == "control_cancel_request":
-                            self._cancel_perm(f"perm-{event.get('request_id')}",
-                                              "Claude withdrew the request.")
+                            self._cancel_request(event.get("request_id") or "",
+                                                 "Claude withdrew the request.")
                         elif kind == "result":
                             result_text = event.get("result") or ""
                             if event.get("is_error"):
@@ -610,18 +621,50 @@ class Bridge:
         }}
 
     @staticmethod
-    def _perm_prompt_text(tool: str, tool_input: dict, description: str | None) -> str:
+    def _clip(value, limit: int = 500) -> str:
+        text = value if isinstance(value, str) else json.dumps(value)
+        return text if len(text) <= limit else text[:limit] + "…"
+
+    @classmethod
+    def _perm_detail_lines(cls, tool: str, tool_input: dict) -> list[str]:
+        """Per-tool summary of what Claude wants to do, instead of a raw JSON
+        dump of the tool input."""
         if tool == "Bash" and tool_input.get("command"):
-            detail = str(tool_input["command"])
-        elif tool_input.get("file_path"):
-            detail = str(tool_input["file_path"])
-        else:
-            detail = json.dumps(tool_input)
-        if len(detail) > 500:
-            detail = detail[:500] + "…"
-        lines = [f"Claude wants to use **{tool}**:", f"```\n{detail}\n```"]
-        if description:
-            lines.append(f"_{description}_")
+            return [f"```\n{cls._clip(tool_input['command'])}\n```"]
+        if tool in ("WebFetch", "WebSearch"):
+            lines = []
+            if tool_input.get("url"):
+                lines.append(cls._clip(tool_input["url"], 300))
+            if tool_input.get("query"):
+                lines.append(f'Search: "{cls._clip(tool_input["query"], 200)}"')
+            if tool_input.get("prompt"):
+                lines.append(f"Prompt: {cls._clip(tool_input['prompt'], 200)}")
+            if lines:
+                return lines
+        if tool in ("Grep", "Glob") and tool_input.get("pattern"):
+            line = f"`{cls._clip(tool_input['pattern'], 200)}`"
+            where = tool_input.get("path") or tool_input.get("glob")
+            if where:
+                line += f" in {cls._clip(where, 150)}"
+            return [line]
+        if tool_input.get("file_path"):
+            lines = [cls._clip(tool_input["file_path"], 300)]
+            if tool == "Write" and tool_input.get("content"):
+                lines.append(f"```\n{cls._clip(tool_input['content'], 300)}\n```")
+            elif tool == "Edit" and (tool_input.get("old_string") or tool_input.get("new_string")):
+                lines.append("```\n- {}\n+ {}\n```".format(
+                    cls._clip(tool_input.get("old_string") or "", 200),
+                    cls._clip(tool_input.get("new_string") or "", 200)))
+            return lines
+        # Fallback: one readable line per field beats a truncated JSON blob.
+        lines = [f"{k}: {cls._clip(v, 200)}" for k, v in list(tool_input.items())[:6]]
+        return lines or ["(no input)"]
+
+    @classmethod
+    def _perm_prompt_text(cls, tool: str, tool_input: dict, description: str | None) -> str:
+        lines = [f"Claude wants to use **{tool}**:", *cls._perm_detail_lines(tool, tool_input)]
+        if description and description not in "\n".join(lines):
+            lines.append(f"_{cls._clip(description, 200)}_")
         return "\n".join(lines)
 
     def _resolve_perm_buttons(self, options_id: str, channel_id: str,
@@ -643,6 +686,14 @@ class Bridge:
             fut.cancel()
         self._resolve_perm_buttons(options_id, channel_id, thread_id, note)
 
+    def _cancel_request(self, req_id: str, note: str) -> None:
+        """Cancel every pending ask tied to one CLI request id: the single
+        `perm-` prompt of a tool approval, or the per-question `ask-` posts
+        of an AskUserQuestion."""
+        for oid in list(self.pending_perms):
+            if oid == f"perm-{req_id}" or oid.startswith(f"ask-{req_id}-"):
+                self._cancel_perm(oid, note)
+
     def handle_option_select(self, frame: dict) -> None:
         entry = self.pending_perms.get(frame.get("options_id") or "")
         if not entry:
@@ -651,7 +702,7 @@ class Bridge:
         if not fut.done():
             user = frame.get("user") or {}
             who = user.get("name") or user.get("id") or "someone"
-            fut.set_result((frame.get("option_id"), who))
+            fut.set_result(("option", frame.get("option_id"), who))
 
     async def _handle_control_request(self, key: str, frame: dict, proc,
                                       event: dict, perm_ids: list[str]) -> None:
@@ -667,6 +718,11 @@ class Bridge:
             return
         tool = req.get("tool_name") or "tool"
         tool_input = req.get("input") or {}
+        if tool == "AskUserQuestion":
+            # Not a permission gate — the CLI is waiting for answers, so post
+            # the questions as choice buttons instead of Approve/Reject.
+            await self._ask_user_question(key, frame, proc, req_id, tool_input, perm_ids)
+            return
         if tool in self.session_allows.get(key, set()):
             await self._send_to_claude(proc, self._perm_response(req_id, True, tool_input))
             return
@@ -686,7 +742,7 @@ class Bridge:
             ],
         })
         try:
-            option_id, who = await asyncio.wait_for(fut, self.permission_timeout)
+            _, option_id, who = await asyncio.wait_for(fut, self.permission_timeout)
         except asyncio.CancelledError:
             return  # run ended; _cancel_perm already resolved the buttons
         except TimeoutError:
@@ -704,6 +760,131 @@ class Bridge:
             await self._send_to_claude(proc, self._perm_response(req_id, allow, tool_input, deny_msg))
         except (OSError, RuntimeError, ConnectionResetError):
             pass  # claude already exited; nothing to answer
+
+    # ----------------------------------------------------------- questions
+
+    async def _ask_user_question(self, key: str, frame: dict, proc,
+                                 req_id: str, tool_input: dict,
+                                 perm_ids: list[str]) -> None:
+        """Post an AskUserQuestion's questions to the channel and collect answers.
+
+        One message per question with a button per option; a typed reply in the
+        channel answers as free text (see _answer_pending_question). Replies
+        allow with ``{"questions", "answers"}`` in updatedInput — answers keyed
+        by question text, values the chosen option label or the typed reply —
+        or deny when nobody answers within the permission timeout.
+        """
+        questions = [q for q in (tool_input.get("questions") or []) if isinstance(q, dict)]
+        if not questions:
+            await self._send_to_claude(proc, self._perm_response(req_id, True, tool_input))
+            return
+        entries: list[dict] = []
+        loop = asyncio.get_running_loop()
+        for i, q in enumerate(questions):
+            options = [o for o in (q.get("options") or []) if isinstance(o, dict)]
+            options_id = f"ask-{req_id}-{i}"
+            fut = loop.create_future()
+            self.pending_perms[options_id] = (fut, frame["channel_id"], frame.get("thread_id"))
+            perm_ids.append(options_id)
+            entry = {
+                "future": fut, "options_id": options_id, "options": options,
+                "question": str(q.get("question") or ""),
+                "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
+            }
+            entries.append(entry)
+            self.pending_questions.setdefault(key, []).append(entry)
+            self.send({
+                "type": "post", "agent_id": self.agent_id,
+                "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
+                "text": self._question_text(q, i, len(questions)),
+                "options_id": options_id,
+                "options": [
+                    {"id": f"opt-{j}", "label": str(o.get("label") or f"Option {j + 1}")}
+                    for j, o in enumerate(options)
+                ],
+            })
+        try:
+            answered = await asyncio.wait_for(
+                asyncio.gather(*(e["future"] for e in entries)),
+                self.permission_timeout,
+            )
+        except asyncio.CancelledError:
+            return  # run ended; _cancel_perm already resolved the buttons
+        except TimeoutError:
+            for entry in entries:
+                if not entry["future"].done() or entry["future"].cancelled():
+                    self._resolve_perm_buttons(
+                        entry["options_id"], entry["channel_id"], entry["thread_id"],
+                        f"No answer within {self.permission_timeout}s.")
+            await self._send_to_claude(proc, self._perm_response(
+                req_id, False, tool_input,
+                f"No answer within {self.permission_timeout}s via Agora"))
+            return
+        finally:
+            for entry in entries:
+                self.pending_perms.pop(entry["options_id"], None)
+            left = [e for e in self.pending_questions.get(key, [])
+                    if all(e is not done for done in entries)]
+            if left:
+                self.pending_questions[key] = left
+            else:
+                self.pending_questions.pop(key, None)
+        answers = {
+            entry["question"]: self._answer_label(entry["options"], kind, value)
+            for entry, (kind, value, _who) in zip(entries, answered)
+        }
+        await self._send_to_claude(proc, self._perm_response(
+            req_id, True, {"questions": questions, "answers": answers}))
+
+    @staticmethod
+    def _question_text(q: dict, index: int, total: int) -> str:
+        prefix = f"Claude asks ({index + 1}/{total})" if total > 1 else "Claude asks"
+        header = str(q.get("header") or "").strip()
+        question = str(q.get("question") or "").strip()
+        lines = [f"{prefix}: **{header}** — {question}" if header else f"{prefix}: {question}"]
+        for opt in q.get("options") or []:
+            if not isinstance(opt, dict):
+                continue
+            label = str(opt.get("label") or "").strip() or "(unnamed option)"
+            desc = str(opt.get("description") or "").strip()
+            lines.append(f"- **{label}** — {desc}" if desc else f"- **{label}**")
+        hint = "Tap an option below, or reply with your own answer."
+        if q.get("multiSelect"):
+            hint = ("Tap an option below, or reply with a comma-separated "
+                    "list to pick several (or your own answer).")
+        lines.append(f"_{hint}_")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _answer_label(options: list[dict], kind: str, value) -> str:
+        """Map a resolved ask future to the answer string for the CLI: the
+        tapped option's label, or the typed reply verbatim."""
+        if kind == "option":
+            m = re.fullmatch(r"opt-(\d+)", str(value or ""))
+            if m and int(m.group(1)) < len(options):
+                return str(options[int(m.group(1))].get("label") or value)
+        return str(value or "")
+
+    def _answer_pending_question(self, key: str, frame: dict, text: str) -> bool:
+        """Treat a plain channel message as the answer to the oldest unanswered
+        AskUserQuestion, if any. Free text is a first-class answer (the CLI
+        accepts it in place of a listed option), so replies must not bounce off
+        the busy check while Claude is waiting on a question."""
+        if not text:
+            return False
+        for entry in self.pending_questions.get(key, []):
+            fut = entry["future"]
+            if fut.done():
+                continue
+            author = frame.get("author") or {}
+            who = author.get("name") or author.get("id") or "someone"
+            fut.set_result(("text", text, who))
+            # No tap will resolve this message's buttons hub-side; lock them.
+            snippet = text if len(text) <= 80 else text[:80] + "…"
+            self._resolve_perm_buttons(entry["options_id"], entry["channel_id"],
+                                       entry["thread_id"], f"“{snippet}” by {who}")
+            return True
+        return False
 
     @staticmethod
     def _progress_snippet(event: dict) -> str | None:

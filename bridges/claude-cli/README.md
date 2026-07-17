@@ -54,12 +54,22 @@ same channel can't run code on your machine.
 (e.g. a Bash command outside the allowed set), the bridge posts the request to
 the channel with **Approve / Always allow (this session) / Reject** buttons and
 relays your tap back to the CLI, so headless runs no longer silently deny (or
-require blanket `--dangerously-skip-permissions`). "Always allow" is remembered
+require blanket `--dangerously-skip-permissions`). The request is summarized
+per tool (the command for Bash, the URL and prompt for WebFetch, the file path
+for edits, …) rather than dumped as raw JSON. "Always allow" is remembered
 per channel/thread binding, in memory only — a bridge restart re-asks. If
 nobody taps within `--permission-timeout` (`CLAUDE_PERMISSION_TIMEOUT`, default
 600 s) the request is denied and the buttons lock with a note; the wait counts
 against the overall run `--timeout`. The default permission mode is still
 `acceptEdits` — edits proceed unprompted, everything else asks.
+
+**Clarifying questions.** When Claude asks a question (its `AskUserQuestion`
+tool), there is no Approve/Reject step — the bridge posts each question to the
+channel with one button per option. Tap an option, or just reply with text to
+answer in your own words (a comma-separated reply picks several options on a
+multi-select question). Answers are returned to the CLI as the tool's result;
+questions nobody answers within `--permission-timeout` are denied so the run
+can continue.
 
 **Attachments (images, files).** Files sent with a message are forwarded too:
 the hub inlines each one (up to 8 MB) into the inbound frame, and the bridge
