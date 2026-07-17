@@ -1,0 +1,186 @@
+# AGENTS.md
+
+Working guide for AI agents and contributors in this repo. For what Agora
+*does* as a product (features, deployment, agent protocol), read
+[README.md](README.md) — this file covers how to work on the code.
+
+## What this is
+
+Agora is a Slack-like chat app where **people and AI agents share rooms**.
+One Rust core, three clients:
+
+| Path | What it is |
+| --- | --- |
+| `crates/agora-core` | The embeddable heart: SQLite store, message hub, HTTP+WS API (axum), auth, outbound connections. |
+| `crates/agora-desktop` | Tauri v2 macOS shell. **Embedded mode** runs `agora-core` in-process and serves the *bundled* copy of `ui/`; **remote mode** is a thin webview onto a hosted `agora-server`. |
+| `crates/agora-server` | The same core, headless, for a VPS / Railway. |
+| `ui/` | Web UI — vanilla HTML/CSS/JS, no framework, no build step. Served by the desktop bundle *and* the headless server. |
+| `mobile/` | React Native (Expo) iOS/Android app — a pure client of a hosted `agora-server`. |
+| `bridges/` | Dial-in bridge clients for the agent WebSocket protocol. |
+
+Agora is **multi-user**: real accounts (`users` table) with instance roles
+(admin/member), per-group roles, email/link invites, and Google/Apple
+sign-in. The `admin_key` in `config.json` is the *operator* credential, not
+a user account.
+
+## Setup, run, test
+
+```bash
+# Rust (whole workspace: core + server + desktop shell)
+cargo test --workspace          # all tests, offline, no keys needed
+cargo check --workspace
+
+# headless server
+cargo run -p agora-server -- --data-dir /tmp/agora-dev --ui-dir ui
+
+# mobile (from mobile/)
+npm ci
+npx tsc --noEmit                # typecheck
+npx jest                        # unit tests
+npx expo start                  # dev client
+
+# desktop dev build
+cd crates/agora-desktop && npx @tauri-apps/cli@latest dev
+```
+
+The web UI needs no build — edit `ui/*.js` and reload.
+
+## Versioning and releases (read before bumping anything)
+
+Releases are **triggered by version bumps merged to `main`** — the bump in
+a PR *is* the publish intent. CI never bumps versions itself, and merges
+that change app code *without* a bump deliberately publish nothing.
+
+**Desktop** — version lives in **two files that must stay in sync**:
+
+- `Cargo.toml` → `[workspace.package] version`
+- `crates/agora-desktop/tauri.conf.json` → `version`
+
+Bump both (semver patch unless told otherwise), run `cargo check` so
+`Cargo.lock` follows, and commit all three. When the bump lands on `main`,
+[.github/workflows/release-desktop.yml](.github/workflows/release-desktop.yml)
+builds, signs and notarizes the macOS app and attaches it to a **draft**
+GitHub release named `vX.Y.Z` — a maintainer publishes the draft to ship
+(publishing creates the tag; the in-app updater only sees published
+releases). Re-runs are idempotent: if the release already exists the
+workflow no-ops.
+
+**Mobile** — version lives in **one file**:
+
+- `mobile/app.json` → `expo.version`
+
+Never touch build numbers: `eas.json` uses `appVersionSource: remote` +
+`autoIncrement`, so EAS mints them server-side. When the bump lands on
+`main`, [.github/workflows/publish-mobile.yml](.github/workflows/publish-mobile.yml)
+starts an EAS production iOS build with TestFlight auto-submit (needs the
+`EXPO_TOKEN` repo secret).
+
+**When to bump what** — the desktop binary bundles `agora-core` *and*
+`ui/`, so:
+
+- Changes under `crates/**`, `ui/**`, or `Cargo.toml`/`Cargo.lock` →
+  bump **desktop** (embedded-mode installs only get the change via a new
+  binary; hosted servers additionally need a redeploy).
+- Changes under `mobile/**` that should reach TestFlight → bump **mobile**.
+- A PR touching both (e.g. a feature with server + mobile halves) bumps
+  both; each workflow fires independently on merge.
+- Docs, `bridges/`, `scripts/`, CI-only changes → no bump.
+
+Convention: keep the bump in its own `chore(release): bump desktop to X.Y.Z
+and mobile to A.B.C` commit at the tip of the feature PR.
+
+## Architecture orientation
+
+- **Store** ([store.rs](crates/agora-core/src/store.rs)): all persistence.
+  Synchronous rusqlite behind a `Mutex`, JSON `Value` payloads whose shapes
+  the UI depends on — don't rename fields casually. Schema changes go in
+  `SCHEMA` (new tables) or `migrate()` (new columns on existing tables);
+  both run on every open, so they must be idempotent.
+- **Hub** ([hub.rs](crates/agora-core/src/hub.rs)): in-memory fan-out —
+  agent sockets, UI websockets, notifications, push. Visibility filtering
+  for UI broadcasts lives here.
+- **Server** ([server.rs](crates/agora-core/src/server.rs)): axum routes.
+  Blocking store/LLM work is wrapped in `spawn_blocking` where it matters.
+- **Auth** ([auth.rs](crates/agora-core/src/auth.rs)): HMAC session tokens
+  (embed the user's `session_version`; bumping it revokes their sessions),
+  Google OAuth state encoding, Apple JWT verification.
+- **Mobile state**: react-query for server data (`src/api/queries.ts`),
+  zustand for the session (`src/state/session.ts`), keychain for creds.
+
+## Authorization model (enforce on every new endpoint)
+
+Resolve the caller with `require_user` → `AuthedUser {username,
+display_name, instance_admin}`, then gate with the helpers in `server.rs`:
+
+- `require_instance_admin` — operator surfaces: connections, pairing,
+  users/invites, export/import, instance rename.
+- `require_group_admin` — group/channel mutations (create/rename/delete,
+  member management).
+- `require_member` / `require_channel_member` / `require_message_visible`
+  — everything on the message path (read, post, stars, pins, files,
+  threads, activity). Search results must stay scoped to the caller
+  (`visible_to`/`user` params on the store's search functions).
+- The admin key resolves to an instance-admin `AuthedUser` — it must keep
+  working everywhere a user session does.
+
+**Presentation state is per-user, never shared.** Hiding and reordering
+groups/channels live in the `user_prefs` table and are overlaid onto
+payloads (`overlay_prefs` in server.rs); any member may write their own.
+The legacy global `hidden`/`position` columns on `groups`/`channels` are
+kept only for schema compat and the one-time boot migration
+(`seed_prefs_from_globals`) — **never write them again**. Thread
+hides/reads/stars are likewise per-user tables keyed by `username`.
+
+## Conventions
+
+- **Rust**: comments explain *why*, not what. JSON payloads via
+  `serde_json::json!`. Errors on API paths are `ApiError` with a helpful
+  message — handlers degrade gracefully, they don't panic.
+- **Tests are offline.** Store tests use `Store::open_in_memory()`; server
+  tests use the `test_state()` helper and call handlers directly (mint
+  sessions with `session_headers`). Never hit a real network/API in tests.
+  Mirror new behavior in the matching `#[cfg(test)]` module, and in
+  `mobile/tests/` for mobile logic.
+- **Web UI**: vanilla JS, global functions wired via `onclick` strings,
+  `esc()` everything interpolated into HTML. State lives in module-level
+  `_ago*` variables; redraws are innerHTML rebuilds that must preserve
+  scroll where users notice (see `agoDrawSide`).
+- **Mobile**: follow the existing screen patterns — react-query hooks in
+  `src/api/queries.ts`, admin-only UI gated on `instanceAdmin` from the
+  session store, `toastErr` for mutation failures.
+- **No new heavy deps** without good reason, in any of the three stacks.
+- **Secrets** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, OAuth client secret)
+  live in the process env or `config.json` — never hardcode, never log.
+
+## Gotchas / invariants
+
+- **Every request is authenticated.** New routes take
+  `Query<HashMap<String,String>>` + `HeaderMap` and start with a
+  `require_*` call; the token arrives as `Authorization: Bearer` or
+  `?token=`.
+- **The store's JSON shapes are the API contract** for web + mobile; add
+  fields freely, rename/remove only with all three clients updated.
+- **Sessions**: disabling a user must `bump_session_version`; deleting an
+  account deletes the row (which kills its sessions). Sign-in admission is
+  exactly: existing user → email invite → valid invite link → config
+  allowlist; everything else is `no_access`.
+- **Invite links are single-use**: consume via `use_invite_link` (atomic
+  UPDATE guard) *before* creating the account.
+- **Desktop embedded vs remote**: don't assume the webview talks to
+  localhost — remote mode points at any hosted server, so shell features
+  (notifications, updater) must work against both.
+- **Updater discipline**: never ship two releases with the same version —
+  the release workflow's gate assumes version == release identity.
+- **Keep the working tree clean**; this repo is sometimes edited by more
+  than one session at once. Check `git status` before staging and stage
+  specific files, never `-A`.
+
+## Git / PR conventions
+
+- Conventional Commits with a scope: `feat(multi-user): …`, `fix(ui): …`,
+  `chore(release): …`, `ci: …`.
+- **Only commit when asked.** Don't commit or push proactively.
+- `main` is protected — land changes via PR. Remember the release
+  implication: merging a PR that bumps a version *publishes* (drafts the
+  desktop release / starts the TestFlight build), so leave bumps out of
+  PRs that aren't meant to ship.
