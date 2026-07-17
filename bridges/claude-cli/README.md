@@ -61,7 +61,12 @@ per channel/thread binding, in memory only — a bridge restart re-asks. If
 nobody taps within `--permission-timeout` (`CLAUDE_PERMISSION_TIMEOUT`, default
 600 s) the request is denied and the buttons lock with a note; the wait counts
 against the overall run `--timeout`. The default permission mode is still
-`acceptEdits` — edits proceed unprompted, everything else asks.
+`acceptEdits` — edits proceed unprompted, everything else asks. The CLI's
+`ExitPlanMode` gate is reworded for the channel: it posts as "Claude finished
+planning and wants approval to start implementing this plan" with the plan
+text and **Approve plan / Reject** buttons (no "always" option — each plan is
+approved on its own), since approving it is what lets Claude leave plan mode
+and start editing.
 
 **Clarifying questions.** When Claude asks a question (its `AskUserQuestion`
 tool), there is no Approve/Reject step — the bridge posts each question to the

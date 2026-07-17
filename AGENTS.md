@@ -1,8 +1,11 @@
 # AGENTS.md
 
-Working guide for AI agents and contributors in this repo. For what Agora
-*does* as a product (features, deployment, agent protocol), read
-[README.md](README.md) — this file covers how to work on the code.
+Working guide for AI agents and contributors in this repo. This file covers
+how to work on the code; for what Agora *does* as a product, read
+[README.md](README.md). Deep design lives in
+[ARCHITECTURE.md](docs/ARCHITECTURE.md), the agent protocol in
+[PROTOCOL.md](docs/PROTOCOL.md), operations in [DEPLOYMENT.md](docs/DEPLOYMENT.md), and
+accounts/sign-in in [AUTH.md](docs/AUTH.md).
 
 ## What this is
 
@@ -91,6 +94,9 @@ and mobile to A.B.C` commit at the tip of the feature PR.
 
 ## Architecture orientation
 
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) has the system model. At the keyboard, the
+files that matter:
+
 - **Store** ([store.rs](crates/agora-core/src/store.rs)): all persistence.
   Synchronous rusqlite behind a `Mutex`, JSON `Value` payloads whose shapes
   the UI depends on — don't rename fields casually. Schema changes go in
@@ -109,27 +115,21 @@ and mobile to A.B.C` commit at the tip of the feature PR.
 
 ## Authorization model (enforce on every new endpoint)
 
-Resolve the caller with `require_user` → `AuthedUser {username,
-display_name, instance_admin}`, then gate with the helpers in `server.rs`:
+The full model — helpers, roles, and the per-user presentation-state invariant
+— is in [ARCHITECTURE.md](docs/ARCHITECTURE.md#authorization-model). The rules a new
+endpoint must not break:
 
-- `require_instance_admin` — operator surfaces: connections, pairing,
-  users/invites, export/import, instance rename.
-- `require_group_admin` — group/channel mutations (create/rename/delete,
-  member management).
-- `require_member` / `require_channel_member` / `require_message_visible`
-  — everything on the message path (read, post, stars, pins, files,
-  threads, activity). Search results must stay scoped to the caller
-  (`visible_to`/`user` params on the store's search functions).
-- The admin key resolves to an instance-admin `AuthedUser` — it must keep
-  working everywhere a user session does.
-
-**Presentation state is per-user, never shared.** Hiding and reordering
-groups/channels live in the `user_prefs` table and are overlaid onto
-payloads (`overlay_prefs` in server.rs); any member may write their own.
-The legacy global `hidden`/`position` columns on `groups`/`channels` are
-kept only for schema compat and the one-time boot migration
-(`seed_prefs_from_globals`) — **never write them again**. Thread
-hides/reads/stars are likewise per-user tables keyed by `username`.
+- Resolve the caller with `require_user` → `AuthedUser`, then gate with
+  `require_instance_admin` / `require_group_admin` / `require_member` /
+  `require_channel_member` / `require_message_visible` (all in `server.rs`).
+  The admin key resolves to an instance admin and must keep working everywhere
+  a user session does.
+- Search results must stay scoped to the caller (`visible_to`/`user` params on
+  the store's search functions).
+- **Presentation state is per-user, never shared** — hiding/reordering live in
+  `user_prefs` (overlaid via `overlay_prefs`); **never write** the legacy
+  global `hidden`/`position` columns on `groups`/`channels` again. Thread
+  hides/reads/stars are per-user tables keyed by `username`.
 
 ## Conventions
 

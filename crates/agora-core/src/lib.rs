@@ -105,7 +105,7 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
     if !bound.ip().is_loopback() {
         tracing::warn!(
             "Agora is bound to {bound} (not loopback): reachable off-host in cleartext. \
-             Put it behind a firewall and a TLS reverse proxy (see README §Deploying)."
+             Put it behind a firewall and a TLS reverse proxy (see docs/DEPLOYMENT.md)."
         );
     }
     tokio::spawn(async move {
