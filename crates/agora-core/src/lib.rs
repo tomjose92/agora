@@ -25,6 +25,27 @@ pub struct App {
     pub addr: SocketAddr,
 }
 
+/// Multi-user boot migration: a database without accounts gets one for the
+/// configured (formerly single) username, as instance admin, keyed to the
+/// first allowlisted sign-in email when there is one. All existing state
+/// (memberships, reads, stars, authored messages) is already keyed by that
+/// username, so it carries over untouched.
+pub fn bootstrap_admin_user(config: &config::Config, store: &store::Store) {
+    if !store.list_users().is_empty() {
+        return;
+    }
+    let snapshot = config.snapshot();
+    let email = snapshot
+        .google_allowed_emails
+        .iter()
+        .chain(snapshot.apple_allowed_emails.iter())
+        .map(|e| e.trim().to_lowercase())
+        .find(|e| !e.is_empty());
+    let username = config.username();
+    store.create_user(&username, &username, email.as_deref(), "admin");
+    tracing::info!("bootstrapped instance admin account '{username}'");
+}
+
 /// Build the full application state from a data dir and start serving.
 /// Returns once the listener is bound; serving continues in the background.
 pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<App> {
@@ -36,6 +57,7 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
 
     let config = Arc::new(config::Config::load(&data_dir)?);
     let store = Arc::new(store::Store::open(&data_dir.join("agora.db"))?);
+    bootstrap_admin_user(&config, &store);
     let hub = Arc::new(hub::Hub::new(store));
     let connections = connections::ConnectionManager::new(Arc::clone(&hub), Arc::clone(&config));
     connections.sync();
@@ -88,4 +110,38 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
     });
     tracing::info!("Agora listening on http://{bound}");
     Ok(App { state, addr: bound })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_creates_admin_once_and_keeps_existing_accounts() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config::Config::load(dir.path()).unwrap();
+        config.update(|c| {
+            c.google_allowed_emails = vec!["Me@Example.com".into()];
+        });
+        let store = store::Store::open_in_memory().unwrap();
+
+        // Fresh database: the configured single user becomes the instance
+        // admin, keyed to the (normalized) allowlisted email.
+        bootstrap_admin_user(&config, &store);
+        let users = store.list_users();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0]["username"], config.username());
+        assert_eq!(users[0]["instance_role"], "admin");
+        assert_eq!(users[0]["email"], "me@example.com");
+
+        // Idempotent: a database that has accounts is left alone.
+        bootstrap_admin_user(&config, &store);
+        assert_eq!(store.list_users().len(), 1);
+
+        let populated = store::Store::open_in_memory().unwrap();
+        populated.create_user("ana", "Ana", Some("ana@x.io"), "member").unwrap();
+        bootstrap_admin_user(&config, &populated);
+        assert_eq!(populated.list_users().len(), 1);
+        assert_eq!(populated.list_users()[0]["username"], "ana");
+    }
 }

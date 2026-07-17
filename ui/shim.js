@@ -28,8 +28,11 @@ function authHeaders() {
   const t = sessionToken();
   return t ? { "Authorization": "Bearer " + t } : {};
 }
-let CURRENT_USER = { username: "me", owner: true };
-function isOwner() { return true; }
+/* Filled from /api/me at boot; `instance_admin` gates the operator-only UI
+   (Connections, Users & invites). Group-level powers ride on each group's
+   `role` from /api/groups instead. */
+let CURRENT_USER = { username: "", display_name: "", instance_admin: false };
+function isOwner() { return !!(CURRENT_USER && CURRENT_USER.instance_admin); }
 const active = "agora";   // the chat page checks which SPA tab is showing
 
 /* ---------- api ---------- */
@@ -59,7 +62,8 @@ async function errDetail(res) {
    app rarely does because the shell opens the UI with ?token=). Google leads
    when the server offers it; the admin key is always available. */
 const AUTH_ERROR_TEXT = {
-  no_access: "That Google account isn't allowed on this instance.",
+  no_access: "That account isn't a member here — ask an admin to invite your email.",
+  disabled: "Your account has been disabled on this instance.",
   google_access_denied: "Google sign-in was cancelled.",
   state: "Sign-in expired — try again.",
 };
@@ -108,7 +112,7 @@ function authGate() {
       document.getElementById("auth-token-form").style.display = "none";
       document.getElementById("auth-token-toggle").style.display = "";
       document.getElementById("auth-hint").textContent =
-        "Sign in with an allowed Google account.";
+        "Sign in with Google — members and invited emails get in.";
     }
   }).catch(() => {});
 }
@@ -225,12 +229,24 @@ async function boot() {
   renderServerBadge();
   try {
     const me = await api("/api/me");
-    CURRENT_USER = { username: me.username, owner: true };
+    CURRENT_USER = {
+      username: me.username,
+      display_name: me.display_name || me.username,
+      instance_admin: !!me.instance_admin,
+    };
     _agoVoiceOK = !!me.voice;   // server has STT/TTS: show the voice controls
     _agoSearchAI = !!me.search_ai;   // server can answer /api/search/ask
   } catch (e) {
     return;   // authGate is showing
   }
+  // Who am I + operator-only topbar entries (Connections, People).
+  const meEl = document.getElementById("topbar-me");
+  if (meEl) meEl.textContent = CURRENT_USER.display_name || CURRENT_USER.username;
+  const adminOnly = ["btn-connections", "btn-people"];
+  for (const id of adminOnly) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isOwner() ? "" : "none";
+  }
   renderAgora().catch(console.error);
-  connRefreshBadge().catch(() => {});
+  if (isOwner()) connRefreshBadge().catch(() => {});
 }

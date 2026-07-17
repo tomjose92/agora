@@ -100,21 +100,22 @@ pub struct ConfigData {
     /// Per-attachment upload cap, megabytes.
     #[serde(default = "default_max_file_mb")]
     pub max_file_mb: u64,
-    /// Google OAuth client (Web application type). Both must be set — and
-    /// `google_allowed_emails` non-empty — for Google sign-in to be offered.
+    /// Google OAuth client (Web application type). Both must be set for
+    /// Google sign-in to be offered.
     #[serde(default)]
     pub google_client_id: String,
     #[serde(default)]
     pub google_client_secret: String,
-    /// The only Google accounts allowed to sign in (lowercased). Empty means
-    /// Google sign-in stays disabled: this instance is single-user, so an
-    /// open list would hand the owner seat to any Google account.
+    /// Google accounts that may sign in without a pending invite
+    /// (lowercased) — pre-account installs used this as the whole gate, so
+    /// it keeps working as a standing allowlist. Everyone else needs an
+    /// existing account or an invite created on the admin Users page.
     #[serde(default)]
     pub google_allowed_emails: Vec<String>,
-    /// Sign in with Apple: the only Apple-account emails allowed (lowercased;
-    /// a Hide-My-Email relay address counts — it is stable per Apple ID and
-    /// app). Empty keeps Apple sign-in disabled, same single-user rationale
-    /// as `google_allowed_emails`.
+    /// Sign in with Apple: emails that may sign in without an invite
+    /// (lowercased; a Hide-My-Email relay address counts — it is stable per
+    /// Apple ID and app). Apple sign-in is offered when this list is
+    /// non-empty or `apple_bundle_id` is set explicitly.
     #[serde(default)]
     pub apple_allowed_emails: Vec<String>,
     /// iOS bundle id the identity token must be issued for. Empty means the
@@ -240,14 +241,13 @@ impl Config {
         self.data.lock().unwrap().session_secret.clone()
     }
 
-    /// The Google OAuth client, when sign-in is fully configured (client id +
-    /// secret + a non-empty email allowlist).
+    /// The Google OAuth client, when sign-in is configured (client id +
+    /// secret). Who may sign in is decided per email at callback time
+    /// (existing account, pending invite, or this allowlist), so an empty
+    /// allowlist no longer disables the flow.
     pub fn google(&self) -> Option<GoogleConfig> {
         let data = self.data.lock().unwrap();
-        if data.google_client_id.is_empty()
-            || data.google_client_secret.is_empty()
-            || data.google_allowed_emails.is_empty()
-        {
+        if data.google_client_id.is_empty() || data.google_client_secret.is_empty() {
             return None;
         }
         Some(GoogleConfig {
@@ -262,11 +262,12 @@ impl Config {
         })
     }
 
-    /// Sign in with Apple, when configured (a non-empty email allowlist; the
-    /// bundle id has a stock default).
+    /// Sign in with Apple, when configured: a non-empty email allowlist or
+    /// an explicit bundle id (invite-only setups have no allowlist; setting
+    /// the bundle id is the opt-in). The bundle id has a stock default.
     pub fn apple(&self) -> Option<AppleConfig> {
         let data = self.data.lock().unwrap();
-        if data.apple_allowed_emails.is_empty() {
+        if data.apple_allowed_emails.is_empty() && data.apple_bundle_id.trim().is_empty() {
             return None;
         }
         let bundle_id = if data.apple_bundle_id.trim().is_empty() {
@@ -330,24 +331,25 @@ mod tests {
     }
 
     #[test]
-    fn google_requires_full_config_and_normalizes_emails() {
+    fn google_requires_client_and_normalizes_emails() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = Config::load(dir.path()).unwrap();
         assert!(cfg.google().is_none());
-        cfg.update(|c| {
-            c.google_client_id = "cid".into();
-            c.google_client_secret = "shh".into();
-        });
-        // No allowlist -> still disabled: an open list would hand the single
-        // owner seat to any Google account.
+        cfg.update(|c| c.google_client_id = "cid".into());
+        // Secret still missing -> disabled.
         assert!(cfg.google().is_none());
+        cfg.update(|c| c.google_client_secret = "shh".into());
+        // Invite-only: sign-in is offered with an empty allowlist (each
+        // email is judged at callback time against accounts/invites).
+        let gc = cfg.google().expect("client configured");
+        assert!(gc.allowed_emails.is_empty());
         cfg.update(|c| c.google_allowed_emails = vec![" Tom@Example.COM ".into()]);
         let gc = cfg.google().expect("fully configured");
         assert_eq!(gc.allowed_emails, vec!["tom@example.com"]);
     }
 
     #[test]
-    fn apple_requires_allowlist_and_defaults_bundle_id() {
+    fn apple_requires_allowlist_or_bundle_id() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = Config::load(dir.path()).unwrap();
         assert!(cfg.apple().is_none());
@@ -357,6 +359,10 @@ mod tests {
         assert_eq!(ac.allowed_emails, vec!["tom@example.com"]);
         cfg.update(|c| c.apple_bundle_id = "app.custom.ios".into());
         assert_eq!(cfg.apple().unwrap().bundle_id, "app.custom.ios");
+        // Invite-only: explicit bundle id alone enables the flow.
+        cfg.update(|c| c.apple_allowed_emails = Vec::new());
+        let ac = cfg.apple().expect("bundle id opt-in");
+        assert!(ac.allowed_emails.is_empty());
     }
 
     #[test]

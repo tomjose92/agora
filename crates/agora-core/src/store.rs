@@ -133,6 +133,29 @@ CREATE TABLE IF NOT EXISTS push_tokens (
     platform TEXT NOT NULL DEFAULT '',
     updated_at REAL NOT NULL
 );
+-- Workspace accounts. `username` is the stable key every other per-user
+-- table (reads, stars, memberships, message authorship, mentions) already
+-- uses, so accounts bolt onto existing state without a rekey.
+-- `session_version` is embedded in minted session tokens; bumping it
+-- revokes that user's sessions without signing everyone else out.
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    email TEXT UNIQUE,
+    instance_role TEXT NOT NULL DEFAULT 'member',
+    created_at REAL NOT NULL,
+    disabled INTEGER NOT NULL DEFAULT 0,
+    session_version INTEGER NOT NULL DEFAULT 1
+);
+-- Pending email invites: signing in (Google/Apple) with a matching verified
+-- email creates the account. Accepted rows are kept for provenance.
+CREATE TABLE IF NOT EXISTS invites (
+    email TEXT PRIMARY KEY,
+    invited_by TEXT,
+    instance_role TEXT NOT NULL DEFAULT 'member',
+    created_at REAL NOT NULL,
+    accepted_at REAL
+);
 -- Full-text index over message text (external content: rows live in
 -- `messages`, the index holds only tokens). Porter stemming so "deploy"
 -- finds "deployed"/"deployment". Kept in sync by the triggers below;
@@ -361,6 +384,21 @@ fn message_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Value
 
 const MSG_COLS: &str =
     "id, channel_id, thread_id, author_type, author_id, author_name, text, ts, meta";
+
+const USER_COLS: &str =
+    "username, display_name, email, instance_role, created_at, disabled, session_version";
+
+fn user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    Ok(json!({
+        "username": row.get::<_, String>(0)?,
+        "display_name": row.get::<_, String>(1)?,
+        "email": row.get::<_, Option<String>>(2)?,
+        "instance_role": row.get::<_, String>(3)?,
+        "created_at": row.get::<_, f64>(4)?,
+        "disabled": row.get::<_, i64>(5)? != 0,
+        "session_version": row.get::<_, i64>(6)?,
+    }))
+}
 
 /// An uploaded attachment on its way into `add_message`.
 pub struct NewAttachment {
@@ -789,7 +827,11 @@ impl Store {
                 params![username],
             )
             .unwrap();
-            // Instance is single-user: wiping the account drops every device token.
+            // Dropping the account row revokes the user's sessions too:
+            // session verification requires a live, matching user.
+            conn.execute("DELETE FROM users WHERE username = ?1", params![username]).unwrap();
+            // Device tokens are instance-scoped (not per-user yet); drop them
+            // all so a deleted account can't keep receiving pushes.
             conn.execute("DELETE FROM push_tokens", []).unwrap();
         }
         self.unlink_files(&file_ids);
@@ -924,6 +966,192 @@ impl Store {
             .unwrap()
             .filter_map(Result::ok)
             .collect()
+    }
+
+    // ------------------------------------------------------- users / invites
+
+    pub fn create_user(
+        &self,
+        username: &str,
+        display_name: &str,
+        email: Option<&str>,
+        instance_role: &str,
+    ) -> Option<Value> {
+        let email = email.map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty());
+        {
+            let conn = self.conn.lock().unwrap();
+            let inserted = conn
+                .execute(
+                    "INSERT INTO users (username, display_name, email, instance_role, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5) \
+                     ON CONFLICT(username) DO NOTHING",
+                    params![username, display_name, email, instance_role, now()],
+                )
+                .unwrap_or(0);
+            if inserted == 0 {
+                return None;
+            }
+        }
+        self.user(username)
+    }
+
+    pub fn user(&self, username: &str) -> Option<Value> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT {USER_COLS} FROM users WHERE username = ?1"),
+            params![username],
+            user_row,
+        )
+        .ok()
+    }
+
+    pub fn user_by_email(&self, email: &str) -> Option<Value> {
+        let email = email.trim().to_lowercase();
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT {USER_COLS} FROM users WHERE email = ?1"),
+            params![email],
+            user_row,
+        )
+        .ok()
+    }
+
+    pub fn list_users(&self) -> Vec<Value> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!("SELECT {USER_COLS} FROM users ORDER BY username"))
+            .unwrap();
+        stmt.query_map([], user_row).unwrap().filter_map(Result::ok).collect()
+    }
+
+    pub fn set_user_disabled(&self, username: &str, disabled: bool) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users SET disabled = ?1 WHERE username = ?2",
+            params![disabled as i64, username],
+        )
+        .unwrap()
+            > 0
+    }
+
+    pub fn set_user_instance_role(&self, username: &str, role: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users SET instance_role = ?1 WHERE username = ?2",
+            params![role, username],
+        )
+        .unwrap()
+            > 0
+    }
+
+    /// Invalidate every session the user holds: minted tokens embed the
+    /// version and verification requires an exact match.
+    pub fn bump_session_version(&self, username: &str) -> i64 {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users SET session_version = session_version + 1 WHERE username = ?1",
+            params![username],
+        )
+        .unwrap();
+        conn.query_row(
+            "SELECT session_version FROM users WHERE username = ?1",
+            params![username],
+            |r| r.get(0),
+        )
+        .unwrap_or(1)
+    }
+
+    /// A free username derived from `base` (slugified; `-2`, `-3`, … on
+    /// collision). Usernames double as @mention handles, so they get the
+    /// same lowercase alnum-dash shape channel slugs do.
+    pub fn unique_username(&self, base: &str) -> String {
+        let base = {
+            let s: String = slugify(base).chars().take(32).collect();
+            if s.is_empty() { "user".to_string() } else { s }
+        };
+        if self.user(&base).is_none() {
+            return base;
+        }
+        (2..)
+            .map(|i| format!("{base}-{i}"))
+            .find(|cand| self.user(cand).is_none())
+            .unwrap()
+    }
+
+    pub fn create_invite(&self, email: &str, invited_by: Option<&str>, role: &str) -> Option<Value> {
+        let email = email.trim().to_lowercase();
+        if email.is_empty() || !email.contains('@') {
+            return None;
+        }
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO invites (email, invited_by, instance_role, created_at) \
+                 VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(email) DO UPDATE SET instance_role = excluded.instance_role, \
+                   invited_by = excluded.invited_by, accepted_at = NULL",
+                params![email, invited_by, role, now()],
+            )
+            .unwrap();
+        }
+        self.pending_invite(&email)
+    }
+
+    pub fn pending_invite(&self, email: &str) -> Option<Value> {
+        let email = email.trim().to_lowercase();
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT email, invited_by, instance_role, created_at FROM invites \
+             WHERE email = ?1 AND accepted_at IS NULL",
+            params![email],
+            |r| {
+                Ok(json!({
+                    "email": r.get::<_, String>(0)?,
+                    "invited_by": r.get::<_, Option<String>>(1)?,
+                    "instance_role": r.get::<_, String>(2)?,
+                    "created_at": r.get::<_, f64>(3)?,
+                }))
+            },
+        )
+        .ok()
+    }
+
+    pub fn accept_invite(&self, email: &str) {
+        let email = email.trim().to_lowercase();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE invites SET accepted_at = ?1 WHERE email = ?2",
+            params![now(), email],
+        )
+        .unwrap();
+    }
+
+    pub fn list_invites(&self) -> Vec<Value> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT email, invited_by, instance_role, created_at, accepted_at \
+                 FROM invites ORDER BY created_at DESC",
+            )
+            .unwrap();
+        stmt.query_map([], |r| {
+            Ok(json!({
+                "email": r.get::<_, String>(0)?,
+                "invited_by": r.get::<_, Option<String>>(1)?,
+                "instance_role": r.get::<_, String>(2)?,
+                "created_at": r.get::<_, f64>(3)?,
+                "accepted_at": r.get::<_, Option<f64>>(4)?,
+            }))
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
+    pub fn delete_invite(&self, email: &str) -> bool {
+        let email = email.trim().to_lowercase();
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM invites WHERE email = ?1", params![email]).unwrap() > 0
     }
 
     // ------------------------------------------------------------- messages
@@ -1147,8 +1375,10 @@ impl Store {
     ///
     /// `channel_id`/`group_id`/`author` narrow the scope. `agent_id` restricts
     /// hits to channels that agent is a member of — the same visibility rule
-    /// as inbound fan-out — for the agent-protocol search frame. `match_any`
-    /// switches from all-terms to any-term matching (AI answer retrieval).
+    /// as inbound fan-out — for the agent-protocol search frame. `user`
+    /// restricts hits to groups that user is a member of (the UI search path;
+    /// pass None for a privileged caller). `match_any` switches from
+    /// all-terms to any-term matching (AI answer retrieval).
     #[allow(clippy::too_many_arguments)]
     pub fn search_messages(
         &self,
@@ -1158,13 +1388,14 @@ impl Store {
         group_id: Option<&str>,
         author: Option<&str>,
         agent_id: Option<&str>,
+        user: Option<&str>,
         newest_first: bool,
         limit: usize,
         offset: usize,
     ) -> Vec<Value> {
         self.search_messages_ext(
-            query, match_any, channel_id, group_id, author, agent_id, newest_first, false, None,
-            limit, offset,
+            query, match_any, channel_id, group_id, author, agent_id, user, newest_first, false,
+            None, limit, offset,
         )
     }
 
@@ -1185,6 +1416,7 @@ impl Store {
         group_id: Option<&str>,
         author: Option<&str>,
         agent_id: Option<&str>,
+        user: Option<&str>,
         newest_first: bool,
         has_files: bool,
         file_type: Option<&str>,
@@ -1275,6 +1507,17 @@ impl Store {
                 ));
                 p.push(Box::new(agent.to_string()));
             }
+            // User visibility mirrors the UI: a person sees a channel iff
+            // they are a member of its group (users are group-scoped).
+            if let Some(username) = user {
+                let i = p.len() + 1;
+                sql.push_str(&format!(
+                    " AND EXISTS (SELECT 1 FROM memberships mu \
+                       WHERE mu.member_type = 'user' AND mu.member_id = ?{i} \
+                       AND mu.group_id = c.group_id)"
+                ));
+                p.push(Box::new(username.to_string()));
+            }
             // Text hits first (best bm25), then filename-only hits; newest_first
             // and browse mode both just order by recency.
             if newest_first || query.trim().is_empty() {
@@ -1303,18 +1546,26 @@ impl Store {
     }
 
     /// Channels whose name or topic contains `query` (case-insensitive).
-    pub fn search_channels(&self, query: &str, limit: usize) -> Vec<Value> {
+    /// `visible_to` limits hits to groups that user belongs to (None =
+    /// privileged caller, no filter).
+    pub fn search_channels(&self, query: &str, visible_to: Option<&str>, limit: usize) -> Vec<Value> {
         let pattern = like_pattern(query);
+        let member_clause = if visible_to.is_some() {
+            " AND EXISTS (SELECT 1 FROM memberships mu WHERE mu.member_type = 'user' \
+               AND mu.member_id = ?3 AND mu.group_id = c.group_id)"
+        } else {
+            ""
+        };
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT c.id, c.group_id, c.name, c.topic, c.hidden, COALESCE(g.name, '') \
                  FROM channels c LEFT JOIN groups g ON g.id = c.group_id \
-                 WHERE c.name LIKE ?1 ESCAPE '\\' OR c.topic LIKE ?1 ESCAPE '\\' \
+                 WHERE (c.name LIKE ?1 ESCAPE '\\' OR c.topic LIKE ?1 ESCAPE '\\'){member_clause} \
                  ORDER BY c.name LIMIT ?2",
-            )
+            ))
             .unwrap();
-        stmt.query_map(params![pattern, limit as i64], |r| {
+        let map = |r: &rusqlite::Row<'_>| {
             Ok(json!({
                 "id": r.get::<_, String>(0)?,
                 "group_id": r.get::<_, String>(1)?,
@@ -1323,34 +1574,59 @@ impl Store {
                 "hidden": r.get::<_, i64>(4)? != 0,
                 "group_name": r.get::<_, String>(5)?,
             }))
-        })
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect()
+        };
+        match visible_to {
+            Some(user) => stmt
+                .query_map(params![pattern, limit as i64, user], map)
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect(),
+            None => stmt
+                .query_map(params![pattern, limit as i64], map)
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect(),
+        }
     }
 
     /// Groups whose name or description contains `query` (case-insensitive).
-    pub fn search_groups(&self, query: &str, limit: usize) -> Vec<Value> {
+    /// `visible_to` limits hits to the user's groups, like [`search_channels`].
+    pub fn search_groups(&self, query: &str, visible_to: Option<&str>, limit: usize) -> Vec<Value> {
         let pattern = like_pattern(query);
+        let member_clause = if visible_to.is_some() {
+            " AND EXISTS (SELECT 1 FROM memberships mu WHERE mu.member_type = 'user' \
+               AND mu.member_id = ?3 AND mu.group_id = groups.id)"
+        } else {
+            ""
+        };
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT id, name, description, hidden FROM groups \
-                 WHERE name LIKE ?1 ESCAPE '\\' OR description LIKE ?1 ESCAPE '\\' \
+                 WHERE (name LIKE ?1 ESCAPE '\\' OR description LIKE ?1 ESCAPE '\\'){member_clause} \
                  ORDER BY name LIMIT ?2",
-            )
+            ))
             .unwrap();
-        stmt.query_map(params![pattern, limit as i64], |r| {
+        let map = |r: &rusqlite::Row<'_>| {
             Ok(json!({
                 "id": r.get::<_, String>(0)?,
                 "name": r.get::<_, String>(1)?,
                 "description": r.get::<_, String>(2)?,
                 "hidden": r.get::<_, i64>(3)? != 0,
             }))
-        })
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect()
+        };
+        match visible_to {
+            Some(user) => stmt
+                .query_map(params![pattern, limit as i64, user], map)
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect(),
+            None => stmt
+                .query_map(params![pattern, limit as i64], map)
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect(),
+        }
     }
 
     // ------------------------------------------------------------- files
@@ -1928,7 +2204,7 @@ mod tests {
         assert_eq!(remaining[0]["id"].as_i64().unwrap(), other_id);
         assert!(s.file(&file_id).is_none());
         // FTS no longer finds the deleted text.
-        assert!(s.search_messages("mine", false, None, None, None, None, false, 10, 0).is_empty());
+        assert!(s.search_messages("mine", false, None, None, None, None, None, false, 10, 0).is_empty());
 
         // Every user-keyed row is gone; group provenance is cleared.
         assert!(s.user_stars("tom", cid).is_empty());
@@ -2026,38 +2302,38 @@ mod tests {
         s.add_message(c2id, "unrelated chatter", "user", "tom", None, None, &[]);
 
         // Porter stemming: "deploy" finds both variants; hits carry names + snippet.
-        let hits = s.search_messages("deploy", false, None, None, None, None, false, 10, 0);
+        let hits = s.search_messages("deploy", false, None, None, None, None, None, false, 10, 0);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0]["group_name"], "Ops");
         assert!(hits[0]["channel_name"].as_str().is_some());
         assert!(hits[0]["snippet"].as_str().unwrap().contains('\u{1}'));
 
         // Channel and author scoping.
-        assert_eq!(s.search_messages("deploy", false, Some(c1id), None, None, None, false, 10, 0).len(), 1);
-        assert_eq!(s.search_messages("deploy", false, None, Some(gid), None, None, false, 10, 0).len(), 2);
-        assert_eq!(s.search_messages("deploy", false, None, None, Some("bot"), None, false, 10, 0).len(), 1);
+        assert_eq!(s.search_messages("deploy", false, Some(c1id), None, None, None, None, false, 10, 0).len(), 1);
+        assert_eq!(s.search_messages("deploy", false, None, Some(gid), None, None, None, false, 10, 0).len(), 2);
+        assert_eq!(s.search_messages("deploy", false, None, None, Some("bot"), None, None, false, 10, 0).len(), 1);
 
         // Agent visibility: bot-b is only in beta, so alpha's hit is invisible.
         s.add_member(gid, "agent", "bot-b", "member", Some(c2id));
-        let scoped = s.search_messages("deploy", false, None, None, None, Some("bot-b"), false, 10, 0);
+        let scoped = s.search_messages("deploy", false, None, None, None, Some("bot-b"), None, false, 10, 0);
         assert_eq!(scoped.len(), 1);
         assert_eq!(scoped[0]["channel_id"].as_str().unwrap(), c2id);
 
         // newest_first orders by id descending.
-        let newest = s.search_messages("deploy", false, None, None, None, None, true, 10, 0);
+        let newest = s.search_messages("deploy", false, None, None, None, None, None, true, 10, 0);
         assert!(newest[0]["id"].as_i64().unwrap() > newest[1]["id"].as_i64().unwrap());
 
         // A raw query full of FTS syntax must not panic, just match nothing.
-        assert!(s.search_messages("AND NOT (", false, None, None, None, None, false, 10, 0).is_empty());
+        assert!(s.search_messages("AND NOT (", false, None, None, None, None, None, false, 10, 0).is_empty());
 
         // match_any: recall mode hits messages containing either word
         // ("deployed" stems onto "deploys" too, so all three rows hit).
-        let any = s.search_messages("deployed chatter", true, None, None, None, None, false, 10, 0);
+        let any = s.search_messages("deployed chatter", true, None, None, None, None, None, false, 10, 0);
         assert_eq!(any.len(), 3);
 
         // Deleting the group cascades into the index via the triggers.
         assert!(s.delete_group(gid));
-        assert!(s.search_messages("deploy", false, None, None, None, None, false, 10, 0).is_empty());
+        assert!(s.search_messages("deploy", false, None, None, None, None, None, false, 10, 0).is_empty());
     }
 
     #[test]
@@ -2078,34 +2354,34 @@ mod tests {
         s.add_message(cid, "no attachment here, just budget talk", "user", "tom", None, None, &[]);
 
         // Filename search: "budget" hits the .xlsx message *and* the text one.
-        let by_name = s.search_messages("budget", false, None, None, None, None, false, 20, 0);
+        let by_name = s.search_messages("budget", false, None, None, None, None, None, false, 20, 0);
         assert_eq!(by_name.len(), 2);
         // The attachment array rides along on hits.
         let xlsx = by_name.iter().find(|m| m["text"] == "here you go").unwrap();
         assert_eq!(xlsx["attachments"][0]["filename"], "budget-2026.xlsx");
 
         // "floorplan" only exists as a filename — text search still finds it.
-        let only_file = s.search_messages("floorplan", false, None, None, None, None, false, 20, 0);
+        let only_file = s.search_messages("floorplan", false, None, None, None, None, None, false, 20, 0);
         assert_eq!(only_file.len(), 1);
         assert_eq!(only_file[0]["text"], "and the diagram");
 
         // has_files filter drops the text-only "budget" message.
-        let with_files = s.search_messages_ext("budget", false, None, None, None, None, false, true, None, 20, 0);
+        let with_files = s.search_messages_ext("budget", false, None, None, None, None, None, false, true, None, 20, 0);
         assert_eq!(with_files.len(), 1);
         assert_eq!(with_files[0]["text"], "here you go");
 
         // file_type narrows to a kind (no query needed: browse mode).
-        let images = s.search_messages_ext("", false, None, None, None, None, false, false, Some("image"), 20, 0);
+        let images = s.search_messages_ext("", false, None, None, None, None, None, false, false, Some("image"), 20, 0);
         assert_eq!(images.len(), 1);
         assert_eq!(images[0]["attachments"][0]["filename"], "floorplan.png");
 
         // Browse every attachment, newest first.
-        let all = s.search_messages_ext("", false, None, None, None, None, false, true, None, 20, 0);
+        let all = s.search_messages_ext("", false, None, None, None, None, None, false, true, None, 20, 0);
         assert_eq!(all.len(), 2);
         assert!(all[0]["id"].as_i64().unwrap() > all[1]["id"].as_i64().unwrap());
 
         // Empty query with no attachment filter still matches nothing.
-        assert!(s.search_messages("", false, None, None, None, None, false, 20, 0).is_empty());
+        assert!(s.search_messages("", false, None, None, None, None, None, false, 20, 0).is_empty());
     }
 
     #[test]
@@ -2140,7 +2416,7 @@ mod tests {
             .unwrap();
         }
         let s = Store::open(&path).unwrap();
-        let hits = s.search_messages("pet", false, None, None, None, None, false, 10, 0);
+        let hits = s.search_messages("pet", false, None, None, None, None, None, false, 10, 0);
         assert_eq!(hits.len(), 1, "pre-index history must be backfilled");
         assert_eq!(hits[0]["text"], "my pet turtle escaped");
         // Reopening doesn't rebuild again (version marker advanced) but the
@@ -2148,7 +2424,7 @@ mod tests {
         drop(s);
         let s = Store::open(&path).unwrap();
         s.add_message("c1", "the pet is back", "user", "me", None, None, &[]);
-        assert_eq!(s.search_messages("pet", false, None, None, None, None, false, 10, 0).len(), 2);
+        assert_eq!(s.search_messages("pet", false, None, None, None, None, None, false, 10, 0).len(), 2);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2160,14 +2436,19 @@ mod tests {
         s.create_channel(gid, "workouts", "daily training");
         s.create_channel(gid, "meals", "");
 
-        assert_eq!(s.search_channels("WORK", 10).len(), 1); // case-insensitive name
-        let by_topic = s.search_channels("training", 10);
+        assert_eq!(s.search_channels("WORK", None, 10).len(), 1); // case-insensitive name
+        let by_topic = s.search_channels("training", None, 10);
         assert_eq!(by_topic.len(), 1);
         assert_eq!(by_topic[0]["group_name"], "Health");
-        assert_eq!(s.search_groups("fitness", 10).len(), 1); // by description
+        assert_eq!(s.search_groups("fitness", None, 10).len(), 1); // by description
         // LIKE wildcards in input are literal, not "match everything".
-        assert!(s.search_channels("%", 10).is_empty());
-        assert_eq!(s.search_groups("100%", 10).len(), 1);
+        assert!(s.search_channels("%", None, 10).is_empty());
+        assert_eq!(s.search_groups("100%", None, 10).len(), 1);
+        // Membership scoping: only a group member sees its channels/groups.
+        assert_eq!(s.search_channels("WORK", Some("tom"), 10).len(), 1);
+        assert!(s.search_channels("WORK", Some("mallory"), 10).is_empty());
+        assert_eq!(s.search_groups("fitness", Some("tom"), 10).len(), 1);
+        assert!(s.search_groups("fitness", Some("mallory"), 10).is_empty());
     }
 
     #[test]
@@ -2433,6 +2714,74 @@ mod tests {
         assert_eq!(agents[0]["avatar_v"], 1234);
         assert!(s.remove_agent("mimir"));
         assert!(s.known_agents().is_empty());
+    }
+
+    #[test]
+    fn users_and_invites_lifecycle() {
+        let s = store();
+        let u = s.create_user("tom", "Tom", Some(" Tom@Example.COM "), "admin").unwrap();
+        assert_eq!(u["username"], "tom");
+        assert_eq!(u["email"], "tom@example.com");
+        assert_eq!(u["instance_role"], "admin");
+        assert_eq!(u["disabled"], false);
+        assert_eq!(u["session_version"], 1);
+        // Duplicate username refused, existing row untouched.
+        assert!(s.create_user("tom", "Imposter", None, "member").is_none());
+        assert_eq!(s.user("tom").unwrap()["display_name"], "Tom");
+        // Email lookup is case-insensitive.
+        assert_eq!(s.user_by_email("TOM@example.com").unwrap()["username"], "tom");
+        // unique_username slugs and dedupes.
+        assert_eq!(s.unique_username("Tom"), "tom-2");
+        assert_eq!(s.unique_username("Alice B"), "alice-b");
+        assert_eq!(s.unique_username(""), "user");
+        // Disable, role, per-user session revocation.
+        assert!(s.set_user_disabled("tom", true));
+        assert_eq!(s.user("tom").unwrap()["disabled"], true);
+        assert!(s.set_user_disabled("tom", false));
+        assert!(s.set_user_instance_role("tom", "member"));
+        assert_eq!(s.user("tom").unwrap()["instance_role"], "member");
+        assert_eq!(s.bump_session_version("tom"), 2);
+        assert_eq!(s.user("tom").unwrap()["session_version"], 2);
+
+        // Invites: shape-checked, case-normalized, consumed on accept.
+        assert!(s.create_invite("not-an-email", None, "member").is_none());
+        let inv = s.create_invite(" Alice@Example.com ", Some("tom"), "member").unwrap();
+        assert_eq!(inv["email"], "alice@example.com");
+        assert!(s.pending_invite("ALICE@example.com").is_some());
+        s.accept_invite("alice@example.com");
+        assert!(s.pending_invite("alice@example.com").is_none());
+        assert_eq!(s.list_invites().len(), 1); // kept for provenance
+        // Re-inviting a consumed email re-opens it (e.g. after account deletion).
+        s.create_invite("alice@example.com", None, "admin").unwrap();
+        assert_eq!(s.pending_invite("alice@example.com").unwrap()["instance_role"], "admin");
+        assert!(s.delete_invite("alice@example.com"));
+        assert!(s.list_invites().is_empty());
+    }
+
+    #[test]
+    fn delete_user_data_removes_account_row() {
+        let s = store();
+        s.create_user("tom", "Tom", Some("t@example.com"), "admin");
+        s.delete_user_data("tom");
+        assert!(s.user("tom").is_none());
+        assert!(s.user_by_email("t@example.com").is_none());
+    }
+
+    #[test]
+    fn user_scoped_search_sees_only_member_groups() {
+        let s = store();
+        let g1 = s.create_group("Ops", "", Some("tom"));
+        let g2 = s.create_group("Secret", "", Some("alice"));
+        let c1 = s.create_channel(g1["id"].as_str().unwrap(), "main", "");
+        let c2 = s.create_channel(g2["id"].as_str().unwrap(), "main", "");
+        s.add_message(c1["id"].as_str().unwrap(), "deploy plan", "user", "tom", None, None, &[]);
+        s.add_message(c2["id"].as_str().unwrap(), "deploy secret", "user", "alice", None, None, &[]);
+        // Unscoped (privileged) search sees both; tom only his group's hit.
+        assert_eq!(s.search_messages("deploy", false, None, None, None, None, None, false, 10, 0).len(), 2);
+        let hits = s.search_messages("deploy", false, None, None, None, None, Some("tom"), false, 10, 0);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["text"], "deploy plan");
+        assert!(s.search_messages("deploy", false, None, None, None, None, Some("mallory"), false, 10, 0).is_empty());
     }
 
     #[test]
