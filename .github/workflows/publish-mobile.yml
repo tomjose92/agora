@@ -1,0 +1,57 @@
+# Mobile publish pipeline, gated on the version bump: merge a PR to main that
+# bumps `expo.version` in mobile/app.json and this kicks off an EAS production
+# build for iOS with auto-submit — the build lands on TestFlight without any
+# manual `eas submit`. Build numbers need no bumping: eas.json uses
+# appVersionSource=remote with autoIncrement, so EAS mints a fresh build
+# number server-side on every build.
+#
+# Merges that touch mobile code *without* a bump publish nothing on purpose:
+# the bump is the publish intent.
+#
+# The runner only *starts* the build (--no-wait); compilation, signing and
+# the TestFlight submission all happen on Expo's servers. Track progress at
+# https://expo.dev — or with `eas build:list` locally.
+#
+# Required repository secret (Settings → Secrets and variables → Actions):
+# - EXPO_TOKEN: a robot access token from https://expo.dev/settings/access-tokens
+#   Apple credentials (distribution cert, provisioning profile, App Store
+#   Connect API key) are stored in the Expo account (`eas credentials`), not
+#   in GitHub.
+
+name: Publish mobile app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/app.json"
+  # Manual escape hatch: rebuild/resubmit the version currently on main.
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-mobile
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Start EAS build + TestFlight auto-submit
+        working-directory: mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx eas-cli build --profile production --platform ios \
+            --non-interactive --no-wait --auto-submit

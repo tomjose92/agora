@@ -1,11 +1,16 @@
-# Desktop release pipeline: push a tag like v0.2.0 and this builds the macOS
-# app (universal: Apple Silicon + Intel), produces the DMG + signed updater
-# artifacts + the latest.json feed, and attaches everything to a draft GitHub
-# Release. Publish the draft to ship it — the app's updater polls
+# Desktop release pipeline, gated on the version bump: merge a PR to main
+# that bumps `version` in crates/agora-desktop/tauri.conf.json (plus the
+# workspace version in Cargo.toml) and this builds the macOS app (universal:
+# Apple Silicon + Intel), produces the DMG + signed updater artifacts + the
+# latest.json feed, and attaches everything to a draft GitHub Release named
+# after that version. Publish the draft to ship it — publishing creates the
+# vX.Y.Z tag, and the app's updater polls
 # releases/latest/download/latest.json, which only sees published releases.
 #
-# Before tagging: bump the version in crates/agora-desktop/tauri.conf.json
-# and the workspace version in Cargo.toml so artifacts match the tag.
+# Merges that touch desktop code *without* a bump build nothing on purpose:
+# the bump is the publish intent. If the version's release already exists
+# (draft or published), the run is a no-op, so re-touching tauri.conf.json
+# never double-releases.
 #
 # Required repository secret (Settings → Secrets and variables → Actions):
 # - TAURI_SIGNING_PRIVATE_KEY: contents of ~/.tauri/agora_updater.key
@@ -23,14 +28,49 @@ name: Release desktop app
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    paths:
+      - "crates/agora-desktop/tauri.conf.json"
+  # Manual escape hatch: re-run a release for the version currently on main
+  # (e.g. after a failed build) without another commit.
+  workflow_dispatch: {}
 
 permissions:
   contents: write
 
+# A burst of merges queues up rather than racing two builds.
+concurrency:
+  group: release-desktop
+  cancel-in-progress: false
+
 jobs:
+  # Publish only when the version on main doesn't have a release yet — the
+  # merge that bumps tauri.conf.json is the trigger; anything else no-ops.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if this version is already released
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('crates/agora-desktop/tauri.conf.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists — nothing to do."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Drafting release v$VERSION."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-macos:
+    needs: gate
+    if: needs.gate.outputs.publish == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,8 +105,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: crates/agora-desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: "Agora ${{ github.ref_name }}"
+          tagName: v${{ needs.gate.outputs.version }}
+          releaseName: "Agora v${{ needs.gate.outputs.version }}"
           releaseBody: "See the commit history for changes."
           releaseDraft: true
           args: --target universal-apple-darwin
