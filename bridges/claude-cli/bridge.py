@@ -6,7 +6,7 @@ dial-in agent (pairing token), and forwards channel messages to local Claude
 CLI sessions via `claude -p --resume`. Lets you follow up on finished Claude
 sessions from your phone while the laptop sits at home.
 
-Protocol (see the Agora README, "Third-party agents"):
+Protocol (see docs/PROTOCOL.md, "Third-party agents"):
   -> {"type": "hello", "agents": [{"id", "name", "requires_mention"}]}
   <- {"type": "inbound", "agent_id", "channel_id", "thread_id", "text", ...}
   -> {"type": "post", "agent_id", "channel_id", "thread_id", "text"}
