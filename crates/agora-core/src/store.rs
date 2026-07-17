@@ -126,11 +126,15 @@ CREATE TABLE IF NOT EXISTS agents (
     has_avatar INTEGER NOT NULL DEFAULT 0,
     avatar_v INTEGER NOT NULL DEFAULT 0
 );
--- Expo push tokens from mobile clients (APNs/FCM via Expo). Single-user v1
--- scopes these to the instance; sign-out / DeviceNotRegistered prune rows.
+-- Expo push tokens from mobile clients (APNs/FCM via Expo), owned by the
+-- account that registered them so pushes follow channel visibility.
+-- Sign-out / DeviceNotRegistered prune rows. `username` is '' only for rows
+-- written before accounts existed; the boot migration claims those for the
+-- migrated admin.
 CREATE TABLE IF NOT EXISTS push_tokens (
     token TEXT PRIMARY KEY,
     platform TEXT NOT NULL DEFAULT '',
+    username TEXT NOT NULL DEFAULT '',
     updated_at REAL NOT NULL
 );
 -- Workspace accounts. `username` is the stable key every other per-user
@@ -218,6 +222,15 @@ fn migrate(conn: &Connection) {
     }
     if !has_column("messages", "meta") {
         conn.execute("ALTER TABLE messages ADD COLUMN meta TEXT", []).unwrap();
+    }
+    // Push tokens gained an owner when accounts landed; pre-account rows
+    // start unowned ('') and are claimed by the boot migration.
+    if !has_column("push_tokens", "username") {
+        conn.execute(
+            "ALTER TABLE push_tokens ADD COLUMN username TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .unwrap();
     }
     // A user-chosen display name for a thread; only meaningful on root rows
     // (thread_id IS NULL). NULL = fall back to the root message's first line.
@@ -827,12 +840,11 @@ impl Store {
                 params![username],
             )
             .unwrap();
-            // Dropping the account row revokes the user's sessions too:
-            // session verification requires a live, matching user.
-            conn.execute("DELETE FROM users WHERE username = ?1", params![username]).unwrap();
-            // Device tokens are instance-scoped (not per-user yet); drop them
-            // all so a deleted account can't keep receiving pushes.
-            conn.execute("DELETE FROM push_tokens", []).unwrap();
+        // Dropping the account row revokes the user's sessions too:
+        // session verification requires a live, matching user.
+        conn.execute("DELETE FROM users WHERE username = ?1", params![username]).unwrap();
+        // Only this account's devices stop receiving pushes.
+        conn.execute("DELETE FROM push_tokens WHERE username = ?1", params![username]).unwrap();
         }
         self.unlink_files(&file_ids);
     }
@@ -2082,13 +2094,17 @@ impl Store {
 
     // ------------------------------------------------------------- push tokens
 
-    pub fn upsert_push_token(&self, token: &str, platform: &str) {
+    /// Register (or refresh) a device token under its owning account. A token
+    /// moving between accounts (shared device, new sign-in) re-homes to the
+    /// latest owner.
+    pub fn upsert_push_token(&self, username: &str, token: &str, platform: &str) {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO push_tokens (token, platform, updated_at) VALUES (?1, ?2, ?3) \
+            "INSERT INTO push_tokens (token, platform, username, updated_at) \
+             VALUES (?1, ?2, ?3, ?4) \
              ON CONFLICT(token) DO UPDATE SET platform = excluded.platform, \
-             updated_at = excluded.updated_at",
-            params![token, platform, now()],
+             username = excluded.username, updated_at = excluded.updated_at",
+            params![token, platform, username, now()],
         )
         .unwrap();
     }
@@ -2105,6 +2121,49 @@ impl Store {
             .unwrap()
             .filter_map(Result::ok)
             .collect()
+    }
+
+    /// Device tokens that should receive a push for a message in *channel_id*:
+    /// tokens owned by enabled accounts that can see the channel — members of
+    /// its group, or instance admins (who, like privileged sockets, see
+    /// everything). `exclude_user` skips the author's own devices.
+    pub fn push_tokens_for_channel(
+        &self,
+        channel_id: &str,
+        exclude_user: Option<&str>,
+    ) -> Vec<String> {
+        let Some(chan) = self.channel(channel_id) else {
+            return Vec::new();
+        };
+        let group_id = chan["group_id"].as_str().unwrap_or_default().to_string();
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT pt.token FROM push_tokens pt \
+                 JOIN users u ON u.username = pt.username \
+                 WHERE u.disabled = 0 AND u.username != ?1 \
+                 AND (u.instance_role = 'admin' OR EXISTS ( \
+                     SELECT 1 FROM memberships m WHERE m.group_id = ?2 \
+                     AND m.member_type = 'user' AND m.member_id = u.username))",
+            )
+            .unwrap();
+        stmt.query_map(params![exclude_user.unwrap_or(""), group_id], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
+    /// Give tokens registered before accounts existed (username = '') to the
+    /// migrated single user, so their devices keep receiving pushes.
+    pub fn claim_unowned_push_tokens(&self, username: &str) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE push_tokens SET username = ?1 WHERE username = ''",
+            params![username],
+        )
+        .unwrap();
     }
 }
 
@@ -2787,9 +2846,9 @@ mod tests {
     #[test]
     fn push_tokens_upsert_list_delete() {
         let s = store();
-        s.upsert_push_token("ExponentPushToken[a]", "ios");
-        s.upsert_push_token("ExponentPushToken[b]", "android");
-        s.upsert_push_token("ExponentPushToken[a]", "ios"); // refresh
+        s.upsert_push_token("tom", "ExponentPushToken[a]", "ios");
+        s.upsert_push_token("ana", "ExponentPushToken[b]", "android");
+        s.upsert_push_token("tom", "ExponentPushToken[a]", "ios"); // refresh
         let mut tokens = s.list_push_tokens();
         tokens.sort();
         assert_eq!(
@@ -2801,7 +2860,53 @@ mod tests {
         );
         assert!(s.delete_push_token("ExponentPushToken[a]"));
         assert_eq!(s.list_push_tokens(), vec!["ExponentPushToken[b]".to_string()]);
+        // Deleting an account only drops that account's devices.
+        s.upsert_push_token("tom", "ExponentPushToken[c]", "ios");
         s.delete_user_data("tom");
-        assert!(s.list_push_tokens().is_empty());
+        assert_eq!(s.list_push_tokens(), vec!["ExponentPushToken[b]".to_string()]);
+    }
+
+    #[test]
+    fn push_fanout_follows_channel_visibility() {
+        let s = store();
+        s.create_user("tom", "", None, "member").unwrap();
+        s.create_user("ana", "", None, "member").unwrap();
+        s.create_user("mal", "", None, "member").unwrap();
+        s.create_user("op", "", None, "admin").unwrap();
+        let g = s.create_group("Team", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        s.add_member(gid, "user", "tom", "admin", None);
+        s.add_member(gid, "user", "ana", "member", None);
+        let c = s.create_channel(gid, "general", "");
+        let cid = c["id"].as_str().unwrap();
+
+        s.upsert_push_token("tom", "ExponentPushToken[tom]", "ios");
+        s.upsert_push_token("ana", "ExponentPushToken[ana]", "ios");
+        s.upsert_push_token("mal", "ExponentPushToken[mal]", "ios");
+        s.upsert_push_token("op", "ExponentPushToken[op]", "ios");
+
+        // Members and instance admins receive; outsiders don't; the author's
+        // own devices are excluded.
+        let mut got = s.push_tokens_for_channel(cid, Some("tom"));
+        got.sort();
+        assert_eq!(got, vec!["ExponentPushToken[ana]", "ExponentPushToken[op]"]);
+
+        // Disabled accounts drop out even while they hold a membership.
+        s.set_user_disabled("ana", true);
+        let got = s.push_tokens_for_channel(cid, Some("tom"));
+        assert_eq!(got, vec!["ExponentPushToken[op]"]);
+
+        // Unknown channel: nobody.
+        assert!(s.push_tokens_for_channel("nope", None).is_empty());
+
+        // Pre-account rows ('' owner) are silent until the boot migration
+        // claims them for the migrated user.
+        s.upsert_push_token("", "ExponentPushToken[legacy]", "ios");
+        let got = s.push_tokens_for_channel(cid, None);
+        assert!(!got.contains(&"ExponentPushToken[legacy]".to_string()));
+        s.claim_unowned_push_tokens("tom");
+        let got = s.push_tokens_for_channel(cid, None);
+        assert!(got.contains(&"ExponentPushToken[legacy]".to_string()));
+        assert!(got.contains(&"ExponentPushToken[tom]".to_string()));
     }
 }

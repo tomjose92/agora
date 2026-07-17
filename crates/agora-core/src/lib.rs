@@ -43,6 +43,9 @@ pub fn bootstrap_admin_user(config: &config::Config, store: &store::Store) {
         .find(|e| !e.is_empty());
     let username = config.username();
     store.create_user(&username, &username, email.as_deref(), "admin");
+    // Device tokens registered before accounts existed belonged to the one
+    // user this instance had — keep their pushes flowing under the new owner.
+    store.claim_unowned_push_tokens(&username);
     tracing::info!("bootstrapped instance admin account '{username}'");
 }
 
@@ -124,6 +127,7 @@ mod tests {
             c.google_allowed_emails = vec!["Me@Example.com".into()];
         });
         let store = store::Store::open_in_memory().unwrap();
+        store.upsert_push_token("", "ExponentPushToken[old]", "ios");
 
         // Fresh database: the configured single user becomes the instance
         // admin, keyed to the (normalized) allowlisted email.
@@ -133,6 +137,22 @@ mod tests {
         assert_eq!(users[0]["username"], config.username());
         assert_eq!(users[0]["instance_role"], "admin");
         assert_eq!(users[0]["email"], "me@example.com");
+        // Pre-account device tokens now belong to the migrated admin: an
+        // admin sees every channel, so their pushes keep flowing.
+        assert_eq!(
+            store.push_tokens_for_channel(
+                store
+                    .create_channel(
+                        store.create_group("G", "", None)["id"].as_str().unwrap(),
+                        "c",
+                        ""
+                    )["id"]
+                    .as_str()
+                    .unwrap(),
+                None,
+            ),
+            vec!["ExponentPushToken[old]".to_string()]
+        );
 
         // Idempotent: a database that has accounts is left alone.
         bootstrap_admin_user(&config, &store);

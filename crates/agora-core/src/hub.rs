@@ -168,19 +168,22 @@ impl Hub {
     /// Notify about a freshly posted agent message when nobody is looking.
     ///
     /// Desktop: banners only while the window is unfocused (and a notifier
-    /// is installed). Mobile: Expo push whenever device tokens are stored —
-    /// independent of `ui_active`, because a headless server never flips that
-    /// flag and a phone can be suspended while the desktop is focused.
-    /// Throttled per channel so bursts collapse into one banner / push.
+    /// is installed). Mobile: Expo push to the devices of accounts that can
+    /// see the channel (never the author's own) — independent of `ui_active`,
+    /// because a headless server never flips that flag and a phone can be
+    /// suspended while the desktop is focused. Throttled per channel so
+    /// bursts collapse into one banner / push.
     fn maybe_notify(&self, message: &Value) {
         let want_desktop = !self.ui_active.load(Ordering::Relaxed)
             && self.notifier.lock().unwrap().is_some();
-        let tokens = self.store.list_push_tokens();
+        let channel_id = message["channel_id"].as_str().unwrap_or_default();
+        let author = (message["author_type"] == "user")
+            .then(|| message["author_id"].as_str().unwrap_or_default());
+        let tokens = self.store.push_tokens_for_channel(channel_id, author);
         let want_push = !tokens.is_empty();
         if !want_desktop && !want_push {
             return;
         }
-        let channel_id = message["channel_id"].as_str().unwrap_or_default();
         {
             let mut st = self.state.lock().unwrap();
             if let Some(at) = st.last_notified.get(channel_id) {
