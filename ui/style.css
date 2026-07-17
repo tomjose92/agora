@@ -81,6 +81,12 @@ svg.ico.spin { animation: ico-spin 1s linear infinite; transform-origin: center;
 .server-badge .srv-dot.local { background: var(--green); }
 .server-badge .srv-dot.remote { background: var(--a1); }
 .topbar-status { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); }
+.topbar-me { font-size: 12px; color: var(--dim); font-weight: 600; }
+.conn-row.disabled .conn-row-main { opacity: .55; }
+.conn-add select {
+  background: rgba(0,0,0,.25); border: 1px solid var(--border-strong); border-radius: 8px;
+  padding: 6px 9px; color: var(--text); font: inherit; font-size: 12.5px; outline: none;
+}
 .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex-shrink: 0; display: inline-block; }
 .conn-dot.on { background: var(--green); }
 .conn-dot.part { background: var(--amber); }

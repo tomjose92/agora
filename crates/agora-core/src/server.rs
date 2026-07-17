@@ -147,27 +147,127 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A UI credential is either the static admin key or a session token minted
-/// by Google sign-in. Both act as the single owner (v1 is single-user), so the
-/// username always comes from the config.
-fn is_ui_token(state: &AppState, token: &str) -> bool {
-    state.config.is_admin_key(token)
-        || crate::auth::verify_session(token, &state.config.session_secret()).is_some()
+/// The resolved caller of an API request or UI socket.
+#[derive(Clone)]
+pub struct AuthedUser {
+    pub username: String,
+    pub display_name: String,
+    pub instance_admin: bool,
 }
 
-fn require_owner(
+/// Resolve a UI credential to a user. Two kinds exist:
+///
+/// - the static **admin key** — the operator credential (printed in the
+///   server log, used by the desktop shell and automation). It acts as the
+///   bootstrap account (`config.username`) with instance-admin powers, even
+///   if that account row was deleted.
+/// - a **session token** minted by Google/Apple sign-in — resolved to its
+///   user row; rejected when the account is missing, disabled, or its
+///   session version was bumped (per-user sign-out).
+fn authed_user(state: &AppState, token: &str) -> Option<AuthedUser> {
+    if state.config.is_admin_key(token) {
+        let username = state.config.username();
+        let display_name = state
+            .hub
+            .store
+            .user(&username)
+            .and_then(|u| u["display_name"].as_str().map(str::to_string))
+            .filter(|d| !d.is_empty())
+            .unwrap_or_else(|| username.clone());
+        return Some(AuthedUser {
+            username,
+            display_name,
+            instance_admin: true,
+        });
+    }
+    let (username, version) =
+        crate::auth::verify_session(token, &state.config.session_secret())?;
+    let user = state.hub.store.user(&username)?;
+    if user["disabled"].as_bool().unwrap_or(false) {
+        return None;
+    }
+    if user["session_version"].as_i64().unwrap_or(1) != version {
+        return None;
+    }
+    let display_name = user["display_name"]
+        .as_str()
+        .filter(|d| !d.is_empty())
+        .unwrap_or(&username)
+        .to_string();
+    Some(AuthedUser {
+        instance_admin: user["instance_role"] == "admin",
+        username,
+        display_name,
+    })
+}
+
+fn require_user(
     state: &AppState,
     headers: &HeaderMap,
     query: &HashMap<String, String>,
-) -> Result<String, ApiError> {
+) -> Result<AuthedUser, ApiError> {
     let token = bearer(headers)
         .or_else(|| query.get("token").cloned())
         .unwrap_or_default();
-    if is_ui_token(state, &token) {
-        Ok(state.config.username())
+    authed_user(state, &token)
+        .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Authentication required"))
+}
+
+fn require_instance_admin(user: &AuthedUser) -> Result<(), ApiError> {
+    if user.instance_admin {
+        Ok(())
     } else {
-        Err(err(StatusCode::UNAUTHORIZED, "Authentication required"))
+        Err(err(StatusCode::FORBIDDEN, "Instance admin access required"))
     }
+}
+
+/// Membership is the visibility boundary: users are group-scoped in v1.
+/// Instance admins bypass it (they are the operator).
+fn require_member(state: &AppState, user: &AuthedUser, group_id: &str) -> Result<(), ApiError> {
+    if user.instance_admin || state.hub.store.user_in_group(&user.username, group_id) {
+        Ok(())
+    } else {
+        Err(err(StatusCode::FORBIDDEN, "You are not a member of this group"))
+    }
+}
+
+fn require_group_admin(
+    state: &AppState,
+    user: &AuthedUser,
+    group_id: &str,
+) -> Result<(), ApiError> {
+    if user.instance_admin || state.hub.store.user_is_group_admin(&user.username, group_id) {
+        Ok(())
+    } else {
+        Err(err(StatusCode::FORBIDDEN, "Group admin access required"))
+    }
+}
+
+/// The channel if it exists *and* the caller may see it (member of its
+/// group). Most message-path handlers start here.
+fn require_channel_member(
+    state: &AppState,
+    user: &AuthedUser,
+    channel_id: &str,
+) -> Result<Value, ApiError> {
+    let channel = channel_or_404(state, channel_id)?;
+    require_member(state, user, channel["group_id"].as_str().unwrap_or_default())?;
+    Ok(channel)
+}
+
+/// Message lookup gated the same way as [`require_channel_member`].
+fn require_message_visible(
+    state: &AppState,
+    user: &AuthedUser,
+    message_id: i64,
+) -> Result<Value, ApiError> {
+    let message = state
+        .hub
+        .store
+        .message(message_id)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    require_channel_member(state, user, message["channel_id"].as_str().unwrap_or_default())?;
+    Ok(message)
 }
 
 /// Body cap for the multipart upload routes. Axum's default is 2 MB, which
@@ -184,6 +284,10 @@ fn upload_body_limit(state: &AppState) -> axum::extract::DefaultBodyLimit {
 pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/api/me", get(me).delete(delete_me))
+        .route("/api/users", get(list_users))
+        .route("/api/users/{username}", patch(update_user))
+        .route("/api/invites", get(list_invites).post(create_invite))
+        .route("/api/invites/{email}", delete(revoke_invite))
         .route("/api/groups", get(list_groups).post(create_group))
         .route("/api/groups/order", put(reorder_groups))
         .route("/api/groups/{group_id}", patch(update_group).delete(delete_group))
@@ -286,14 +390,14 @@ fn channel_or_404(state: &AppState, channel_id: &str) -> Result<Value, ApiError>
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown channel"))
 }
 
-fn group_payload(state: &AppState, group: &Value, username: &str) -> Value {
+fn group_payload(state: &AppState, group: &Value, user: &AuthedUser) -> Value {
     let gid = group["id"].as_str().unwrap_or_default();
     let mut channels = state.hub.store.group_channels(gid);
     let ids: Vec<String> = channels
         .iter()
         .filter_map(|c| c["id"].as_str().map(String::from))
         .collect();
-    let unreads = state.hub.store.unread_counts(username, &ids);
+    let unreads = state.hub.store.unread_counts(&user.username, &ids);
     for c in &mut channels {
         let cid = c["id"].as_str().unwrap_or_default();
         let unread = &unreads[cid];
@@ -303,7 +407,9 @@ fn group_payload(state: &AppState, group: &Value, username: &str) -> Value {
     }
     let mut out = group.clone();
     out["channels"] = Value::Array(channels);
-    out["role"] = json!("admin"); // single-user v1: the owner is always admin
+    let admin =
+        user.instance_admin || state.hub.store.user_is_group_admin(&user.username, gid);
+    out["role"] = json!(if admin { "admin" } else { "member" });
     out
 }
 
@@ -384,9 +490,11 @@ async fn me(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     Ok(Json(json!({
-        "username": user,
+        "username": user.username,
+        "display_name": user.display_name,
+        "instance_admin": user.instance_admin,
         "version": env!("CARGO_PKG_VERSION"),
         // Voice features (voice notes, speak-aloud, live voice) need an
         // OPENAI_API_KEY in the server env; clients hide the controls without it.
@@ -397,58 +505,189 @@ async fn me(
     })))
 }
 
-/// Account deletion (App Store guideline 5.1.1(v)). The instance is
-/// single-user, so "delete my account" means: erase everything keyed to the
-/// owner (authored messages + their attachments, stars, reads, pins,
-/// mentions, memberships) and rotate the session secret so every signed-in
-/// session — this device and all others — is revoked at once. The owner
-/// token survives: it is the instance's admin credential (printed in the
-/// server log), not a user account.
+/// Account deletion (App Store guideline 5.1.1(v)): erase everything keyed
+/// to the caller (authored messages + their attachments, stars, reads,
+/// pins, mentions, memberships) including the account row itself — which
+/// revokes every session the user holds, since session verification needs
+/// a live account. The admin key survives: it is the instance's operator
+/// credential (printed in the server log), not a user account.
 async fn delete_me(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let store = state.hub.store.clone();
-    let username = user.clone();
+    let username = user.username.clone();
     tokio::task::spawn_blocking(move || store.delete_user_data(&username))
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Deletion failed"))?;
-    state.config.update(|c| c.session_secret = new_token());
-    tracing::info!("account data for {user} deleted; sessions revoked");
+    tracing::info!("account data for {} deleted; sessions revoked", user.username);
     Ok(Json(json!({"ok": true})))
 }
 
+// ------------------------------------------------------------ users / invites
+
+/// The workspace roster. Any signed-in user may read it (it feeds the
+/// members panel's people picker, like Slack's member list); mutations are
+/// instance-admin only.
+async fn list_users(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    require_user(&state, &headers, &q)?;
+    let users: Vec<Value> = state
+        .hub
+        .store
+        .list_users()
+        .into_iter()
+        .map(|u| {
+            json!({
+                "username": u["username"],
+                "display_name": u["display_name"],
+                "email": u["email"],
+                "instance_role": u["instance_role"],
+                "created_at": u["created_at"],
+                "disabled": u["disabled"],
+            })
+        })
+        .collect();
+    Ok(Json(json!({"users": users})))
+}
+
+/// Instance-admin account management: disable/enable a user (disabling also
+/// revokes their sessions) or change their instance role.
+async fn update_user(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let caller = require_user(&state, &headers, &q)?;
+    require_instance_admin(&caller)?;
+    let store = &state.hub.store;
+    if store.user(&username).is_none() {
+        return Err(err(StatusCode::NOT_FOUND, "Unknown user"));
+    }
+    if let Some(disabled) = payload["disabled"].as_bool() {
+        if username == caller.username && disabled {
+            return Err(err(StatusCode::BAD_REQUEST, "You can't disable your own account"));
+        }
+        store.set_user_disabled(&username, disabled);
+        if disabled {
+            store.bump_session_version(&username);
+        }
+    }
+    if let Some(role) = payload["instance_role"].as_str() {
+        if !["admin", "member"].contains(&role) {
+            return Err(err(StatusCode::BAD_REQUEST, "instance_role must be 'admin' or 'member'"));
+        }
+        if username == caller.username && role != "admin" {
+            return Err(err(StatusCode::BAD_REQUEST, "You can't demote your own account"));
+        }
+        store.set_user_instance_role(&username, role);
+    }
+    let user = store.user(&username).unwrap_or(Value::Null);
+    Ok(Json(json!({
+        "username": user["username"],
+        "display_name": user["display_name"],
+        "email": user["email"],
+        "instance_role": user["instance_role"],
+        "created_at": user["created_at"],
+        "disabled": user["disabled"],
+    })))
+}
+
+async fn list_invites(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let caller = require_user(&state, &headers, &q)?;
+    require_instance_admin(&caller)?;
+    Ok(Json(json!({"invites": state.hub.store.list_invites()})))
+}
+
+/// Invite a person by email. No mail is sent — the invitee just signs in
+/// with Google/Apple using that address and the account is created then.
+async fn create_invite(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let caller = require_user(&state, &headers, &q)?;
+    require_instance_admin(&caller)?;
+    let email = payload["email"].as_str().unwrap_or("").trim().to_lowercase();
+    let role = payload["instance_role"].as_str().unwrap_or("member");
+    if !["admin", "member"].contains(&role) {
+        return Err(err(StatusCode::BAD_REQUEST, "instance_role must be 'admin' or 'member'"));
+    }
+    if state.hub.store.user_by_email(&email).is_some() {
+        return Err(err(StatusCode::CONFLICT, "That email already has an account"));
+    }
+    let invite = state
+        .hub
+        .store
+        .create_invite(&email, Some(&caller.username), role)
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "A valid email is required"))?;
+    Ok(Json(invite))
+}
+
+async fn revoke_invite(
+    State(state): State<AppState>,
+    Path(email): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let caller = require_user(&state, &headers, &q)?;
+    require_instance_admin(&caller)?;
+    Ok(Json(json!({"ok": state.hub.store.delete_invite(&email)})))
+}
+
+/// The caller's groups only; instance admins (the operator) see all.
 async fn list_groups(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let groups: Vec<Value> = state
         .hub
         .store
         .list_groups()
         .iter()
+        .filter(|g| {
+            user.instance_admin
+                || state
+                    .hub
+                    .store
+                    .user_in_group(&user.username, g["id"].as_str().unwrap_or_default())
+        })
         .map(|g| group_payload(&state, g, &user))
         .collect();
     Ok(Json(json!({"groups": groups})))
 }
 
+/// Any user may create a group; the creator becomes its (group) admin.
 async fn create_group(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let name = payload["name"].as_str().unwrap_or("").trim().to_string();
     if name.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "Group name required"));
     }
     let description = payload["description"].as_str().unwrap_or("").trim();
-    let group = state.hub.store.create_group(&name, description, Some(&user));
+    let group = state
+        .hub
+        .store
+        .create_group(&name, description, Some(&user.username));
     Ok(Json(group_payload(&state, &group, &user)))
 }
 
@@ -461,8 +700,9 @@ async fn update_group(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
+    require_group_admin(&state, &user, &group_id)?;
     let Some(hidden) = payload["hidden"].as_bool() else {
         return Err(err(StatusCode::BAD_REQUEST, "hidden (bool) required"));
     };
@@ -480,8 +720,9 @@ async fn delete_group(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
+    require_group_admin(&state, &user, &group_id)?;
     state.hub.store.delete_group(&group_id);
     Ok(Json(json!({"ok": true})))
 }
@@ -493,8 +734,9 @@ async fn create_channel(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
+    require_group_admin(&state, &user, &group_id)?;
     let name = payload["name"].as_str().unwrap_or("").trim().to_string();
     if name.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "Channel name required"));
@@ -510,11 +752,12 @@ async fn update_channel(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let channel = channel_or_404(&state, &channel_id)?;
     if channel["group_id"] != group_id.as_str() {
         return Err(err(StatusCode::NOT_FOUND, "Channel not in this group"));
     }
+    require_group_admin(&state, &user, &group_id)?;
     let name = match payload.get("name").and_then(Value::as_str) {
         Some(n) => {
             let n = n.trim();
@@ -538,13 +781,15 @@ async fn update_channel(
     Ok(Json(updated))
 }
 
+/// Sidebar ordering is shared, presentational state; any signed-in user may
+/// adjust it (real per-user ordering is a client concern later).
 async fn reorder_groups(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    require_user(&state, &headers, &q)?;
     let ids: Vec<String> = payload["ids"]
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
@@ -563,8 +808,9 @@ async fn reorder_channels(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
+    require_member(&state, &user, &group_id)?;
     let ids: Vec<String> = payload["ids"]
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
@@ -582,11 +828,12 @@ async fn delete_channel(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let channel = channel_or_404(&state, &channel_id)?;
     if channel["group_id"] != group_id.as_str() {
         return Err(err(StatusCode::NOT_FOUND, "Channel not in this group"));
     }
+    require_group_admin(&state, &user, &group_id)?;
     state.hub.store.delete_channel(&channel_id);
     Ok(Json(json!({"ok": true})))
 }
@@ -597,8 +844,9 @@ async fn list_members(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
+    require_member(&state, &user, &group_id)?;
     let known: HashMap<String, String> = state
         .hub
         .store
@@ -610,14 +858,26 @@ async fn list_members(
         .collect();
     let mut members = state.hub.store.members(&group_id);
     for m in &mut members {
+        let id = m["member_id"].as_str().unwrap_or_default();
         if m["member_type"] == "agent" {
-            let id = m["member_id"].as_str().unwrap_or_default();
             m["name"] = json!(known.get(id).cloned().unwrap_or_else(|| id.to_string()));
+        } else {
+            let display = state
+                .hub
+                .store
+                .user(id)
+                .and_then(|u| u["display_name"].as_str().map(str::to_string))
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| id.to_string());
+            m["name"] = json!(display);
         }
     }
     Ok(Json(json!({"members": members})))
 }
 
+/// Add a person or an agent to the group (group admins only). Re-adding an
+/// existing user member with a different role updates the role — this is
+/// also the promote/demote API.
 async fn add_member(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
@@ -625,8 +885,9 @@ async fn add_member(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
+    require_group_admin(&state, &user, &group_id)?;
     let member_type = payload["member_type"].as_str().unwrap_or("");
     let member_id = payload["member_id"].as_str().unwrap_or("");
     let role = payload["role"].as_str().unwrap_or("member");
@@ -636,8 +897,14 @@ async fn add_member(
     if member_id.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "member_id required"));
     }
+    if !["member", "admin"].contains(&role) {
+        return Err(err(StatusCode::BAD_REQUEST, "role must be 'member' or 'admin'"));
+    }
     if member_type == "agent" && state.hub.store.agent(member_id).is_none() {
         return Err(err(StatusCode::BAD_REQUEST, "Unknown agent"));
+    }
+    if member_type == "user" && state.hub.store.user(member_id).is_none() {
+        return Err(err(StatusCode::BAD_REQUEST, "Unknown user"));
     }
     let channel_id = payload["channel_id"].as_str().filter(|s| !s.is_empty());
     if let Some(cid) = channel_id {
@@ -664,8 +931,13 @@ async fn remove_member(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
+    // Group admins manage the roster; anyone may remove *themselves* (leave).
+    let leaving = member_type == "user" && member_id == user.username;
+    if !leaving {
+        require_group_admin(&state, &user, &group_id)?;
+    }
     let channel_id = q.get("channel_id").map(String::as_str).filter(|s| !s.is_empty());
     let removed = state
         .hub
@@ -680,8 +952,8 @@ async fn list_messages(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     let thread_id = q.get("thread_id").and_then(|s| s.parse().ok());
     let before_id = q.get("before_id").and_then(|s| s.parse().ok());
     let limit: usize = q
@@ -711,7 +983,9 @@ async fn search(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    // Instance admins search everything; everyone else only what they can see.
+    let scope_user = (!user.instance_admin).then_some(user.username.as_str());
     let query = q.get("q").map(|s| s.trim()).unwrap_or_default();
     let has_files = matches!(q.get("has_files").map(String::as_str), Some("1" | "true"));
     let file_type = q.get("file_type").map(String::as_str).filter(|s| !s.is_empty());
@@ -739,8 +1013,8 @@ async fn search(
     if want("messages") {
         // One extra row decides has_more without a second query.
         let mut rows = store.search_messages_ext(
-            query, match_any, channel_id, group_id, author, None, newest_first, has_files,
-            file_type, limit + 1, offset,
+            query, match_any, channel_id, group_id, author, None, scope_user, newest_first,
+            has_files, file_type, limit + 1, offset,
         );
         let has_more = rows.len() > limit;
         rows.truncate(limit);
@@ -749,10 +1023,10 @@ async fn search(
     // Channel/group name matches only make sense with a text query, and are
     // irrelevant to an attachment filter — skip them when browsing files.
     if want("channels") && !query.is_empty() {
-        out["channels"] = json!(store.search_channels(query, 20));
+        out["channels"] = json!(store.search_channels(query, scope_user, 20));
     }
     if want("groups") && !query.is_empty() {
-        out["groups"] = json!(store.search_groups(query, 20));
+        out["groups"] = json!(store.search_groups(query, scope_user, 20));
     }
     Ok(Json(out))
 }
@@ -770,7 +1044,8 @@ async fn search_ask(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    let scope_user = (!user.instance_admin).then(|| user.username.clone());
     // Externally billed like the voice endpoints, so share their backstop.
     if !state.upload_limiter.allow(&rate_key(&peer)) {
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many AI requests — slow down"));
@@ -796,6 +1071,7 @@ async fn search_ask(
         group_id,
         None,
         None,
+        scope_user.as_deref(),
         false,
         crate::ai::CONTEXT_MESSAGES,
         0,
@@ -825,8 +1101,8 @@ async fn post_message(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     let text = payload["text"].as_str().unwrap_or("").trim().to_string();
     if text.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "Message text required"));
@@ -839,8 +1115,8 @@ async fn post_message(
     let message = state.hub.post_user_message_opts(
         &channel_id,
         &text,
-        &user,
-        None,
+        &user.username,
+        Some(&user.display_name),
         thread_id,
         vec![],
         false,
@@ -867,11 +1143,11 @@ async fn post_message_upload(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     if !state.upload_limiter.allow(&rate_key(&peer)) {
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
     }
-    channel_or_404(&state, &channel_id)?;
+    require_channel_member(&state, &user, &channel_id)?;
     let max_bytes = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
     let mut text = String::new();
     let mut thread_id: Option<i64> = None;
@@ -926,8 +1202,8 @@ async fn post_message_upload(
     let message = state.hub.post_user_message_opts(
         &channel_id,
         &text,
-        &user,
-        None,
+        &user.username,
+        Some(&user.display_name),
         thread_id,
         attachments,
         false,
@@ -948,11 +1224,11 @@ async fn post_voice_message(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     if !state.upload_limiter.allow(&rate_key(&peer)) {
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
     }
-    channel_or_404(&state, &channel_id)?;
+    require_channel_member(&state, &user, &channel_id)?;
     let Some(key) = crate::voice::api_key() else {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -1024,8 +1300,8 @@ async fn post_voice_message(
     let message = state.hub.post_user_message_opts(
         &channel_id,
         &text,
-        &user,
-        None,
+        &user.username,
+        Some(&user.display_name),
         thread_id,
         vec![],
         live,
@@ -1054,12 +1330,8 @@ async fn message_speech(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require_owner(&state, &headers, &q)?;
-    let message = state
-        .hub
-        .store
-        .message(message_id)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    let user = require_user(&state, &headers, &q)?;
+    let message = require_message_visible(&state, &user, message_id)?;
     let Some(key) = crate::voice::api_key() else {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -1112,12 +1384,13 @@ async fn get_file(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let meta = state
         .hub
         .store
         .file(&file_id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown file"))?;
+    require_channel_member(&state, &user, meta["channel_id"].as_str().unwrap_or_default())?;
     let path = state.hub.store.file_path(&file_id);
     let data = std::fs::read(&path)
         .map_err(|_| err(StatusCode::NOT_FOUND, "File content missing"))?;
@@ -1141,11 +1414,11 @@ async fn mark_read(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     let last = state
         .hub
-        .mark_read(&user, &channel_id, payload["last_read_id"].as_i64());
+        .mark_read(&user.username, &channel_id, payload["last_read_id"].as_i64());
     Ok(Json(json!({"ok": true, "last_read_id": last})))
 }
 
@@ -1157,12 +1430,8 @@ async fn get_message(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
-    let mut message = state
-        .hub
-        .store
-        .message(message_id)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    let user = require_user(&state, &headers, &q)?;
+    let mut message = require_message_visible(&state, &user, message_id)?;
     if message["thread_id"].is_null() {
         message["reply_count"] = json!(state.hub.store.thread_size(message_id));
     }
@@ -1176,12 +1445,13 @@ async fn select_message_option(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_message_visible(&state, &user, message_id)?;
     let option_id = payload["option_id"].as_str().unwrap_or("").trim();
     if option_id.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "option_id required"));
     }
-    match state.hub.select_option(message_id, option_id, &user) {
+    match state.hub.select_option(message_id, option_id, &user.username) {
         Ok(message) => Ok(Json(message)),
         Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
         Err(msg) => Err(err(StatusCode::CONFLICT, msg)),
@@ -1194,13 +1464,13 @@ async fn list_threads(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let limit: usize = q
         .get("limit")
         .and_then(|s| s.parse().ok())
         .unwrap_or(100)
         .clamp(1, 500);
-    Ok(Json(json!({"threads": state.hub.store.my_threads(&user, limit)})))
+    Ok(Json(json!({"threads": state.hub.store.my_threads(&user.username, limit)})))
 }
 
 /// Give a thread a display alias (or clear it with an empty string) so the
@@ -1214,13 +1484,14 @@ async fn update_thread(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let root = state
         .hub
         .store
         .message(thread_id)
         .filter(|m| m["thread_id"].is_null())
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown thread"))?;
+    require_channel_member(&state, &user, root["channel_id"].as_str().unwrap_or_default())?;
     // Empty/whitespace clears the alias back to the first message; cap the
     // length at the 140 chars the UIs already truncate snippets to.
     let alias: Option<String> = payload
@@ -1253,16 +1524,17 @@ async fn mark_thread_read(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    state
+    let user = require_user(&state, &headers, &q)?;
+    let root = state
         .hub
         .store
         .message(thread_id)
         .filter(|m| m["thread_id"].is_null())
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown thread"))?;
+    require_channel_member(&state, &user, root["channel_id"].as_str().unwrap_or_default())?;
     let last = state
         .hub
-        .mark_thread_read(&user, thread_id, payload["last_read_id"].as_i64());
+        .mark_thread_read(&user.username, thread_id, payload["last_read_id"].as_i64());
     Ok(Json(json!({"ok": true, "last_read_id": last})))
 }
 
@@ -1274,14 +1546,15 @@ async fn hide_thread(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    state
+    let user = require_user(&state, &headers, &q)?;
+    let root = state
         .hub
         .store
         .message(thread_id)
         .filter(|m| m["thread_id"].is_null())
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown thread"))?;
-    state.hub.store.hide_thread(&user, thread_id);
+    require_channel_member(&state, &user, root["channel_id"].as_str().unwrap_or_default())?;
+    state.hub.store.hide_thread(&user.username, thread_id);
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1291,8 +1564,8 @@ async fn unhide_thread(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    Ok(Json(json!({"ok": state.hub.store.unhide_thread(&user, thread_id)})))
+    let user = require_user(&state, &headers, &q)?;
+    Ok(Json(json!({"ok": state.hub.store.unhide_thread(&user.username, thread_id)})))
 }
 
 async fn list_stars(
@@ -1301,9 +1574,9 @@ async fn list_stars(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
-    Ok(Json(json!({"stars": state.hub.store.user_stars(&user, &channel_id)})))
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
+    Ok(Json(json!({"stars": state.hub.store.user_stars(&user.username, &channel_id)})))
 }
 
 async fn star_message(
@@ -1312,8 +1585,8 @@ async fn star_message(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     let message = state
         .hub
         .store
@@ -1321,7 +1594,7 @@ async fn star_message(
         .filter(|m| m["channel_id"] == channel_id.as_str())
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
     let _ = message;
-    state.hub.store.star_message(&user, &channel_id, message_id);
+    state.hub.store.star_message(&user.username, &channel_id, message_id);
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1331,9 +1604,9 @@ async fn unstar_message(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
-    Ok(Json(json!({"ok": state.hub.store.unstar_message(&user, message_id)})))
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
+    Ok(Json(json!({"ok": state.hub.store.unstar_message(&user.username, message_id)})))
 }
 
 async fn list_pins(
@@ -1342,8 +1615,8 @@ async fn list_pins(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     Ok(Json(json!({"pins": state.hub.store.channel_pins(&channel_id)})))
 }
 
@@ -1353,8 +1626,8 @@ async fn pin_message(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let user = require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     let message = state
         .hub
         .store
@@ -1370,7 +1643,7 @@ async fn pin_message(
     if state.hub.store.pin_count(&channel_id) >= MAX_PINS_PER_CHANNEL {
         return Err(err(StatusCode::BAD_REQUEST, "Pin limit reached (25) — unpin something first"));
     }
-    if state.hub.store.pin_message(&channel_id, message_id, Some(&user)) {
+    if state.hub.store.pin_message(&channel_id, message_id, Some(&user.username)) {
         let pin = state
             .hub
             .store
@@ -1391,8 +1664,8 @@ async fn unpin_message(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     if state.hub.store.unpin_message(&channel_id, message_id) {
         state.hub.post_transient(
             &channel_id,
@@ -1408,8 +1681,8 @@ async fn channel_agents(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     Ok(Json(json!({"agents": state.hub.channel_agents(&channel_id)})))
 }
 
@@ -1419,8 +1692,8 @@ async fn channel_activity(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
-    channel_or_404(&state, &channel_id)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
     Ok(Json(state.hub.channel_activity(&channel_id)))
 }
 
@@ -1429,7 +1702,7 @@ async fn available_agents(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    require_user(&state, &headers, &q)?;
     let live = state.hub.live_agent_ids();
     let agents: Vec<Value> = state
         .hub
@@ -1507,7 +1780,7 @@ async fn agent_avatar(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    require_user(&state, &headers, &q)?;
     let agent = state
         .hub
         .store
@@ -1551,7 +1824,8 @@ async fn forget_agent(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     if state.hub.live_agent_ids().contains(&agent_id) {
         return Err(err(StatusCode::BAD_REQUEST, "Agent is currently connected"));
     }
@@ -1565,7 +1839,8 @@ async fn list_connections(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     let status: HashMap<String, Value> = state
         .connections
         .status()
@@ -1601,7 +1876,8 @@ async fn update_instance(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     let name = payload["name"].as_str().unwrap_or("").trim().to_string();
     if name.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "name required"));
@@ -1618,7 +1894,8 @@ async fn export_data(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     let store = Arc::clone(&state.hub.store);
     let (id, name) = (state.config.instance_id(), state.config.instance_name());
     let bytes = tokio::task::spawn_blocking(move || crate::migrate::export_archive(&store, &id, &name))
@@ -1646,7 +1923,8 @@ async fn import_data(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     if !state.upload_limiter.allow(&rate_key(&peer)) {
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
     }
@@ -1706,7 +1984,8 @@ async fn add_connection(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     let name = payload["name"].as_str().unwrap_or("").trim().to_string();
     let url = payload["url"].as_str().unwrap_or("").trim().to_string();
     let token = payload["token"].as_str().unwrap_or("").trim().to_string();
@@ -1744,7 +2023,8 @@ async fn update_connection(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     let mut found = false;
     state.config.update(|c| {
         for conn in &mut c.connections {
@@ -1777,7 +2057,8 @@ async fn remove_connection(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     state.config.update(|c| c.connections.retain(|x| x.name != name));
     state.connections.sync();
     Ok(Json(json!({"ok": true})))
@@ -1788,7 +2069,8 @@ async fn list_pairing(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     Ok(Json(json!({"tokens": state.config.snapshot().pairing_tokens})))
 }
 
@@ -1798,7 +2080,8 @@ async fn create_pairing(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     let name = payload["name"].as_str().unwrap_or("bridge").trim().to_string();
     let token = new_token();
     state.config.update(|c| {
@@ -1817,7 +2100,8 @@ async fn revoke_pairing(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
     state.config.update(|c| c.pairing_tokens.retain(|t| t.token != token));
     Ok(Json(json!({"ok": true})))
 }
@@ -1836,7 +2120,7 @@ async fn register_push_token(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    require_user(&state, &headers, &q)?;
     let token = payload["token"].as_str().unwrap_or("").trim().to_string();
     if !valid_expo_push_token(&token) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid Expo push token"));
@@ -1852,13 +2136,59 @@ async fn unregister_push_token(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_owner(&state, &headers, &q)?;
+    require_user(&state, &headers, &q)?;
     let token = payload["token"].as_str().unwrap_or("").trim().to_string();
     if token.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "token required"));
     }
     state.hub.store.delete_push_token(&token);
     Ok(Json(json!({"ok": true})))
+}
+
+// --------------------------------------------------------------- sign-in
+
+/// Resolve a provider-verified email to a workspace account and mint its
+/// session. Existing user → sign in (unless disabled). No user but a pending
+/// invite (or a spot on the config allowlists, the pre-account gate) → the
+/// account is created on first sign-in. Anything else is rejected —
+/// possession of a Google/Apple account grants nothing by itself.
+fn signin_session_for_email(state: &AppState, email: &str) -> Result<String, &'static str> {
+    let store = &state.hub.store;
+    if let Some(user) = store.user_by_email(email) {
+        if user["disabled"].as_bool().unwrap_or(false) {
+            return Err("disabled");
+        }
+        let username = user["username"].as_str().unwrap_or_default();
+        let version = user["session_version"].as_i64().unwrap_or(1);
+        return Ok(crate::auth::mint_session(username, version, &state.config.session_secret()));
+    }
+    let invite = store.pending_invite(email);
+    let allowlisted = {
+        let snap = state.config.snapshot();
+        let email = email.trim().to_lowercase();
+        snap.google_allowed_emails
+            .iter()
+            .chain(snap.apple_allowed_emails.iter())
+            .any(|e| e.trim().to_lowercase() == email)
+    };
+    if invite.is_none() && !allowlisted {
+        return Err("no_access");
+    }
+    let base = email.split('@').next().unwrap_or("user");
+    let username = store.unique_username(base);
+    let role = invite
+        .as_ref()
+        .and_then(|i| i["instance_role"].as_str().map(str::to_string))
+        .unwrap_or_else(|| "member".to_string());
+    let user = store
+        .create_user(&username, base, Some(email), &role)
+        .ok_or("no_access")?;
+    if invite.is_some() {
+        store.accept_invite(email);
+    }
+    tracing::info!("{email} joined as {username} ({role})");
+    let version = user["session_version"].as_i64().unwrap_or(1);
+    Ok(crate::auth::mint_session(&username, version, &state.config.session_secret()))
 }
 
 // ----------------------------------------------------------- google sign-in
@@ -2032,11 +2362,14 @@ async fn google_callback(
             return land_err("token");
         }
     };
+    let session = match signin_session_for_email(&state, &email) {
+        Ok(session) => session,
+        Err(reason) => {
+            tracing::warn!("google sign-in: {email} rejected: {reason}");
+            return land_err(if reason == "disabled" { "disabled" } else { "no_access" });
+        }
+    };
     tracing::info!("google sign-in: {email} accepted");
-    let session = crate::auth::mint_session(
-        &state.config.username(),
-        &state.config.session_secret(),
-    );
     let url = match &next {
         Some(n) if n != "/" => format!(
             "{n}{}token={}",
@@ -2074,14 +2407,19 @@ async fn apple_signin(
     })
     .await;
     match verified {
-        Ok(Ok(email)) => {
-            tracing::info!("apple sign-in: {email} accepted");
-            let session = crate::auth::mint_session(
-                &state.config.username(),
-                &state.config.session_secret(),
-            );
-            Ok(Json(json!({"token": session})))
-        }
+        Ok(Ok(email)) => match signin_session_for_email(&state, &email) {
+            Ok(session) => {
+                tracing::info!("apple sign-in: {email} accepted");
+                Ok(Json(json!({"token": session})))
+            }
+            Err(reason) => {
+                tracing::warn!("apple sign-in: {email} rejected ({reason})");
+                Err(err(
+                    StatusCode::UNAUTHORIZED,
+                    "That Apple account isn't allowed on this instance",
+                ))
+            }
+        },
         Ok(Err(e)) => {
             tracing::warn!("apple sign-in: identity token rejected: {e}");
             let detail = if e.to_string().contains("allowlist") {
@@ -2104,16 +2442,20 @@ async fn ui_ws(
 ) -> Response {
     // Browsers can't set headers on a websocket, so auth rides on ?token=.
     let token = q.get("token").cloned().unwrap_or_default();
-    if !is_ui_token(&state, &token) {
+    let Some(user) = authed_user(&state, &token) else {
         return (StatusCode::UNAUTHORIZED, "bad token").into_response();
-    }
-    ws.on_upgrade(move |socket| handle_ui_socket(state, socket))
+    };
+    ws.on_upgrade(move |socket| handle_ui_socket(state, user, socket))
 }
 
-async fn handle_ui_socket(state: AppState, socket: WebSocket) {
+async fn handle_ui_socket(state: AppState, user: AuthedUser, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = unbounded_channel::<Value>();
-    let socket_id = state.hub.attach_socket(&state.config.username(), true, tx);
+    // Real identity, privileged only for the operator: the hub's per-channel
+    // visibility filtering applies to everyone else.
+    let socket_id = state
+        .hub
+        .attach_socket(&user.username, user.instance_admin, tx);
     loop {
         tokio::select! {
             event = rx.recv() => {
@@ -2209,6 +2551,159 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_state() -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Arc::new(Config::load(dir.path()).unwrap());
+        let hub = Arc::new(Hub::new(Arc::new(crate::store::Store::open_in_memory().unwrap())));
+        let connections = ConnectionManager::new(Arc::clone(&hub), Arc::clone(&config));
+        let (auth_limiter, upload_limiter) = AppState::default_limiters();
+        let state = AppState {
+            hub,
+            config,
+            connections,
+            ui_dir: None,
+            data_dir: dir.path().to_path_buf(),
+            restart_handler: Arc::new(std::sync::Mutex::new(None)),
+            speech_cache: Arc::new(std::sync::Mutex::new(Vec::new())),
+            auth_limiter,
+            upload_limiter,
+        };
+        (state, dir)
+    }
+
+    #[test]
+    fn authed_user_resolves_admin_key_and_user_sessions() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+
+        // The admin key is the operator: instance admin, config username.
+        let admin = authed_user(&state, &state.config.admin_key()).unwrap();
+        assert!(admin.instance_admin);
+        assert_eq!(admin.username, state.config.username());
+        assert!(authed_user(&state, "garbage").is_none());
+
+        // A member session resolves to that user, without admin powers.
+        let user = store.create_user("ana", "Ana", Some("ana@x.io"), "member").unwrap();
+        let v = user["session_version"].as_i64().unwrap();
+        let token = crate::auth::mint_session("ana", v, &state.config.session_secret());
+        let ana = authed_user(&state, &token).unwrap();
+        assert_eq!(ana.username, "ana");
+        assert_eq!(ana.display_name, "Ana");
+        assert!(!ana.instance_admin);
+
+        // An instance_role=admin user is an instance admin.
+        let boss = store.create_user("boss", "", Some("boss@x.io"), "admin").unwrap();
+        let bt = crate::auth::mint_session(
+            "boss",
+            boss["session_version"].as_i64().unwrap(),
+            &state.config.session_secret(),
+        );
+        assert!(authed_user(&state, &bt).unwrap().instance_admin);
+
+        // Bumping the session version revokes outstanding tokens…
+        store.bump_session_version("ana");
+        assert!(authed_user(&state, &token).is_none());
+        // …and disabling the account blocks even a fresh one.
+        let v2 = store.user("ana").unwrap()["session_version"].as_i64().unwrap();
+        let fresh = crate::auth::mint_session("ana", v2, &state.config.session_secret());
+        assert!(authed_user(&state, &fresh).is_some());
+        store.set_user_disabled("ana", true);
+        assert!(authed_user(&state, &fresh).is_none());
+    }
+
+    #[test]
+    fn signin_maps_emails_to_accounts_invites_and_allowlist() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+
+        // Unknown email: rejected outright.
+        assert_eq!(signin_session_for_email(&state, "rando@x.io"), Err("no_access"));
+
+        // Existing account: signs in as that user.
+        store.create_user("ana", "Ana", Some("ana@x.io"), "member").unwrap();
+        let token = signin_session_for_email(&state, "ana@x.io").unwrap();
+        assert_eq!(authed_user(&state, &token).unwrap().username, "ana");
+
+        // Disabled account: rejected.
+        store.set_user_disabled("ana", true);
+        assert_eq!(signin_session_for_email(&state, "ana@x.io"), Err("disabled"));
+
+        // Pending invite: first sign-in creates the account with the invited
+        // role and consumes the invite.
+        store.create_invite("bob@x.io", Some("ana"), "admin").unwrap();
+        let token = signin_session_for_email(&state, "bob@x.io").unwrap();
+        let bob = authed_user(&state, &token).unwrap();
+        assert_eq!(bob.username, "bob");
+        assert!(bob.instance_admin);
+        assert!(store.pending_invite("bob@x.io").is_none());
+        // Signing in again reuses the account rather than minting another.
+        let again = signin_session_for_email(&state, "bob@x.io").unwrap();
+        assert_eq!(authed_user(&state, &again).unwrap().username, "bob");
+
+        // Config allowlist (the pre-account gate) still admits, as a member.
+        state.config.update(|c| c.google_allowed_emails = vec!["carol@x.io".into()]);
+        let token = signin_session_for_email(&state, "carol@x.io").unwrap();
+        let carol = authed_user(&state, &token).unwrap();
+        assert_eq!(carol.username, "carol");
+        assert!(!carol.instance_admin);
+    }
+
+    #[test]
+    fn authz_helpers_enforce_the_role_matrix() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("ana", "", None, "member").unwrap();
+        store.create_user("mal", "", None, "member").unwrap();
+        let g = store.create_group("Team", "", Some("ana"));
+        let gid = g["id"].as_str().unwrap();
+        // create_group's auto-admin membership is added by the handler; do it
+        // here the same way.
+        store.add_member(gid, "user", "ana", "admin", None);
+        let c = store.create_channel(gid, "general", "");
+        let cid = c["id"].as_str().unwrap();
+
+        let ana = AuthedUser {
+            username: "ana".into(),
+            display_name: "ana".into(),
+            instance_admin: false,
+        };
+        let mal = AuthedUser {
+            username: "mal".into(),
+            display_name: "mal".into(),
+            instance_admin: false,
+        };
+        let op = AuthedUser {
+            username: "op".into(),
+            display_name: "op".into(),
+            instance_admin: true,
+        };
+
+        // Group admin (creator) passes everything for the group.
+        assert!(require_member(&state, &ana, gid).is_ok());
+        assert!(require_group_admin(&state, &ana, gid).is_ok());
+        assert!(require_channel_member(&state, &ana, cid).is_ok());
+        // Non-member: 403 across the board.
+        assert!(require_member(&state, &mal, gid).is_err());
+        assert!(require_group_admin(&state, &mal, gid).is_err());
+        assert!(require_channel_member(&state, &mal, cid).is_err());
+        assert!(require_instance_admin(&mal).is_err());
+        // Plain member: sees, but doesn't administer.
+        store.add_member(gid, "user", "mal", "member", None);
+        assert!(require_member(&state, &mal, gid).is_ok());
+        assert!(require_group_admin(&state, &mal, gid).is_err());
+        // The operator bypasses membership entirely.
+        assert!(require_member(&state, &op, gid).is_ok());
+        assert!(require_group_admin(&state, &op, gid).is_ok());
+        assert!(require_instance_admin(&op).is_ok());
+
+        // Message visibility follows the channel's group.
+        let m = state.hub.post_user_message(cid, "hello", "ana", None, None, vec![]);
+        let mid = m["id"].as_i64().unwrap();
+        assert!(require_message_visible(&state, &mal, mid).is_ok());
+        store.remove_member(gid, "user", "mal", None);
+        assert!(require_message_visible(&state, &mal, mid).is_err());
+    }
 
     #[test]
     fn expo_push_token_shape() {

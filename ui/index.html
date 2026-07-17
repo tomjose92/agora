@@ -12,7 +12,9 @@
     <div class="brand"><span class="brand-mark"><img src="icon.png" alt=""></span> Agora</div>
     <div class="server-badge" id="server-badge"></div>
     <div class="topbar-status" id="topbar-status"></div>
-    <button class="btn sm" id="btn-connections" onclick="connToggle()">Connections</button>
+    <span class="topbar-me" id="topbar-me"></span>
+    <button class="btn sm" id="btn-people" style="display:none" onclick="usersToggle()">People</button>
+    <button class="btn sm" id="btn-connections" style="display:none" onclick="connToggle()">Connections</button>
   </div>
   <div id="content"></div>
 </main>
@@ -20,10 +22,14 @@
 <div class="conn-overlay" id="conn-overlay" style="display:none" onclick="if(event.target===this)connToggle()">
   <div class="conn-panel" id="conn-panel"></div>
 </div>
+<div class="conn-overlay" id="users-overlay" style="display:none" onclick="if(event.target===this)usersToggle()">
+  <div class="conn-panel" id="users-panel"></div>
+</div>
 <script src="icons.js"></script>
 <script src="shim.js"></script>
 <script src="agora.js"></script>
 <script src="connections.js"></script>
+<script src="users.js"></script>
 <script>boot();</script>
 </body>
 </html>

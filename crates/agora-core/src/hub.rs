@@ -1070,6 +1070,7 @@ impl Hub {
             None,
             None,
             Some(agent_id),
+            None,
             newest_first,
             has_files,
             file_type,
@@ -1558,6 +1559,11 @@ mod tests {
         assert_eq!(rx_member.try_recv().unwrap()["type"], "message");
         assert!(rx_out.try_recv().is_err());
         assert_eq!(rx_root.try_recv().unwrap()["type"], "message");
+        // Transient events (typing, pins) honor the same visibility line.
+        h.post_transient(&cid, json!({"type": "pin", "channel_id": cid, "pinned": true}));
+        assert_eq!(rx_member.try_recv().unwrap()["type"], "pin");
+        assert!(rx_out.try_recv().is_err());
+        assert_eq!(rx_root.try_recv().unwrap()["type"], "pin");
     }
 
     #[test]

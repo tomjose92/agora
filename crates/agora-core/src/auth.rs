@@ -12,9 +12,11 @@
 //! arrives from the client, not from Apple, so its RS256 signature must be
 //! verified against Apple's published JWKS before the claims mean anything.
 //!
-//! Either way, a verified email on the configured allowlist earns a
-//! short-lived HMAC session token, accepted everywhere the admin key is.
-//! Provider tokens themselves are never stored.
+//! Either way, this module's job ends at a *verified email*; mapping that
+//! email to a user account (existing account, pending invite, or the
+//! config allowlist) happens in the server, which then mints a per-user
+//! HMAC session token, accepted everywhere the admin key is. Provider
+//! tokens themselves are never stored.
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -54,18 +56,24 @@ fn sign(msg: &str, secret: &str) -> String {
 }
 
 /// A stateless `<payload_b64>.<sig_b64>` token, mirroring Pantheo's shape:
-/// payload `{"u": username, "iat": ..., "exp": ...}` signed with HMAC-SHA256.
-/// Logout just drops the client copy; rotating the secret invalidates all.
-pub fn mint_session(username: &str, secret: &str) -> String {
+/// payload `{"u": username, "v": session_version, "iat": ..., "exp": ...}`
+/// signed with HMAC-SHA256. Logout just drops the client copy; bumping the
+/// user's `session_version` revokes their tokens, rotating the secret
+/// invalidates everyone's.
+pub fn mint_session(username: &str, version: i64, secret: &str) -> String {
     let now = now_secs();
-    let payload = serde_json::json!({"u": username, "iat": now, "exp": now + SESSION_TTL_SECS});
+    let payload = serde_json::json!({
+        "u": username, "v": version, "iat": now, "exp": now + SESSION_TTL_SECS,
+    });
     let msg = URL_SAFE_NO_PAD.encode(payload.to_string());
     let sig = sign(&msg, secret);
     format!("{msg}.{sig}")
 }
 
-/// The token's subject if it is authentic and unexpired.
-pub fn verify_session(token: &str, secret: &str) -> Option<String> {
+/// The token's subject and session version if it is authentic and unexpired.
+/// Tokens minted before versions existed carry no `v` and count as version 1
+/// (what every migrated account starts at), so they stay valid.
+pub fn verify_session(token: &str, secret: &str) -> Option<(String, i64)> {
     let (msg, sig) = token.split_once('.')?;
     let expected = sign(msg, secret);
     if !constant_time_eq(sig, &expected) {
@@ -75,7 +83,8 @@ pub fn verify_session(token: &str, secret: &str) -> Option<String> {
     if payload["exp"].as_i64()? < now_secs() {
         return None;
     }
-    payload["u"].as_str().map(str::to_string)
+    let version = payload["v"].as_i64().unwrap_or(1);
+    payload["u"].as_str().map(|u| (u.to_string(), version))
 }
 
 fn constant_time_eq(a: &str, b: &str) -> bool {
@@ -161,7 +170,8 @@ pub fn exchange_code(gc: &GoogleConfig, code: &str, redirect_uri: &str) -> anyho
 /// Validate a Google `id_token` and return the signed-in email.
 ///
 /// Trusts the back-channel TLS exchange and checks the security-relevant
-/// claims: issuer, audience, expiry, verified email, email allowlist.
+/// claims: issuer, audience, expiry, verified email. Whether that email may
+/// sign in (existing account / invite / allowlist) is the server's decision.
 pub fn decode_id_token(id_token: &str, gc: &GoogleConfig) -> anyhow::Result<String> {
     let mut parts = id_token.split('.');
     let payload_b64 = parts
@@ -189,9 +199,6 @@ pub fn decode_id_token(id_token: &str, gc: &GoogleConfig) -> anyhow::Result<Stri
     }
     if claims["email_verified"] != Value::Bool(true) {
         anyhow::bail!("email is not verified");
-    }
-    if !gc.allowed_emails.iter().any(|e| e == &email) {
-        anyhow::bail!("email is not on the allowlist");
     }
     Ok(email)
 }
@@ -245,6 +252,7 @@ pub fn verify_apple_token(identity_token: &str, ac: &AppleConfig) -> anyhow::Res
 /// Validate an Apple identity token against a JWKS and return the signed-in
 /// email. Unlike the Google path this checks the RS256 signature: the token
 /// was relayed by the client, so nothing about the transport vouches for it.
+/// Like Google, sign-in eligibility for the email is the server's decision.
 pub fn verify_apple_identity_token(
     identity_token: &str,
     jwks: &Value,
@@ -282,9 +290,6 @@ pub fn verify_apple_identity_token(
         || claims["email_verified"].as_str() == Some("true");
     if !verified {
         anyhow::bail!("email is not verified");
-    }
-    if !ac.allowed_emails.iter().any(|e| e == &email) {
-        anyhow::bail!("email is not on the allowlist");
     }
     Ok(email)
 }
@@ -340,16 +345,33 @@ mod tests {
 
     #[test]
     fn session_roundtrip() {
-        let token = mint_session("me", "secret");
-        assert_eq!(verify_session(&token, "secret").as_deref(), Some("me"));
+        let token = mint_session("me", 3, "secret");
+        assert_eq!(
+            verify_session(&token, "secret"),
+            Some(("me".to_string(), 3))
+        );
         assert!(verify_session(&token, "other-secret").is_none());
         assert!(verify_session("garbage", "secret").is_none());
         assert!(verify_session("", "secret").is_none());
     }
 
     #[test]
+    fn legacy_session_without_version_counts_as_v1() {
+        // Tokens minted before session versions existed must keep working
+        // for the migrated account (which starts at version 1).
+        let payload =
+            serde_json::json!({"u": "me", "iat": now_secs(), "exp": now_secs() + 999});
+        let msg = URL_SAFE_NO_PAD.encode(payload.to_string());
+        let token = format!("{msg}.{}", sign(&msg, "secret"));
+        assert_eq!(
+            verify_session(&token, "secret"),
+            Some(("me".to_string(), 1))
+        );
+    }
+
+    #[test]
     fn tampered_session_is_rejected() {
-        let token = mint_session("me", "secret");
+        let token = mint_session("me", 1, "secret");
         let (msg, sig) = token.split_once('.').unwrap();
         let payload = serde_json::json!({"u": "admin", "iat": 0, "exp": now_secs() + 999});
         let forged = format!("{}.{sig}", URL_SAFE_NO_PAD.encode(payload.to_string()));
@@ -360,7 +382,7 @@ mod tests {
     #[test]
     fn expired_session_is_rejected() {
         let payload =
-            serde_json::json!({"u": "me", "iat": now_secs() - 10, "exp": now_secs() - 1});
+            serde_json::json!({"u": "me", "v": 1, "iat": now_secs() - 10, "exp": now_secs() - 1});
         let msg = URL_SAFE_NO_PAD.encode(payload.to_string());
         let token = format!("{msg}.{}", sign(&msg, "secret"));
         assert!(verify_session(&token, "secret").is_none());
@@ -373,12 +395,24 @@ mod tests {
     }
 
     #[test]
+    fn id_token_accepts_any_verified_email() {
+        // Allowlist/invite enforcement moved to the server's user-mapping
+        // step; token validation itself passes any verified Google account.
+        let mut claims = valid_claims();
+        claims["email"] = Value::from("stranger@example.com");
+        assert_eq!(
+            decode_id_token(&fake_id_token(claims), &gc()).unwrap(),
+            "stranger@example.com"
+        );
+    }
+
+    #[test]
     fn id_token_rejects_bad_claims() {
         for (key, value) in [
             ("iss", Value::from("https://evil.example")),
             ("aud", Value::from("other-client")),
             ("exp", Value::from(now_secs() - 3600)),
-            ("email", Value::from("intruder@example.com")),
+            ("email", Value::from("")),
             ("email_verified", Value::from(false)),
         ] {
             let mut claims = valid_claims();
@@ -510,12 +544,25 @@ UdeGy7DwA1AX/rEVXhJrqnyiDggacXDr7ukM0x5c+GjbsrjO/NR+
     }
 
     #[test]
+    fn apple_token_accepts_any_verified_email() {
+        // Same as Google: eligibility is decided by the server's user
+        // mapping, not by token validation.
+        let mut claims = apple_claims();
+        claims["email"] = Value::from("stranger@example.com");
+        let token = sign_apple_token(&claims, "testkey");
+        assert_eq!(
+            verify_apple_identity_token(&token, &test_jwks(), &ac()).unwrap(),
+            "stranger@example.com"
+        );
+    }
+
+    #[test]
     fn apple_token_rejects_bad_claims() {
         for (key, value) in [
             ("iss", Value::from("https://evil.example")),
             ("aud", Value::from("app.other.bundle")),
             ("exp", Value::from(now_secs() - 3600)),
-            ("email", Value::from("intruder@example.com")),
+            ("email", Value::from("")),
             ("email_verified", Value::from("false")),
         ] {
             let mut claims = apple_claims();

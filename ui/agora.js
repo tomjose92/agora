@@ -1925,17 +1925,21 @@ function agoDrawThread() {
 }
 
 /* ---------- members panel ---------- */
+let _agoWorkspaceUsers = [];   // all accounts, for the "add person" picker
+
 async function agoToggleMembers() {
   if (_agoMembers) { _agoMembers = null; agoDrawMembers(); agoDrawMain(); return; }
   const g = agoSelGroup();
   if (!g) return;
   try {
-    const [members, agents] = await Promise.all([
+    const [members, agents, users] = await Promise.all([
       api(`/api/groups/${encodeURIComponent(g.id)}/members`),
       api("/api/agents"),
+      api("/api/users").catch(() => ({ users: [] })),
     ]);
     _agoMembers = members.members || [];
     _agoAvailAgents = agents.agents || [];
+    _agoWorkspaceUsers = users.users || [];
   } catch (e) { agoErr("Couldn't load members", e); return; }
   if (_agoThreadRoot) { _agoThreadRoot = null; _agoThreadMsgs = []; agoDrawThread(); }
   agoDrawMembers();
@@ -1959,21 +1963,47 @@ function agoDrawMembers() {
     const mark = m.member_type === "agent"
       ? agoAgentAvatarHTML(m.member_id, "sm")
       : `<span class="ago-av sm">${icon("user")}</span>`;
+    const self = m.member_type === "user" && CURRENT_USER && m.member_id === CURRENT_USER.username;
+    // Group admins can promote/demote people; agents have no roles.
+    const roleBtn = admin && m.member_type === "user"
+      ? `<button class="ago-x" title="${m.role === "admin" ? "Demote to member" : "Make group admin"}"
+           onclick="agoSetMemberRole('${esc(m.member_id)}','${m.role === "admin" ? "member" : "admin"}')">${m.role === "admin" ? icon("arrow-down") : icon("arrow-up")}</button>`
+      : "";
+    const removeBtn = admin || self
+      ? `<button class="ago-x" title="${self && !admin ? "Leave this group" : "Remove"}"
+           onclick="agoRemoveMember('${esc(m.member_type)}','${esc(m.member_id)}','${esc(m.channel_id || "")}')">${icon("x")}</button>`
+      : "";
     return `
     <div class="ago-member">
       ${mark}
-      <span class="mname">${esc(m.name || m.member_id)}</span>
+      <span class="mname">${esc(m.name || m.member_id)}${self ? ' <span class="dim">· you</span>' : ""}</span>
       <span class="mmeta">${esc(m.role)}${m.channel_id ? " · " + esc(chanName(m.channel_id)) : ""}${off
         ? ' · <span class="ago-off" title="Offline — won\u2019t reply">offline</span>' : ""}</span>
-      ${admin ? `<button class="ago-x" title="Remove"
-        onclick="agoRemoveMember('${esc(m.member_type)}','${esc(m.member_id)}','${esc(m.channel_id || "")}')">${icon("x")}</button>` : ""}
+      ${roleBtn}
+      ${removeBtn}
     </div>`;
   }).join("");
   const agentOpts = _agoAvailAgents.map(a =>
     `<option value="${esc(a.id)}">${esc(a.name)}${a.live ? "" : " (offline)"}</option>`).join("");
   const chanOpts = `<option value="">whole group</option>` + (g.channels || []).map(c =>
     `<option value="${esc(c.id)}">#${esc(c.name)}</option>`).join("");
+  const memberUserIds = new Set(
+    _agoMembers.filter(m => m.member_type === "user").map(m => m.member_id));
+  const userOpts = _agoWorkspaceUsers
+    .filter(u => !u.disabled && !memberUserIds.has(u.username))
+    .map(u => `<option value="${esc(u.username)}">${esc(u.display_name || u.username)}</option>`)
+    .join("");
+  const addPeople = admin ? `
+    <div class="ago-member-add">
+      <select id="ago-add-user">${userOpts || '<option value="">everyone\u2019s already here</option>'}</select>
+      <select id="ago-add-user-role">
+        <option value="member">member</option>
+        <option value="admin">group admin</option>
+      </select>
+      <button class="btn sm" onclick="agoAddUser()">Add person</button>
+    </div>` : "";
   const addForms = admin ? `
+    ${addPeople}
     <div class="ago-member-add">
       <select id="ago-add-agent">${agentOpts || '<option value="">no agents yet</option>'}</select>
       <select id="ago-add-agent-chan">${chanOpts}</select>
@@ -1995,6 +2025,37 @@ function agoDrawMembers() {
       ${addForms}
     </div>`;
 }
+async function agoAddUser() {
+  const g = agoSelGroup();
+  const sel = document.getElementById("ago-add-user");
+  const role = document.getElementById("ago-add-user-role");
+  if (!g || !sel || !sel.value) return;
+  try {
+    await apiPost(`/api/groups/${encodeURIComponent(g.id)}/members`, {
+      member_type: "user", member_id: sel.value, role: (role && role.value) || "member",
+    });
+    _agoMembers = null;
+    delete _agoGroupMembers[g.id];
+    await agoToggleMembers();
+    toast(`${sel.value} added to ${g.name}`, { variant: "ok" });
+  } catch (e) { agoErr("Couldn't add person", e); }
+}
+
+/* Promote/demote a person: re-adding an existing member with a different
+   role updates it server-side. */
+async function agoSetMemberRole(username, role) {
+  const g = agoSelGroup();
+  if (!g) return;
+  try {
+    await apiPost(`/api/groups/${encodeURIComponent(g.id)}/members`, {
+      member_type: "user", member_id: username, role,
+    });
+    _agoMembers = null;
+    delete _agoGroupMembers[g.id];
+    await agoToggleMembers();
+  } catch (e) { agoErr("Couldn't change role", e); }
+}
+
 async function agoAddAgent() {
   const g = agoSelGroup();
   const sel = document.getElementById("ago-add-agent");
