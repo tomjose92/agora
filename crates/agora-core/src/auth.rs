@@ -107,18 +107,32 @@ pub fn allowed_next(next: &str) -> bool {
 }
 
 /// The `state` round-tripped through Google: a CSRF nonce plus the validated
-/// `next` target, so the callback needs no server-side session to find it.
-pub fn encode_state(next: &str) -> String {
-    format!("{}.{}", new_token(), URL_SAFE_NO_PAD.encode(next))
+/// `next` target and an optional invite-link token, so the callback needs no
+/// server-side session to find them.
+pub fn encode_state(next: &str, invite: &str) -> String {
+    format!(
+        "{}.{}.{}",
+        new_token(),
+        URL_SAFE_NO_PAD.encode(next),
+        URL_SAFE_NO_PAD.encode(invite)
+    )
 }
 
 /// The `next` target carried in a state produced by [`encode_state`].
 pub fn next_from_state(state: &str) -> Option<String> {
-    let (_, next_b64) = state.split_once('.')?;
+    let next_b64 = state.split('.').nth(1)?;
     let next = String::from_utf8(URL_SAFE_NO_PAD.decode(next_b64).ok()?).ok()?;
     // Re-check at redeem time: the cookie lives client-side. "/" is the
     // web UI's own landing.
     (next == "/" || allowed_next(&next)).then_some(next)
+}
+
+/// The invite-link token carried in a state produced by [`encode_state`],
+/// if any. Validity (unused, unexpired) is the store's call at redeem time.
+pub fn invite_from_state(state: &str) -> Option<String> {
+    let token_b64 = state.split('.').nth(2)?;
+    let token = String::from_utf8(URL_SAFE_NO_PAD.decode(token_b64).ok()?).ok()?;
+    (!token.is_empty()).then_some(token)
 }
 
 pub fn state_matches(cookie: &str, param: &str) -> bool {
@@ -441,15 +455,15 @@ mod tests {
 
     #[test]
     fn state_roundtrips_next_and_enforces_allowlist() {
-        let state = encode_state("http://127.0.0.1:49213/callback");
+        let state = encode_state("http://127.0.0.1:49213/callback", "");
         assert_eq!(
             next_from_state(&state).as_deref(),
             Some("http://127.0.0.1:49213/callback")
         );
-        assert_eq!(next_from_state(&encode_state("/")).as_deref(), Some("/"));
-        assert!(next_from_state(&encode_state("")).is_none());
+        assert_eq!(next_from_state(&encode_state("/", "")).as_deref(), Some("/"));
+        assert!(next_from_state(&encode_state("", "")).is_none());
         // A tampered cookie pointing somewhere else is refused at redeem time.
-        assert!(next_from_state(&encode_state("https://evil.example/steal")).is_none());
+        assert!(next_from_state(&encode_state("https://evil.example/steal", "")).is_none());
         assert!(allowed_next("agora://auth"));
         assert!(allowed_next("exp://192.168.1.5:8081/--/auth"));
         assert!(!allowed_next("https://evil.example"));
@@ -457,9 +471,17 @@ mod tests {
     }
 
     #[test]
+    fn state_carries_an_optional_invite_token() {
+        let state = encode_state("/", "tok123");
+        assert_eq!(next_from_state(&state).as_deref(), Some("/"));
+        assert_eq!(invite_from_state(&state).as_deref(), Some("tok123"));
+        assert!(invite_from_state(&encode_state("/", "")).is_none());
+    }
+
+    #[test]
     fn states_do_not_collide() {
-        let a = encode_state("agora://auth");
-        let b = encode_state("agora://auth");
+        let a = encode_state("agora://auth", "");
+        let b = encode_state("agora://auth", "");
         assert_ne!(a, b);
         assert!(state_matches(&a, &a));
         assert!(!state_matches(&a, &b));

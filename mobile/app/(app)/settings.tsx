@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import * as Application from "expo-application";
 import { Stack } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../src/api/keys";
 import {
   useConnectionMutations,
@@ -107,6 +107,76 @@ function AddConnection() {
           <Text style={styles.linkBtnText}>Save</Text>
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+/* Profile self-service: edit how your name appears on new messages.
+   Saving PATCHes /api/me and updates the local session state. */
+function DisplayNameRow() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const username = useSession((s) => s.username);
+  const displayName = useSession((s) => s.displayName);
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const me = await api.patch<Me>("/api/me", { display_name: text.trim() });
+      useSession.setState({ displayName: me.display_name || username });
+      await queryClient.invalidateQueries({ queryKey: keys.me });
+      setEditing(false);
+      toast("Display name updated");
+    } catch (e) {
+      toastErr("Couldn't update your name", e as Error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <View style={styles.row}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.name}>{displayName || username}</Text>
+          <Text style={styles.meta}>How your name appears on new messages.</Text>
+        </View>
+        <Pressable
+          style={styles.linkBtn}
+          onPress={() => {
+            setText(displayName || username);
+            setEditing(true);
+          }}
+        >
+          <Text style={styles.linkBtnText}>Edit</Text>
+        </Pressable>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.row}>
+      <TextInput
+        style={[styles.input, { flex: 1 }]}
+        value={text}
+        onChangeText={setText}
+        placeholder={username}
+        placeholderTextColor={colors.faint}
+        autoFocus
+        maxLength={80}
+        returnKeyType="done"
+        onSubmitEditing={() => void save()}
+      />
+      <Pressable style={styles.linkBtn} onPress={() => setEditing(false)}>
+        <Text style={styles.linkBtnDim}>Cancel</Text>
+      </Pressable>
+      <Pressable style={styles.linkBtn} onPress={() => void save()} disabled={saving}>
+        <Text style={[styles.linkBtnText, saving && { opacity: 0.4 }]}>
+          {saving ? "Saving…" : "Save"}
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -301,6 +371,7 @@ export default function SettingsScreen() {
         ) : null}
 
         <Section title="Session">
+          <DisplayNameRow />
           <View style={styles.row}>
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{session.baseUrl}</Text>

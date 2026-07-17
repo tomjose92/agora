@@ -81,7 +81,12 @@ svg.ico.spin { animation: ico-spin 1s linear infinite; transform-origin: center;
 .server-badge .srv-dot.local { background: var(--green); }
 .server-badge .srv-dot.remote { background: var(--a1); }
 .topbar-status { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); }
-.topbar-me { font-size: 12px; color: var(--dim); font-weight: 600; }
+.topbar-me {
+  font-size: 12px; color: var(--dim); font-weight: 600;
+  background: none; border: none; padding: 2px 6px; border-radius: 6px;
+  cursor: pointer; font-family: inherit;
+}
+.topbar-me:hover { color: var(--text); background: rgba(255,255,255,.06); }
 .conn-row.disabled .conn-row-main { opacity: .55; }
 .conn-add select {
   background: rgba(0,0,0,.25); border: 1px solid var(--border-strong); border-radius: 8px;

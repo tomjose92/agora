@@ -283,11 +283,12 @@ fn upload_body_limit(state: &AppState) -> axum::extract::DefaultBodyLimit {
 
 pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
-        .route("/api/me", get(me).delete(delete_me))
+        .route("/api/me", get(me).patch(update_me).delete(delete_me))
         .route("/api/users", get(list_users))
         .route("/api/users/{username}", patch(update_user))
         .route("/api/invites", get(list_invites).post(create_invite))
         .route("/api/invites/{email}", delete(revoke_invite))
+        .route("/join/{token}", get(join_link))
         .route("/api/groups", get(list_groups).post(create_group))
         .route("/api/groups/order", put(reorder_groups))
         .route("/api/groups/{group_id}", patch(update_group).delete(delete_group))
@@ -390,9 +391,30 @@ fn channel_or_404(state: &AppState, channel_id: &str) -> Result<Value, ApiError>
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown channel"))
 }
 
+/// Overlay one user's sidebar prefs onto a list of groups or channels:
+/// `hidden` becomes *their* flag (the legacy global column is ignored), and
+/// items they manually ordered sort first; the rest keep the store's order.
+fn overlay_prefs(items: Vec<Value>, prefs: &std::collections::HashMap<String, (bool, Option<i64>)>) -> Vec<Value> {
+    let mut indexed: Vec<(usize, Value)> = items
+        .into_iter()
+        .map(|mut item| {
+            let id = item["id"].as_str().unwrap_or_default();
+            item["hidden"] = json!(prefs.get(id).map(|p| p.0).unwrap_or(false));
+            item
+        })
+        .enumerate()
+        .collect();
+    indexed.sort_by_key(|(i, item)| {
+        let id = item["id"].as_str().unwrap_or_default();
+        (prefs.get(id).and_then(|p| p.1).unwrap_or(i64::MAX), *i)
+    });
+    indexed.into_iter().map(|(_, item)| item).collect()
+}
+
 fn group_payload(state: &AppState, group: &Value, user: &AuthedUser) -> Value {
     let gid = group["id"].as_str().unwrap_or_default();
-    let mut channels = state.hub.store.group_channels(gid);
+    let chan_prefs = state.hub.store.user_prefs(&user.username, "channel");
+    let mut channels = overlay_prefs(state.hub.store.group_channels(gid), &chan_prefs);
     let ids: Vec<String> = channels
         .iter()
         .filter_map(|c| c["id"].as_str().map(String::from))
@@ -406,6 +428,9 @@ fn group_payload(state: &AppState, group: &Value, user: &AuthedUser) -> Value {
         c["last_read_id"] = unread["last_read_id"].clone();
     }
     let mut out = group.clone();
+    // Hiding is personal: report the caller's flag, not the legacy global.
+    let group_prefs = state.hub.store.user_prefs(&user.username, "group");
+    out["hidden"] = json!(group_prefs.get(gid).map(|p| p.0).unwrap_or(false));
     out["channels"] = Value::Array(channels);
     let admin =
         user.instance_admin || state.hub.store.user_is_group_admin(&user.username, gid);
@@ -502,6 +527,32 @@ async fn me(
         // AI search answers (/api/search/ask) need an ANTHROPIC_API_KEY in the
         // server env; clients hide their "Ask AI" controls without it.
         "search_ai": crate::ai::api_key().is_some(),
+    })))
+}
+
+/// Profile self-service: the caller edits their own display name. Roles,
+/// email and disabled stay admin-only on PATCH /api/users/{username}.
+async fn update_me(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    let Some(display_name) = payload["display_name"].as_str() else {
+        return Err(err(StatusCode::BAD_REQUEST, "display_name required"));
+    };
+    // '' clears the name back to the username; cap it like a channel name.
+    let display_name: String = display_name.trim().chars().take(80).collect();
+    state
+        .hub
+        .store
+        .set_user_display_name(&user.username, &display_name);
+    let shown = if display_name.is_empty() { user.username.clone() } else { display_name };
+    Ok(Json(json!({
+        "username": user.username,
+        "display_name": shown,
+        "instance_admin": user.instance_admin,
     })))
 }
 
@@ -607,11 +658,40 @@ async fn list_invites(
 ) -> Result<Json<Value>, ApiError> {
     let caller = require_user(&state, &headers, &q)?;
     require_instance_admin(&caller)?;
-    Ok(Json(json!({"invites": state.hub.store.list_invites()})))
+    let links: Vec<Value> = state
+        .hub
+        .store
+        .list_invite_links()
+        .into_iter()
+        .map(|mut l| {
+            let token = l["token"].as_str().unwrap_or_default();
+            l["url"] = json!(join_url(&state, token));
+            l
+        })
+        .collect();
+    Ok(Json(json!({
+        "invites": state.hub.store.list_invites(),
+        "links": links,
+    })))
 }
 
-/// Invite a person by email. No mail is sent — the invitee just signs in
-/// with Google/Apple using that address and the account is created then.
+/// How long a shareable invite link can sit unused.
+const INVITE_LINK_TTL_SECS: f64 = 7.0 * 24.0 * 3600.0;
+
+/// The absolute /join URL for an invite-link token, based on the configured
+/// public URL when there is one.
+fn join_url(state: &AppState, token: &str) -> String {
+    let base = state.config.public_url();
+    if base.is_empty() {
+        format!("/join/{token}")
+    } else {
+        format!("{base}/join/{token}")
+    }
+}
+
+/// Invite a person. Two modes: `{"email": …}` keys the invite to an exact
+/// address (no mail is sent — they just sign in with it), while
+/// `{"link": true}` mints a single-use, expiring URL to hand to anyone.
 async fn create_invite(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
@@ -620,11 +700,21 @@ async fn create_invite(
 ) -> Result<Json<Value>, ApiError> {
     let caller = require_user(&state, &headers, &q)?;
     require_instance_admin(&caller)?;
-    let email = payload["email"].as_str().unwrap_or("").trim().to_lowercase();
     let role = payload["instance_role"].as_str().unwrap_or("member");
     if !["admin", "member"].contains(&role) {
         return Err(err(StatusCode::BAD_REQUEST, "instance_role must be 'admin' or 'member'"));
     }
+    if payload["link"].as_bool() == Some(true) {
+        let mut link = state.hub.store.create_invite_link(
+            Some(&caller.username),
+            role,
+            INVITE_LINK_TTL_SECS,
+        );
+        let token = link["token"].as_str().unwrap_or_default();
+        link["url"] = json!(join_url(&state, token));
+        return Ok(Json(link));
+    }
+    let email = payload["email"].as_str().unwrap_or("").trim().to_lowercase();
     if state.hub.store.user_by_email(&email).is_some() {
         return Err(err(StatusCode::CONFLICT, "That email already has an account"));
     }
@@ -636,6 +726,8 @@ async fn create_invite(
     Ok(Json(invite))
 }
 
+/// Revoke a pending invite: the path segment is an email for address
+/// invites, or a link token (no '@') for link invites.
 async fn revoke_invite(
     State(state): State<AppState>,
     Path(email): Path<String>,
@@ -644,7 +736,27 @@ async fn revoke_invite(
 ) -> Result<Json<Value>, ApiError> {
     let caller = require_user(&state, &headers, &q)?;
     require_instance_admin(&caller)?;
-    Ok(Json(json!({"ok": state.hub.store.delete_invite(&email)})))
+    let ok = if email.contains('@') {
+        state.hub.store.delete_invite(&email)
+    } else {
+        state.hub.store.delete_invite_link(&email)
+    };
+    Ok(Json(json!({"ok": ok})))
+}
+
+/// Landing for a shared invite link: bounce to the web UI with the token in
+/// the fragment; the auth gate carries it through sign-in. Expired or used
+/// links land with an explanatory error instead.
+async fn join_link(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Response {
+    let target = if state.hub.store.valid_invite_link(&token).is_some() {
+        format!("/#join={}", crate::auth::urlencode(&token))
+    } else {
+        "/#auth_error=invite_invalid".to_string()
+    };
+    (StatusCode::FOUND, [("location", target)]).into_response()
 }
 
 /// The caller's groups only; instance admins (the operator) see all.
@@ -654,11 +766,11 @@ async fn list_groups(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
-    let groups: Vec<Value> = state
+    let mine: Vec<Value> = state
         .hub
         .store
         .list_groups()
-        .iter()
+        .into_iter()
         .filter(|g| {
             user.instance_admin
                 || state
@@ -666,6 +778,11 @@ async fn list_groups(
                     .store
                     .user_in_group(&user.username, g["id"].as_str().unwrap_or_default())
         })
+        .collect();
+    // The caller's personal order (their reorder drags), not the global one.
+    let prefs = state.hub.store.user_prefs(&user.username, "group");
+    let groups: Vec<Value> = overlay_prefs(mine, &prefs)
+        .iter()
         .map(|g| group_payload(&state, g, &user))
         .collect();
     Ok(Json(json!({"groups": groups})))
@@ -692,7 +809,8 @@ async fn create_group(
 }
 
 /// Update a group's presentation flags — today just `hidden`, which tucks
-/// the group away in clients' sidebars without touching its data.
+/// the group away in *the caller's* sidebar (a personal pref, so any member
+/// may set it) without touching its data.
 async fn update_group(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
@@ -701,16 +819,15 @@ async fn update_group(
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
-    group_or_404(&state, &group_id)?;
-    require_group_admin(&state, &user, &group_id)?;
+    let group = group_or_404(&state, &group_id)?;
+    require_member(&state, &user, &group_id)?;
     let Some(hidden) = payload["hidden"].as_bool() else {
         return Err(err(StatusCode::BAD_REQUEST, "hidden (bool) required"));
     };
-    let group = state
+    state
         .hub
         .store
-        .set_group_hidden(&group_id, hidden)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown group"))?;
+        .set_pref_hidden(&user.username, "group", &group_id, hidden);
     Ok(Json(group_payload(&state, &group, &user)))
 }
 
@@ -757,7 +874,6 @@ async fn update_channel(
     if channel["group_id"] != group_id.as_str() {
         return Err(err(StatusCode::NOT_FOUND, "Channel not in this group"));
     }
-    require_group_admin(&state, &user, &group_id)?;
     let name = match payload.get("name").and_then(Value::as_str) {
         Some(n) => {
             let n = n.trim();
@@ -773,23 +889,42 @@ async fn update_channel(
         .and_then(Value::as_str)
         .map(|t| t.trim().to_string());
     let hidden = payload.get("hidden").and_then(Value::as_bool);
-    let updated = state
-        .hub
-        .store
-        .update_channel(&channel_id, name.as_deref(), topic.as_deref(), hidden)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown channel"))?;
+    // Rename/topic edit the shared channel (group admins); hiding is the
+    // caller's personal sidebar pref (any member).
+    if name.is_some() || topic.is_some() {
+        require_group_admin(&state, &user, &group_id)?;
+    } else {
+        require_member(&state, &user, &group_id)?;
+    }
+    if let Some(h) = hidden {
+        state
+            .hub
+            .store
+            .set_pref_hidden(&user.username, "channel", &channel_id, h);
+    }
+    let mut updated = if name.is_some() || topic.is_some() {
+        state
+            .hub
+            .store
+            .update_channel(&channel_id, name.as_deref(), topic.as_deref(), None)
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown channel"))?
+    } else {
+        channel_or_404(&state, &channel_id)?
+    };
+    let prefs = state.hub.store.user_prefs(&user.username, "channel");
+    updated["hidden"] = json!(prefs.get(channel_id.as_str()).map(|p| p.0).unwrap_or(false));
     Ok(Json(updated))
 }
 
-/// Sidebar ordering is shared, presentational state; any signed-in user may
-/// adjust it (real per-user ordering is a client concern later).
+/// Sidebar ordering is a personal pref: the drag order lands in the
+/// caller's own prefs, nobody else's sidebar moves.
 async fn reorder_groups(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_user(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let ids: Vec<String> = payload["ids"]
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
@@ -797,7 +932,7 @@ async fn reorder_groups(
     if ids.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "ids array required"));
     }
-    state.hub.store.reorder_groups(&ids);
+    state.hub.store.set_pref_positions(&user.username, "group", &ids);
     Ok(Json(json!({"ok": true})))
 }
 
@@ -818,7 +953,7 @@ async fn reorder_channels(
     if ids.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "ids array required"));
     }
-    state.hub.store.reorder_channels(&group_id, &ids);
+    state.hub.store.set_pref_positions(&user.username, "channel", &ids);
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1022,11 +1157,21 @@ async fn search(
     }
     // Channel/group name matches only make sense with a text query, and are
     // irrelevant to an attachment filter — skip them when browsing files.
+    // Their `hidden` badge reflects the caller's own sidebar prefs (keep the
+    // relevance order — no positional overlay here).
+    let personal_hidden = |mut hits: Vec<Value>, kind: &str| -> Vec<Value> {
+        let prefs = store.user_prefs(&user.username, kind);
+        for h in &mut hits {
+            let id = h["id"].as_str().unwrap_or_default();
+            h["hidden"] = json!(prefs.get(id).map(|p| p.0).unwrap_or(false));
+        }
+        hits
+    };
     if want("channels") && !query.is_empty() {
-        out["channels"] = json!(store.search_channels(query, scope_user, 20));
+        out["channels"] = json!(personal_hidden(store.search_channels(query, scope_user, 20), "channel"));
     }
     if want("groups") && !query.is_empty() {
-        out["groups"] = json!(store.search_groups(query, scope_user, 20));
+        out["groups"] = json!(personal_hidden(store.search_groups(query, scope_user, 20), "group"));
     }
     Ok(Json(out))
 }
@@ -2149,10 +2294,15 @@ async fn unregister_push_token(
 
 /// Resolve a provider-verified email to a workspace account and mint its
 /// session. Existing user → sign in (unless disabled). No user but a pending
-/// invite (or a spot on the config allowlists, the pre-account gate) → the
-/// account is created on first sign-in. Anything else is rejected —
-/// possession of a Google/Apple account grants nothing by itself.
-fn signin_session_for_email(state: &AppState, email: &str) -> Result<String, &'static str> {
+/// invite, a valid invite-link token, or a spot on the config allowlists
+/// (the pre-account gate) → the account is created on first sign-in.
+/// Anything else is rejected — possession of a Google/Apple account grants
+/// nothing by itself.
+fn signin_session_for_email(
+    state: &AppState,
+    email: &str,
+    link_token: Option<&str>,
+) -> Result<String, &'static str> {
     let store = &state.hub.store;
     if let Some(user) = store.user_by_email(email) {
         if user["disabled"].as_bool().unwrap_or(false) {
@@ -2163,6 +2313,7 @@ fn signin_session_for_email(state: &AppState, email: &str) -> Result<String, &'s
         return Ok(crate::auth::mint_session(username, version, &state.config.session_secret()));
     }
     let invite = store.pending_invite(email);
+    let link = link_token.and_then(|t| store.valid_invite_link(t));
     let allowlisted = {
         let snap = state.config.snapshot();
         let email = email.trim().to_lowercase();
@@ -2171,15 +2322,25 @@ fn signin_session_for_email(state: &AppState, email: &str) -> Result<String, &'s
             .chain(snap.apple_allowed_emails.iter())
             .any(|e| e.trim().to_lowercase() == email)
     };
-    if invite.is_none() && !allowlisted {
+    if invite.is_none() && link.is_none() && !allowlisted {
         return Err("no_access");
     }
     let base = email.split('@').next().unwrap_or("user");
     let username = store.unique_username(base);
+    // An email invite's role wins over a link's (it names this person).
     let role = invite
         .as_ref()
+        .or(link.as_ref())
         .and_then(|i| i["instance_role"].as_str().map(str::to_string))
         .unwrap_or_else(|| "member".to_string());
+    if invite.is_none() && !allowlisted {
+        // Admission rests on the link alone: consume it *before* creating
+        // the account. The UPDATE's guard is atomic, so a raced second
+        // sign-in on the same link loses and is rejected here.
+        if !store.use_invite_link(link_token.unwrap_or(""), &username) {
+            return Err("no_access");
+        }
+    }
     let user = store
         .create_user(&username, base, Some(email), &role)
         .ok_or("no_access")?;
@@ -2276,7 +2437,10 @@ async fn google_start(
     if next != "/" && !crate::auth::allowed_next(&next) {
         return err(StatusCode::BAD_REQUEST, "next target is not allowed").into_response();
     }
-    let oauth_state = crate::auth::encode_state(&next);
+    // An invite-link token rides through the OAuth round-trip in the state;
+    // it is validated at redeem time, after the email is verified.
+    let invite = q.get("invite").map(String::as_str).unwrap_or("");
+    let oauth_state = crate::auth::encode_state(&next, invite);
     let redirect_uri = oauth_redirect_uri(&state, &headers);
     // `?select_account=1` lets a client force the account chooser (e.g. a
     // retry after the allowlist rejected the silently-reused account).
@@ -2362,7 +2526,8 @@ async fn google_callback(
             return land_err("token");
         }
     };
-    let session = match signin_session_for_email(&state, &email) {
+    let invite = crate::auth::invite_from_state(&state_param);
+    let session = match signin_session_for_email(&state, &email, invite.as_deref()) {
         Ok(session) => session,
         Err(reason) => {
             tracing::warn!("google sign-in: {email} rejected: {reason}");
@@ -2402,12 +2567,14 @@ async fn apple_signin(
     if identity_token.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "identity_token is required"));
     }
+    // Native clients pass an invite-link token alongside the identity token.
+    let invite = body["invite_token"].as_str().map(str::to_string);
     let verified = tokio::task::spawn_blocking(move || {
         crate::auth::verify_apple_token(&identity_token, &ac)
     })
     .await;
     match verified {
-        Ok(Ok(email)) => match signin_session_for_email(&state, &email) {
+        Ok(Ok(email)) => match signin_session_for_email(&state, &email, invite.as_deref()) {
             Ok(session) => {
                 tracing::info!("apple sign-in: {email} accepted");
                 Ok(Json(json!({"token": session})))
@@ -2618,32 +2785,32 @@ mod tests {
         let store = &state.hub.store;
 
         // Unknown email: rejected outright.
-        assert_eq!(signin_session_for_email(&state, "rando@x.io"), Err("no_access"));
+        assert_eq!(signin_session_for_email(&state, "rando@x.io", None), Err("no_access"));
 
         // Existing account: signs in as that user.
         store.create_user("ana", "Ana", Some("ana@x.io"), "member").unwrap();
-        let token = signin_session_for_email(&state, "ana@x.io").unwrap();
+        let token = signin_session_for_email(&state, "ana@x.io", None).unwrap();
         assert_eq!(authed_user(&state, &token).unwrap().username, "ana");
 
         // Disabled account: rejected.
         store.set_user_disabled("ana", true);
-        assert_eq!(signin_session_for_email(&state, "ana@x.io"), Err("disabled"));
+        assert_eq!(signin_session_for_email(&state, "ana@x.io", None), Err("disabled"));
 
         // Pending invite: first sign-in creates the account with the invited
         // role and consumes the invite.
         store.create_invite("bob@x.io", Some("ana"), "admin").unwrap();
-        let token = signin_session_for_email(&state, "bob@x.io").unwrap();
+        let token = signin_session_for_email(&state, "bob@x.io", None).unwrap();
         let bob = authed_user(&state, &token).unwrap();
         assert_eq!(bob.username, "bob");
         assert!(bob.instance_admin);
         assert!(store.pending_invite("bob@x.io").is_none());
         // Signing in again reuses the account rather than minting another.
-        let again = signin_session_for_email(&state, "bob@x.io").unwrap();
+        let again = signin_session_for_email(&state, "bob@x.io", None).unwrap();
         assert_eq!(authed_user(&state, &again).unwrap().username, "bob");
 
         // Config allowlist (the pre-account gate) still admits, as a member.
         state.config.update(|c| c.google_allowed_emails = vec!["carol@x.io".into()]);
-        let token = signin_session_for_email(&state, "carol@x.io").unwrap();
+        let token = signin_session_for_email(&state, "carol@x.io", None).unwrap();
         let carol = authed_user(&state, &token).unwrap();
         assert_eq!(carol.username, "carol");
         assert!(!carol.instance_admin);
@@ -2791,5 +2958,157 @@ mod tests {
         assert_eq!(attachment_mime(b"\xff\xd8\xff\xe0rest", "image/png"), "image/jpeg");
         // Non-images keep the declared type, parameters stripped.
         assert_eq!(attachment_mime(b"%PDF-1.7", "application/pdf; name=x"), "application/pdf");
+    }
+
+    /// Auth headers for a freshly minted session of `username`.
+    fn session_headers(state: &AppState, username: &str) -> HeaderMap {
+        let v = state.hub.store.user(username).unwrap()["session_version"]
+            .as_i64()
+            .unwrap();
+        let token = crate::auth::mint_session(username, v, &state.config.session_secret());
+        let mut h = HeaderMap::new();
+        h.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        h
+    }
+
+    #[tokio::test]
+    async fn hide_and_reorder_are_per_user_rename_stays_admin() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("boss", "", None, "member").unwrap();
+        store.create_user("ana", "", None, "member").unwrap();
+        let g = store.create_group("Team", "", Some("boss"));
+        let gid = g["id"].as_str().unwrap().to_string();
+        store.add_member(&gid, "user", "ana", "member", None);
+        let c = store.create_channel(&gid, "general", "");
+        let cid = c["id"].as_str().unwrap().to_string();
+        let boss = session_headers(&state, "boss");
+        let ana = session_headers(&state, "ana");
+        let q = || Query(HashMap::new());
+
+        // A plain member hides the group — for themselves only.
+        let res = update_group(
+            State(state.clone()),
+            Path(gid.clone()),
+            q(),
+            ana.clone(),
+            Json(json!({"hidden": true})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["hidden"], true);
+        let mine = list_groups(State(state.clone()), q(), ana.clone()).await.unwrap();
+        assert_eq!(mine.0["groups"][0]["hidden"], true);
+        let theirs = list_groups(State(state.clone()), q(), boss.clone()).await.unwrap();
+        assert_eq!(theirs.0["groups"][0]["hidden"], false);
+
+        // Channel hide: same story, and the admin's view keeps it visible.
+        let res = update_channel(
+            State(state.clone()),
+            Path((gid.clone(), cid.clone())),
+            q(),
+            ana.clone(),
+            Json(json!({"hidden": true})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["hidden"], true);
+        let theirs = list_groups(State(state.clone()), q(), boss.clone()).await.unwrap();
+        assert_eq!(theirs.0["groups"][0]["channels"][0]["hidden"], false);
+
+        // Renaming edits the shared channel: members are refused.
+        let refused = update_channel(
+            State(state.clone()),
+            Path((gid.clone(), cid.clone())),
+            q(),
+            ana.clone(),
+            Json(json!({"name": "hijacked"})),
+        )
+        .await;
+        assert!(refused.is_err());
+
+        // Reordering writes the caller's own positions.
+        let c2 = store.create_channel(&gid, "alpha", "");
+        let c2id = c2["id"].as_str().unwrap().to_string();
+        let _ = reorder_channels(
+            State(state.clone()),
+            Path(gid.clone()),
+            q(),
+            ana.clone(),
+            Json(json!({"ids": [c2id.clone(), cid.clone()]})),
+        )
+        .await
+        .unwrap();
+        let mine = list_groups(State(state.clone()), q(), ana.clone()).await.unwrap();
+        assert_eq!(mine.0["groups"][0]["channels"][0]["id"], c2id.as_str());
+        // The admin keeps the store's (creation) order.
+        let theirs = list_groups(State(state.clone()), q(), boss).await.unwrap();
+        assert_eq!(theirs.0["groups"][0]["channels"][0]["id"], cid.as_str());
+    }
+
+    #[tokio::test]
+    async fn update_me_renames_self_and_cannot_escalate() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("ana", "Ana", None, "member").unwrap();
+        let ana = session_headers(&state, "ana");
+        let q = || Query(HashMap::new());
+
+        let res = update_me(
+            State(state.clone()),
+            q(),
+            ana.clone(),
+            // Smuggled admin fields must be ignored — only display_name is
+            // self-service.
+            Json(json!({"display_name": "  Ana Banana  ", "instance_role": "admin", "disabled": false})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["display_name"], "Ana Banana");
+        let row = store.user("ana").unwrap();
+        assert_eq!(row["display_name"], "Ana Banana");
+        assert_eq!(row["instance_role"], "member");
+
+        // Blank clears back to the username.
+        let res = update_me(State(state.clone()), q(), ana, Json(json!({"display_name": ""})))
+            .await
+            .unwrap();
+        assert_eq!(res.0["display_name"], "ana");
+        assert_eq!(store.user("ana").unwrap()["display_name"], "");
+    }
+
+    #[test]
+    fn signin_accepts_a_valid_link_token_once() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+
+        let link = store.create_invite_link(Some("boss"), "member", 3600.0);
+        let token = link["token"].as_str().unwrap().to_string();
+
+        // Without the token the email is a stranger.
+        assert_eq!(signin_session_for_email(&state, "dave@x.io", None), Err("no_access"));
+        // With it, the account is created with the link's role and the link
+        // is consumed.
+        let session = signin_session_for_email(&state, "dave@x.io", Some(&token)).unwrap();
+        let dave = authed_user(&state, &session).unwrap();
+        assert_eq!(dave.username, "dave");
+        assert!(!dave.instance_admin);
+        assert_eq!(store.invite_link(&token).unwrap()["used_by"], "dave");
+
+        // Single-use: the next stranger is turned away…
+        assert_eq!(
+            signin_session_for_email(&state, "eve@x.io", Some(&token)),
+            Err("no_access")
+        );
+        // …but the admitted user keeps signing in without it.
+        assert!(signin_session_for_email(&state, "dave@x.io", None).is_ok());
+
+        // Expired links admit nobody.
+        let stale = store.create_invite_link(None, "member", -1.0);
+        let stale_token = stale["token"].as_str().unwrap();
+        assert_eq!(
+            signin_session_for_email(&state, "late@x.io", Some(stale_token)),
+            Err("no_access")
+        );
     }
 }

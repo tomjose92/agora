@@ -130,26 +130,36 @@ function ChannelRow({ group, channel }: { group: Group; channel: Channel }) {
   };
 
   const onLongPress = () => {
-    if (!admin) return;
+    // Hiding is a personal sidebar pref (anyone); rename/topic/delete edit
+    // the shared channel (group admins only).
     const buttons: {
       text: string;
       style?: "cancel" | "destructive" | "default";
       onPress?: () => void;
-    }[] = [
-      { text: "Rename", onPress: () => { setManaging(true); setEditing("name"); } },
-      { text: "Edit topic", onPress: () => { setManaging(true); setEditing("topic"); } },
-      {
-        text: "Hide channel",
-        onPress: () =>
-          updateChannel.mutate(
-            { groupId: group.id, channelId: channel.id, hidden: true },
-            { onError: (e) => toastErr("Hide failed", e) },
-          ),
-      },
-      { text: "Delete channel", style: "destructive", onPress: confirmDelete },
-      { text: "Cancel", style: "cancel" },
-    ];
-    Alert.alert(`#${channel.name}`, "Hiding tucks it into the Hidden section; nothing is deleted.", buttons);
+    }[] = [];
+    if (admin) {
+      buttons.push(
+        { text: "Rename", onPress: () => { setManaging(true); setEditing("name"); } },
+        { text: "Edit topic", onPress: () => { setManaging(true); setEditing("topic"); } },
+      );
+    }
+    buttons.push({
+      text: "Hide channel",
+      onPress: () =>
+        updateChannel.mutate(
+          { groupId: group.id, channelId: channel.id, hidden: true },
+          { onError: (e) => toastErr("Hide failed", e) },
+        ),
+    });
+    if (admin) {
+      buttons.push({ text: "Delete channel", style: "destructive", onPress: confirmDelete });
+    }
+    buttons.push({ text: "Cancel", style: "cancel" });
+    Alert.alert(
+      `#${channel.name}`,
+      "Hiding tucks it into your Hidden section; nothing is deleted and nobody else's list changes.",
+      buttons,
+    );
   };
 
   return (
@@ -252,21 +262,21 @@ function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean 
           }),
       },
     ];
+    buttons.push({
+      text: "Hide group",
+      onPress: () =>
+        setGroupHidden.mutate(
+          { groupId: group.id, hidden: true },
+          { onError: (e) => toastErr("Hide failed", e) },
+        ),
+    });
     if (admin) {
-      buttons.push({
-        text: "Hide group",
-        onPress: () =>
-          setGroupHidden.mutate(
-            { groupId: group.id, hidden: true },
-            { onError: (e) => toastErr("Hide failed", e) },
-          ),
-      });
       buttons.push({ text: "Delete group", style: "destructive", onPress: confirmDelete });
     }
     buttons.push({ text: "Cancel", style: "cancel" });
     Alert.alert(
       group.name,
-      admin ? "Hiding tucks it into the Hidden section; nothing is deleted." : undefined,
+      "Hiding tucks it into your Hidden section; nothing is deleted and nobody else's list changes.",
       buttons,
     );
   };
@@ -346,19 +356,18 @@ function HiddenSection({ groups }: { groups: Group[] }) {
               <Text style={styles.hiddenName} numberOfLines={1}>
                 {g.name}
               </Text>
-              {isGroupAdmin(g) ? (
-                <Pressable
-                  hitSlop={10}
-                  onPress={() =>
-                    setGroupHidden.mutate(
-                      { groupId: g.id, hidden: false },
-                      { onError: (e) => toastErr("Show failed", e) },
-                    )
-                  }
-                >
-                  <Icon icon={Eye} size={17} color={colors.a1} />
-                </Pressable>
-              ) : null}
+              {/* Un-hiding is a personal pref — everyone gets the eye. */}
+              <Pressable
+                hitSlop={10}
+                onPress={() =>
+                  setGroupHidden.mutate(
+                    { groupId: g.id, hidden: false },
+                    { onError: (e) => toastErr("Show failed", e) },
+                  )
+                }
+              >
+                <Icon icon={Eye} size={17} color={colors.a1} />
+              </Pressable>
             </View>
           ))
         : null}
@@ -380,19 +389,17 @@ function HiddenSection({ groups }: { groups: Group[] }) {
                   <Text style={styles.hiddenGroupSuffix}> · {group.name}</Text>
                 </Text>
               </Pressable>
-              {isGroupAdmin(group) ? (
-                <Pressable
-                  hitSlop={10}
-                  onPress={() =>
-                    updateChannel.mutate(
-                      { groupId: group.id, channelId: channel.id, hidden: false },
-                      { onError: (e) => toastErr("Show failed", e) },
-                    )
-                  }
-                >
-                  <Icon icon={Eye} size={17} color={colors.a1} />
-                </Pressable>
-              ) : null}
+              <Pressable
+                hitSlop={10}
+                onPress={() =>
+                  updateChannel.mutate(
+                    { groupId: group.id, channelId: channel.id, hidden: false },
+                    { onError: (e) => toastErr("Show failed", e) },
+                  )
+                }
+              >
+                <Icon icon={Eye} size={17} color={colors.a1} />
+              </Pressable>
             </View>
           ))
         : null}
