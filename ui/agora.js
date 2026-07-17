@@ -578,6 +578,9 @@ function agoToggleUnreadsOnly() {
 function agoDrawSide() {
   const box = document.getElementById("agora-side");
   if (!box) return;
+  // Preserve scroll across full redraws (clicking a channel rebuilds the
+  // sidebar via innerHTML, which would otherwise jump back to the top).
+  const prevTop = box.querySelector(".ago-groups")?.scrollTop || 0;
   const groupRows = _agoGroups.filter(g => !g.hidden).map(g => {
     const open = agoIsExpanded(g.id);
     const sel = g.id === _agoSel.g;
@@ -718,6 +721,8 @@ function agoDrawSide() {
       '<div class="dim" style="padding:10px 12px;font-size:12px">No groups yet — create one to start chatting.</div>'}</div>
     ${hiddenSection}
     <div class="ago-side-foot">${addGroup}</div>`;
+  const groupsEl = box.querySelector(".ago-groups");
+  if (groupsEl) groupsEl.scrollTop = prevTop;
   const input = document.getElementById("ago-new-group") || document.getElementById("ago-new-channel");
   if (input) input.focus();
 }
