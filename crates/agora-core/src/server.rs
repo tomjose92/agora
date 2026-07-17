@@ -2120,13 +2120,13 @@ async fn register_push_token(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    require_user(&state, &headers, &q)?;
+    let user = require_user(&state, &headers, &q)?;
     let token = payload["token"].as_str().unwrap_or("").trim().to_string();
     if !valid_expo_push_token(&token) {
         return Err(err(StatusCode::BAD_REQUEST, "Invalid Expo push token"));
     }
     let platform = payload["platform"].as_str().unwrap_or("").trim().to_string();
-    state.hub.store.upsert_push_token(&token, &platform);
+    state.hub.store.upsert_push_token(&user.username, &token, &platform);
     Ok(Json(json!({"ok": true})))
 }
 
