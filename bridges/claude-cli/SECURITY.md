@@ -86,6 +86,12 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
      and requests still pending when a run dies are denied and their buttons
      locked, so a stale button can never answer a later run (ids are keyed by
      the CLI's per-request uuid).
+   - **`AskUserQuestion` bypasses the Approve/Reject step by design**: it has no
+     side effects (answering only feeds text back to the model), so the bridge
+     renders the questions directly and returns the selection. The trust
+     posture matches approvals — any channel member can tap an option or answer
+     with a typed reply, and that text enters the model's context like any
+     other channel message.
 
 8. **Bounded memory DoS on large output.** The subprocess stdout limit is 64 MB
    (raised from asyncio's 64 KB default so `stream-json` lines carrying whole
