@@ -33,6 +33,8 @@
       background: var(--panel); border: 1px solid var(--border);
       border-radius: 12px; padding: 18px 20px; margin: 14px 0;
     }
+    .card p:first-child { margin-top: 0; }
+    .card p:last-child { margin-bottom: 0; }
     footer { margin-top: 56px; color: var(--dim); font-size: 14px; border-top: 1px solid var(--border); padding-top: 20px; }
     code { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; font-size: 14px; }
   </style>
@@ -64,12 +66,74 @@
     </p>
   </div>
 
+  <h2>Frequently asked questions</h2>
+
+  <div class="card">
+    <p><strong>How do I sign in?</strong></p>
+    <p style="margin-bottom: 0;">
+      You need an account on an Agora server. An admin can invite you by email
+      or send you an invite link; you can then sign in with Apple, Google, or
+      your username. If you run the server yourself, use the admin key printed
+      in the server's log for first-time setup.
+    </p>
+  </div>
+
+  <div class="card">
+    <p><strong>What do I enter as the server address?</strong></p>
+    <p style="margin-bottom: 0;">
+      The URL of the Agora server you were invited to — for example
+      <code>https://agora.example.com</code>. The app is a client only; there
+      is no central Agora service. If you don't know the address, ask whoever
+      invited you.
+    </p>
+  </div>
+
+  <div class="card">
+    <p><strong>How do AI agents work?</strong></p>
+    <p style="margin-bottom: 0;">
+      Agents connect to your server and join rooms like any other member. You
+      can mention them, chat with them in channels or threads, and they reply
+      in place. Which agents are available is decided by your server's
+      operator — see the <a href="https://github.com/tomjose92/agora#readme">README</a>
+      for how to connect one.
+    </p>
+  </div>
+
+  <div class="card">
+    <p><strong>Why does the app ask for microphone or photo access?</strong></p>
+    <p style="margin-bottom: 0;">
+      The microphone is used only when you record a voice message or use live
+      voice; the photo library and camera only when you attach an image to a
+      message. Nothing is accessed in the background.
+    </p>
+  </div>
+
+  <div class="card">
+    <p><strong>I'm not receiving notifications.</strong></p>
+    <p style="margin-bottom: 0;">
+      Check that notifications are allowed for Agora in iOS Settings, and that
+      you are signed in to your server. Push notifications are sent by your
+      server, so if it is offline or unreachable, notifications stop too.
+    </p>
+  </div>
+
+  <div class="card">
+    <p><strong>Where is my data stored, and how do I delete it?</strong></p>
+    <p style="margin-bottom: 0;">
+      Everything lives on the Agora server you connect to — the developer
+      operates no backend and collects nothing. To erase your account and all
+      of its data, use <strong>Settings&nbsp;&rarr;&nbsp;Delete account</strong>
+      in the app. Details are in the <a href="privacy.html">privacy policy</a>.
+    </p>
+  </div>
+
   <h2>Support</h2>
   <p>
-    Questions, bug reports and feature requests are handled on GitHub:
+    Questions, bug reports and feature requests:
   </p>
   <ul>
-    <li><a href="https://github.com/tomjose92/agora/issues">Open an issue</a> — the fastest way to get help.</li>
+    <li>Email <a href="mailto:tomjose92@gmail.com">tomjose92@gmail.com</a> — for account or App Store questions.</li>
+    <li><a href="https://github.com/tomjose92/agora/issues">Open an issue on GitHub</a> — for bugs and feature requests.</li>
     <li><a href="https://github.com/tomjose92/agora#readme">Read the documentation</a> — setup, notifications, connecting agents.</li>
   </ul>
 
