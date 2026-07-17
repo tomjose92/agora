@@ -7,7 +7,7 @@
 import React, { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Link, Stack, useLocalSearchParams } from "expo-router";
-import { ChevronLeft, ChevronRight, User } from "lucide-react-native";
+import { ChevronLeft, ChevronRight, User, X } from "lucide-react-native";
 import {
   useAddMember,
   useAgents,
@@ -77,6 +77,58 @@ function MemberRow({
       {admin || isSelf ? (
         <ArmedButton label={isSelf ? "Leave" : "Remove"} onConfirm={onRemove} />
       ) : null}
+    </View>
+  );
+}
+
+/* One row per agent: an agent scoped to several channels comes back as
+   several membership rows, so they arrive collapsed here with every scope
+   rendered as a tag. Admins can drop one scope from its tag, or remove the
+   agent from every scope at once. */
+function AgentMemberRow({
+  memberId,
+  name,
+  scopes,
+  channelName,
+  offline,
+  admin,
+  onRemoveScope,
+  onRemoveAll,
+}: {
+  memberId: string;
+  name: string;
+  scopes: Member[];
+  channelName: (id: string | null) => string | null;
+  offline: boolean;
+  admin: boolean;
+  onRemoveScope: (m: Member) => void;
+  onRemoveAll: () => void;
+}) {
+  return (
+    <View style={styles.row}>
+      <AgentAvatar agentId={memberId} size={26} />
+      <View style={{ flex: 1, gap: 3 }}>
+        <Text style={styles.name}>{name}</Text>
+        <Text style={styles.meta}>
+          member
+          {offline ? <Text style={styles.offline}> · offline — won't reply</Text> : null}
+        </Text>
+        <View style={styles.tagRow}>
+          {scopes.map((s) => (
+            <View key={s.channel_id ?? "group"} style={styles.tag}>
+              <Text style={styles.tagText}>
+                {s.channel_id ? `# ${channelName(s.channel_id)}` : "Whole group"}
+              </Text>
+              {admin ? (
+                <Pressable hitSlop={8} onPress={() => onRemoveScope(s)}>
+                  <Icon icon={X} size={12} color={colors.dim} />
+                </Pressable>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      </View>
+      {admin ? <ArmedButton label="Remove" onConfirm={onRemoveAll} /> : null}
     </View>
   );
 }
@@ -265,6 +317,17 @@ export default function MembersScreen() {
   const people = (members.data ?? []).filter((m) => m.member_type === "user");
   const agentMembers = (members.data ?? []).filter((m) => m.member_type === "agent");
 
+  /* Collapse an agent's per-channel membership rows into one entry. */
+  const agentGroups = useMemo(() => {
+    const byId = new Map<string, Member[]>();
+    for (const m of (members.data ?? []).filter((x) => x.member_type === "agent")) {
+      const list = byId.get(m.member_id);
+      if (list) list.push(m);
+      else byId.set(m.member_id, [m]);
+    }
+    return [...byId.entries()].map(([id, scopes]) => ({ id, scopes }));
+  }, [members.data]);
+
   /* Desktop lists every known agent in the picker (an agent can be scoped to
      several channels); only hide the ones that already listen group-wide. */
   const groupWide = new Set(
@@ -324,6 +387,22 @@ export default function MembersScreen() {
       { onError: (e) => toastErr("Remove failed", e) },
     );
 
+  /* The API deletes one (member, channel) pair per call, so removing an
+     agent entirely means one DELETE per scope. */
+  const removeAgentEverywhere = async (scopes: Member[]) => {
+    try {
+      for (const m of scopes) {
+        await removeMember.mutateAsync({
+          member_type: "agent",
+          member_id: m.member_id,
+          channel_id: m.channel_id,
+        });
+      }
+    } catch (e) {
+      toastErr("Remove failed", e);
+    }
+  };
+
   return (
     <>
       <Stack.Screen
@@ -365,14 +444,17 @@ export default function MembersScreen() {
         ) : null}
 
         <Text style={styles.section}>Agents</Text>
-        {agentMembers.map((m) => (
-          <MemberRow
-            key={`agent:${m.member_id}:${m.channel_id ?? ""}`}
-            member={m}
-            channelName={channelName(m.channel_id)}
-            offline={liveById.get(m.member_id) === false}
+        {agentGroups.map((g) => (
+          <AgentMemberRow
+            key={`agent:${g.id}`}
+            memberId={g.id}
+            name={g.scopes[0].name || g.id}
+            scopes={g.scopes}
+            channelName={channelName}
+            offline={liveById.get(g.id) === false}
             admin={admin}
-            onRemove={() => remove(m)}
+            onRemoveScope={remove}
+            onRemoveAll={() => void removeAgentEverywhere(g.scopes)}
           />
         ))}
         {members.isSuccess && agentMembers.length === 0 ? (
@@ -457,6 +539,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   scopeText: { color: colors.a1, fontSize: 13.5, fontWeight: "600" },
+  tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 2 },
+  tag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(139,124,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(139,124,255,0.25)",
+    borderRadius: 7,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+  },
+  tagText: { color: colors.a1, fontSize: 12, fontWeight: "600" },
   cancelBtn: { alignItems: "center", paddingVertical: 8 },
   cancelRow: { flexDirection: "row", alignItems: "center", gap: 3 },
   cancelText: { color: colors.dim, fontSize: 13.5, fontWeight: "600" },

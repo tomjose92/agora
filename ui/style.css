@@ -679,6 +679,23 @@ a.btn { text-decoration: none; }
   color: var(--faint); font-size: 11.5px; flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Agent rows: role stays compact so the channel-scope tags get the room. */
+.ago-member .mmeta.short { flex: 0 0 auto; }
+.ago-scope-tags {
+  display: flex; flex-wrap: wrap; gap: 4px; flex: 1; min-width: 0;
+  justify-content: flex-end;
+}
+.ago-scope-tag {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 10.5px; font-weight: 600; color: var(--a1);
+  background: rgba(139,124,255,.12); border: 1px solid rgba(139,124,255,.25);
+  border-radius: 6px; padding: 1px 6px; white-space: nowrap;
+}
+.ago-tag-x {
+  border: none; background: transparent; color: var(--dim); cursor: pointer;
+  padding: 0 0 0 2px; font-size: 10px; line-height: 1; display: inline-flex;
+}
+.ago-tag-x:hover { color: #f87171; }
 .ago-member-add { display: flex; gap: 8px; padding: 4px 14px; align-items: center; flex-wrap: wrap; }
 .ago-head-actions .btn.active { border-color: var(--a1); color: var(--a1); }
 .ago-member-add input, .ago-member-add select {
