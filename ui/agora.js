@@ -596,23 +596,23 @@ function agoDrawSide() {
       // Unreads-only mode: keep unread/mentioned channels, live threads, and
       // whatever is selected so nothing on screen becomes unreachable.
       if (_agoUnreadsOnly && !unread && !mentions && !threadUnread && !active) return "";
-      const del = (g.role === "admin" || isOwner())
-        ? `<button class="ago-x hide" title="Hide #${esc(c.name)} from the sidebar"
-             onclick="event.stopPropagation(); agoSetChannelHidden('${esc(g.id)}','${esc(c.id)}',true)">${icon("eye-off")}</button>
-           <button class="ago-x ${armed ? "armed" : ""}" title="${armed ? "Click again to delete #" + esc(c.name) : "Delete channel"}"
+      // Hiding is a personal sidebar pref (any member); deleting is admin-only.
+      const del = `<button class="ago-x hide" title="Hide #${esc(c.name)} from your sidebar"
+             onclick="event.stopPropagation(); agoSetChannelHidden('${esc(g.id)}','${esc(c.id)}',true)">${icon("eye-off")}</button>` +
+        ((g.role === "admin" || isOwner())
+          ? `<button class="ago-x ${armed ? "armed" : ""}" title="${armed ? "Click again to delete #" + esc(c.name) : "Delete channel"}"
              onclick="event.stopPropagation(); agoDeleteChannel('${esc(g.id)}','${esc(c.id)}')">${armed ? "Sure?" : icon("x")}</button>`
-        : "";
+          : "");
       const threadRows = threads
         .filter(t => !_agoUnreadsOnly || (t.unread || 0) > 0)
         .map(t => {
           const tArmed = agoArmed("thr:" + t.root.id);
           const tRename = `<button class="ago-x" title="Rename this thread"
                  onclick="event.stopPropagation(); agoRenameThread(${t.root.id})">${icon("pencil")}</button>`;
-          const tDel = (g.role === "admin" || isOwner())
-            ? `<button class="ago-x ${tArmed ? "armed" : ""}"
-                 title="${tArmed ? "Click again to remove this thread" : "Remove thread from the sidebar (messages stay in the channel)"}"
-                 onclick="event.stopPropagation(); agoHideThread(${t.root.id})">${tArmed ? "Sure?" : icon("x")}</button>`
-            : "";
+          // Dismissing a thread is per-user server-side — no admin gate.
+          const tDel = `<button class="ago-x ${tArmed ? "armed" : ""}"
+                 title="${tArmed ? "Click again to remove this thread" : "Remove thread from your sidebar (messages stay in the channel)"}"
+                 onclick="event.stopPropagation(); agoHideThread(${t.root.id})">${tArmed ? "Sure?" : icon("x")}</button>`;
           return `
         <div class="ago-side-thread ${t.unread ? "unread" : ""}"
              title="${esc(agoPinSnippet(t.root || {}))}"
@@ -880,8 +880,8 @@ async function agoSetGroupHidden(gid, hidden) {
     await agoLoadGroups();
     agoDrawSide();
     if (_agoGroupPage && _agoSel.g === gid) agoDrawMain();
-    toast(hidden ? `"${g.name}" hidden — find it under Hidden below the groups`
-                 : `"${g.name}" is back in the sidebar`, { variant: "ok" });
+    toast(hidden ? `"${g.name}" hidden for you — find it under Hidden below the groups`
+                 : `"${g.name}" is back in your sidebar`, { variant: "ok" });
   } catch (e) { agoErr(hidden ? "Couldn't hide group" : "Couldn't show group", e); }
 }
 
@@ -896,8 +896,8 @@ async function agoSetChannelHidden(gid, cid, hidden) {
     await agoLoadGroups();
     agoDrawSide();
     if (_agoGroupPage && _agoSel.g === gid) agoDrawMain();
-    toast(hidden ? `#${c.name} hidden — find it under Hidden below the groups`
-                 : `#${c.name} is back in the sidebar`, { variant: "ok" });
+    toast(hidden ? `#${c.name} hidden for you — find it under Hidden below the groups`
+                 : `#${c.name} is back in your sidebar`, { variant: "ok" });
   } catch (e) { agoErr(hidden ? "Couldn't hide channel" : "Couldn't show channel", e); }
 }
 
@@ -944,10 +944,9 @@ function agoDrawGroupPage(box) {
   const chans = (g.channels || []).map(c => {
     const unread = agoUnreadCount(c.id);
     const mentions = agoMentionCount(c.id);
-    const eye = admin
-      ? `<button class="ago-x show" title="${c.hidden ? "Show #" + esc(c.name) + " in the sidebar" : "Hide #" + esc(c.name) + " from the sidebar"}"
-           onclick="event.stopPropagation(); agoSetChannelHidden('${esc(g.id)}','${esc(c.id)}',${c.hidden ? "false" : "true"})">${icon(c.hidden ? "eye" : "eye-off")}</button>`
-      : "";
+    // Hiding is a personal sidebar pref — everyone gets the eye toggle.
+    const eye = `<button class="ago-x show" title="${c.hidden ? "Show #" + esc(c.name) + " in your sidebar" : "Hide #" + esc(c.name) + " from your sidebar"}"
+           onclick="event.stopPropagation(); agoSetChannelHidden('${esc(g.id)}','${esc(c.id)}',${c.hidden ? "false" : "true"})">${icon(c.hidden ? "eye" : "eye-off")}</button>`;
     return `
       <div class="ago-inbox-row ago-gp-chan ${unread || mentions ? "unread" : ""} ${c.hidden ? "is-hidden" : ""}"
            onclick="agoSelectChannel('${esc(g.id)}','${esc(c.id)}')" title="Open #${esc(c.name)}">
@@ -968,13 +967,13 @@ function agoDrawGroupPage(box) {
         <span class="dim">${n} channel${n === 1 ? "" : "s"}</span>
       </div>
       <div class="ago-head-actions">
+        <button class="btn sm" title="${g.hidden
+               ? "Bring this group back into your sidebar"
+               : "Tuck this group away for you — everything stays intact, it just leaves your sidebar"}"
+             onclick="agoSetGroupHidden('${esc(g.id)}',${g.hidden ? "false" : "true"})">
+             ${icon(g.hidden ? "eye" : "eye-off")} ${g.hidden ? "Show group" : "Hide group"}</button>
         ${admin
-          ? `<button class="btn sm" title="${g.hidden
-                 ? "Bring this group back into the sidebar"
-                 : "Tuck this group away — everything stays intact, it just leaves the sidebar"}"
-               onclick="agoSetGroupHidden('${esc(g.id)}',${g.hidden ? "false" : "true"})">
-               ${icon(g.hidden ? "eye" : "eye-off")} ${g.hidden ? "Show group" : "Hide group"}</button>
-             <button class="btn sm danger ${armed ? "armed" : ""}" onclick="agoDeleteGroup('${esc(g.id)}')">
+          ? `<button class="btn sm danger ${armed ? "armed" : ""}" onclick="agoDeleteGroup('${esc(g.id)}')">
                ${armed ? "Sure? This deletes everything" : "Delete group"}</button>`
           : ""}
       </div>

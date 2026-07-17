@@ -1,7 +1,7 @@
 /* Threads inbox: every thread you started or replied in, newest activity
    first, with per-thread unread badges — the mobile take on Slack's
    "Threads" view. Tapping a row opens the thread screen directly;
-   long-pressing lets a group admin remove the row from the inbox. */
+   long-pressing renames it or removes the row from your inbox. */
 
 import React from "react";
 import {
@@ -19,7 +19,6 @@ import {
 import { Stack, router } from "expo-router";
 import { MessagesSquare } from "lucide-react-native";
 import {
-  useGroups,
   useHideThread,
   useRenameThread,
   useThreads,
@@ -39,30 +38,22 @@ function snippet(t: ThreadRow): string {
 
 function Row({
   thread,
-  admin,
   onRename,
 }: {
   thread: ThreadRow;
-  admin: boolean;
   onRename: (t: ThreadRow) => void;
 }) {
   const hideThread = useHideThread();
   const onLongPress = () => {
+    // Removing a thread from the inbox is per-user server-side (the
+    // messages stay in the channel), so anyone may do it.
     const remove = () =>
       hideThread.mutate(thread.root.id, {
         onError: (e) => toastErr("Remove failed", e),
       });
     Alert.alert("Thread", snippet(thread), [
       { text: "Rename…", onPress: () => onRename(thread) },
-      ...(admin
-        ? [
-            {
-              text: "Remove",
-              style: "destructive" as const,
-              onPress: remove,
-            },
-          ]
-        : []),
+      { text: "Remove", style: "destructive" as const, onPress: remove },
       { text: "Cancel", style: "cancel" },
     ]);
   };
@@ -171,11 +162,7 @@ function RenameModal({
 
 export default function ThreadsScreen() {
   const threads = useThreads();
-  const groups = useGroups();
   const [renaming, setRenaming] = React.useState<ThreadRow | null>(null);
-  const adminOf = new Set(
-    (groups.data ?? []).filter((g) => g.role === "admin").map((g) => g.id),
-  );
   return (
     <>
       <Stack.Screen options={{ title: "Threads", headerShown: true }} />
@@ -186,11 +173,7 @@ export default function ThreadsScreen() {
         data={threads.data ?? []}
         keyExtractor={(t) => String(t.root.id)}
         renderItem={({ item }) => (
-          <Row
-            thread={item}
-            admin={adminOf.has(item.group_id)}
-            onRename={setRenaming}
-          />
+          <Row thread={item} onRename={setRenaming} />
         )}
         refreshControl={
           <RefreshControl

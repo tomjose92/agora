@@ -31,22 +31,27 @@ pub struct App {
 /// (memberships, reads, stars, authored messages) is already keyed by that
 /// username, so it carries over untouched.
 pub fn bootstrap_admin_user(config: &config::Config, store: &store::Store) {
-    if !store.list_users().is_empty() {
-        return;
-    }
-    let snapshot = config.snapshot();
-    let email = snapshot
-        .google_allowed_emails
-        .iter()
-        .chain(snapshot.apple_allowed_emails.iter())
-        .map(|e| e.trim().to_lowercase())
-        .find(|e| !e.is_empty());
     let username = config.username();
-    store.create_user(&username, &username, email.as_deref(), "admin");
-    // Device tokens registered before accounts existed belonged to the one
-    // user this instance had — keep their pushes flowing under the new owner.
-    store.claim_unowned_push_tokens(&username);
-    tracing::info!("bootstrapped instance admin account '{username}'");
+    if store.list_users().is_empty() {
+        let snapshot = config.snapshot();
+        let email = snapshot
+            .google_allowed_emails
+            .iter()
+            .chain(snapshot.apple_allowed_emails.iter())
+            .map(|e| e.trim().to_lowercase())
+            .find(|e| !e.is_empty());
+        store.create_user(&username, &username, email.as_deref(), "admin");
+        // Device tokens registered before accounts existed belonged to the one
+        // user this instance had — keep their pushes flowing under the new owner.
+        store.claim_unowned_push_tokens(&username);
+        tracing::info!("bootstrapped instance admin account '{username}'");
+    }
+    // Sidebar hidden/order used to be instance-global columns; copy them to
+    // the migrated admin's personal prefs once, so their sidebar is unchanged.
+    // (No-op after the first boot, and for accounts created post-migration.)
+    if store.user(&username).is_some() {
+        store.seed_prefs_from_globals(&username);
+    }
 }
 
 /// Build the full application state from a data dir and start serving.

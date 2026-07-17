@@ -6,6 +6,7 @@
 //! double as chat ids in agent session keys, so they get a readable
 //! `slug-hex` shape (`fitness-3f2a`).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -159,6 +160,29 @@ CREATE TABLE IF NOT EXISTS invites (
     instance_role TEXT NOT NULL DEFAULT 'member',
     created_at REAL NOT NULL,
     accepted_at REAL
+);
+-- Shareable invite links: single-use, expiring tokens that admit whichever
+-- verified email signs in with them. Used rows are kept for provenance.
+CREATE TABLE IF NOT EXISTS invite_links (
+    token TEXT PRIMARY KEY,
+    invited_by TEXT,
+    instance_role TEXT NOT NULL DEFAULT 'member',
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    used_by TEXT,
+    used_at REAL
+);
+-- Per-user presentation state for the sidebar: hiding and ordering are
+-- personal (like Slack's sidebar), never shared. The legacy global
+-- `hidden`/`position` columns on groups/channels stop being written once
+-- this exists; the boot migration copies them in for the migrated admin.
+CREATE TABLE IF NOT EXISTS user_prefs (
+    username TEXT NOT NULL,
+    kind TEXT NOT NULL,           -- 'group' | 'channel'
+    item_id TEXT NOT NULL,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    position INTEGER,             -- NULL = no manual order for this item
+    PRIMARY KEY (username, kind, item_id)
 );
 -- Full-text index over message text (external content: rows live in
 -- `messages`, the index holds only tokens). Porter stemming so "deploy"
@@ -703,6 +727,88 @@ impl Store {
         }
     }
 
+    // ------------------------------------------------------------- user prefs
+
+    /// One user's sidebar prefs for a kind ('group'/'channel'):
+    /// item_id -> (hidden, manual position).
+    pub fn user_prefs(&self, username: &str, kind: &str) -> HashMap<String, (bool, Option<i64>)> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT item_id, hidden, position FROM user_prefs \
+                 WHERE username = ?1 AND kind = ?2",
+            )
+            .unwrap();
+        stmt.query_map(params![username, kind], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                (r.get::<_, i64>(1)? != 0, r.get::<_, Option<i64>>(2)?),
+            ))
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
+    /// Hide (or restore) one group/channel for one user. Purely personal
+    /// presentation — everyone else's sidebar is untouched.
+    pub fn set_pref_hidden(&self, username: &str, kind: &str, item_id: &str, hidden: bool) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO user_prefs (username, kind, item_id, hidden) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(username, kind, item_id) DO UPDATE SET hidden = excluded.hidden",
+            params![username, kind, item_id, hidden as i64],
+        )
+        .unwrap();
+    }
+
+    /// Persist one user's manual order: each id's position becomes its array
+    /// index. Items without a position sort after, by name.
+    pub fn set_pref_positions(&self, username: &str, kind: &str, ids: &[String]) {
+        let conn = self.conn.lock().unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO user_prefs (username, kind, item_id, position) \
+                 VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(username, kind, item_id) DO UPDATE SET position = excluded.position",
+                params![username, kind, id, i as i64 + 1],
+            )
+            .unwrap();
+        }
+    }
+
+    /// One-time copy of the legacy instance-global `hidden`/`position`
+    /// columns into per-user pref rows for `username` (the migrated
+    /// single-user admin). No-op once the user has any pref rows, so it is
+    /// safe to call on every boot.
+    pub fn seed_prefs_from_globals(&self, username: &str) {
+        let conn = self.conn.lock().unwrap();
+        let has_prefs = conn
+            .query_row(
+                "SELECT 1 FROM user_prefs WHERE username = ?1 LIMIT 1",
+                params![username],
+                |_| Ok(()),
+            )
+            .is_ok();
+        if has_prefs {
+            return;
+        }
+        conn.execute(
+            "INSERT INTO user_prefs (username, kind, item_id, hidden, position) \
+             SELECT ?1, 'group', id, hidden, NULLIF(position, 0) FROM groups \
+             WHERE hidden != 0 OR position != 0",
+            params![username],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO user_prefs (username, kind, item_id, hidden, position) \
+             SELECT ?1, 'channel', id, hidden, NULLIF(position, 0) FROM channels \
+             WHERE hidden != 0 OR position != 0",
+            params![username],
+        )
+        .unwrap();
+    }
+
     pub fn channel(&self, channel_id: &str) -> Option<Value> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
@@ -822,7 +928,7 @@ impl Store {
                 }
                 ids
             };
-            for table in ["stars", "reads", "thread_reads", "thread_hides", "mentions"] {
+            for table in ["stars", "reads", "thread_reads", "thread_hides", "mentions", "user_prefs"] {
                 conn.execute(
                     &format!("DELETE FROM {table} WHERE username = ?1"),
                     params![username],
@@ -1046,6 +1152,18 @@ impl Store {
             > 0
     }
 
+    /// Self-service rename; '' falls back to the username everywhere it is
+    /// displayed.
+    pub fn set_user_display_name(&self, username: &str, display_name: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users SET display_name = ?1 WHERE username = ?2",
+            params![display_name, username],
+        )
+        .unwrap()
+            > 0
+    }
+
     pub fn set_user_instance_role(&self, username: &str, role: &str) -> bool {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -1164,6 +1282,93 @@ impl Store {
         let email = email.trim().to_lowercase();
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM invites WHERE email = ?1", params![email]).unwrap() > 0
+    }
+
+    // --------------------------------------------------------- invite links
+
+    /// Mint a single-use, expiring invite link token. Whoever signs in with
+    /// it (any verified email) gets an account with `role`.
+    pub fn create_invite_link(&self, invited_by: Option<&str>, role: &str, ttl_secs: f64) -> Value {
+        let token = new_token();
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO invite_links (token, invited_by, instance_role, created_at, expires_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![token, invited_by, role, now(), now() + ttl_secs],
+            )
+            .unwrap();
+        }
+        self.invite_link(&token).unwrap_or(Value::Null)
+    }
+
+    pub fn invite_link(&self, token: &str) -> Option<Value> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT token, invited_by, instance_role, created_at, expires_at, used_by, used_at \
+             FROM invite_links WHERE token = ?1",
+            params![token],
+            |r| {
+                Ok(json!({
+                    "token": r.get::<_, String>(0)?,
+                    "invited_by": r.get::<_, Option<String>>(1)?,
+                    "instance_role": r.get::<_, String>(2)?,
+                    "created_at": r.get::<_, f64>(3)?,
+                    "expires_at": r.get::<_, f64>(4)?,
+                    "used_by": r.get::<_, Option<String>>(5)?,
+                    "used_at": r.get::<_, Option<f64>>(6)?,
+                }))
+            },
+        )
+        .ok()
+    }
+
+    /// The link if it can still admit someone (unused and unexpired).
+    pub fn valid_invite_link(&self, token: &str) -> Option<Value> {
+        self.invite_link(token)
+            .filter(|l| l["used_by"].is_null() && l["expires_at"].as_f64().unwrap_or(0.0) > now())
+    }
+
+    /// Consume the link for `username`. The WHERE guard makes redemption
+    /// atomic: two racing sign-ins can't both use the same link.
+    pub fn use_invite_link(&self, token: &str, username: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE invite_links SET used_by = ?1, used_at = ?2 \
+             WHERE token = ?3 AND used_by IS NULL AND expires_at > ?4",
+            params![username, now(), token, now()],
+        )
+        .unwrap()
+            > 0
+    }
+
+    pub fn list_invite_links(&self) -> Vec<Value> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT token, invited_by, instance_role, created_at, expires_at, used_by, used_at \
+                 FROM invite_links ORDER BY created_at DESC",
+            )
+            .unwrap();
+        stmt.query_map([], |r| {
+            Ok(json!({
+                "token": r.get::<_, String>(0)?,
+                "invited_by": r.get::<_, Option<String>>(1)?,
+                "instance_role": r.get::<_, String>(2)?,
+                "created_at": r.get::<_, f64>(3)?,
+                "expires_at": r.get::<_, f64>(4)?,
+                "used_by": r.get::<_, Option<String>>(5)?,
+                "used_at": r.get::<_, Option<f64>>(6)?,
+            }))
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
+    pub fn delete_invite_link(&self, token: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM invite_links WHERE token = ?1", params![token]).unwrap() > 0
     }
 
     // ------------------------------------------------------------- messages
@@ -2908,5 +3113,97 @@ mod tests {
         let got = s.push_tokens_for_channel(cid, None);
         assert!(got.contains(&"ExponentPushToken[legacy]".to_string()));
         assert!(got.contains(&"ExponentPushToken[tom]".to_string()));
+    }
+
+    #[test]
+    fn user_prefs_are_personal_hidden_and_order() {
+        let s = store();
+        let g = s.create_group("Team", "", None);
+        let gid = g["id"].as_str().unwrap();
+        let c1 = s.create_channel(gid, "alpha", "");
+        let c2 = s.create_channel(gid, "beta", "");
+        let (c1, c2) = (c1["id"].as_str().unwrap(), c2["id"].as_str().unwrap());
+
+        // No prefs yet: empty map.
+        assert!(s.user_prefs("tom", "channel").is_empty());
+
+        // Tom hides one channel and orders the pair; Ana sees neither change.
+        s.set_pref_hidden("tom", "channel", c1, true);
+        s.set_pref_positions("tom", "channel", &[c2.to_string(), c1.to_string()]);
+        let tom = s.user_prefs("tom", "channel");
+        assert_eq!(tom[c1], (true, Some(2)));
+        assert_eq!(tom[c2], (false, Some(1)));
+        assert!(s.user_prefs("ana", "channel").is_empty());
+
+        // Un-hiding upserts the same row; ordering survives.
+        s.set_pref_hidden("tom", "channel", c1, false);
+        assert_eq!(s.user_prefs("tom", "channel")[c1], (false, Some(2)));
+
+        // Group prefs live under their own kind.
+        s.set_pref_hidden("tom", "group", gid, true);
+        assert_eq!(s.user_prefs("tom", "group")[gid], (true, None));
+        assert_eq!(s.user_prefs("tom", "channel").len(), 2);
+
+        // Account deletion sweeps prefs with everything else.
+        s.create_user("tom", "", None, "member").unwrap();
+        s.delete_user_data("tom");
+        assert!(s.user_prefs("tom", "channel").is_empty());
+        assert!(s.user_prefs("tom", "group").is_empty());
+    }
+
+    #[test]
+    fn seed_prefs_copies_legacy_globals_once() {
+        let s = store();
+        let g = s.create_group("Team", "", None);
+        let gid = g["id"].as_str().unwrap();
+        let hidden_chan = s.create_channel(gid, "old", "");
+        let hid = hidden_chan["id"].as_str().unwrap();
+        let plain = s.create_channel(gid, "plain", "");
+        let pid = plain["id"].as_str().unwrap();
+        // Legacy state: global hidden flag + global manual order.
+        s.set_group_hidden(gid, true);
+        s.update_channel(hid, None, None, Some(true));
+        s.reorder_channels(gid, &[pid.to_string(), hid.to_string()]);
+
+        s.seed_prefs_from_globals("tom");
+        let groups = s.user_prefs("tom", "group");
+        assert_eq!(groups[gid].0, true);
+        let chans = s.user_prefs("tom", "channel");
+        assert_eq!(chans[hid], (true, Some(2)));
+        assert_eq!(chans[pid], (false, Some(1)));
+
+        // Idempotent: once the user has prefs, later boots leave them alone.
+        s.set_pref_hidden("tom", "group", gid, false);
+        s.seed_prefs_from_globals("tom");
+        assert_eq!(s.user_prefs("tom", "group")[gid].0, false);
+
+        // Other users start clean — the globals were the single admin's view.
+        assert!(s.user_prefs("ana", "group").is_empty());
+    }
+
+    #[test]
+    fn invite_links_are_single_use_and_expire() {
+        let s = store();
+        let link = s.create_invite_link(Some("tom"), "member", 3600.0);
+        let token = link["token"].as_str().unwrap();
+        assert_eq!(link["instance_role"], "member");
+        assert!(s.valid_invite_link(token).is_some());
+
+        // Consuming marks it used; a second redemption fails.
+        assert!(s.use_invite_link(token, "ana"));
+        assert!(s.valid_invite_link(token).is_none());
+        assert!(!s.use_invite_link(token, "mal"));
+        assert_eq!(s.invite_link(token).unwrap()["used_by"], "ana");
+
+        // Expired links don't validate or consume.
+        let stale = s.create_invite_link(None, "admin", -1.0);
+        let stale_token = stale["token"].as_str().unwrap();
+        assert!(s.valid_invite_link(stale_token).is_none());
+        assert!(!s.use_invite_link(stale_token, "ana"));
+
+        // Revocation removes the row; listing shows the rest.
+        assert!(s.delete_invite_link(stale_token));
+        assert!(s.invite_link(stale_token).is_none());
+        assert_eq!(s.list_invite_links().len(), 1);
     }
 }

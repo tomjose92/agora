@@ -5,6 +5,9 @@
 
 /* ---------- auth ---------- */
 let AUTH_ERROR = "";
+/* Invite-link token from /join/{token} (carried in the fragment). Kept in
+   sessionStorage so it survives the Google round-trip redirect. */
+let JOIN_TOKEN = "";
 (function initToken() {
   const params = new URLSearchParams(location.search);
   const t = params.get("token");
@@ -20,8 +23,11 @@ let AUTH_ERROR = "";
     const session = frag.get("agora_session");
     if (session) localStorage.setItem("agora_token", session);
     AUTH_ERROR = frag.get("auth_error") || "";
-    if (session || AUTH_ERROR) history.replaceState(null, "", location.pathname);
+    const join = frag.get("join");
+    if (join) sessionStorage.setItem("agora_join", join);
+    if (session || AUTH_ERROR || join) history.replaceState(null, "", location.pathname);
   }
+  JOIN_TOKEN = sessionStorage.getItem("agora_join") || "";
 })();
 function sessionToken() { return localStorage.getItem("agora_token") || ""; }
 function authHeaders() {
@@ -33,6 +39,25 @@ function authHeaders() {
    `role` from /api/groups instead. */
 let CURRENT_USER = { username: "", display_name: "", instance_admin: false };
 function isOwner() { return !!(CURRENT_USER && CURRENT_USER.instance_admin); }
+
+/* Profile self-service: clicking your name in the topbar renames you.
+   New messages pick up the name automatically; old ones keep the name
+   they were posted under. */
+async function meRename() {
+  const next = window.prompt(
+    "Display name (leave blank to use your username):",
+    CURRENT_USER.display_name || CURRENT_USER.username);
+  if (next === null) return;
+  try {
+    const me = await apiPost("/api/me", { display_name: next.trim() }, "PATCH");
+    CURRENT_USER.display_name = me.display_name || CURRENT_USER.username;
+    const meEl = document.getElementById("topbar-me");
+    if (meEl) meEl.textContent = CURRENT_USER.display_name;
+    toast("Display name updated", { variant: "ok" });
+  } catch (e) {
+    toast("Couldn't update your name: " + (e.message || e), { variant: "error" });
+  }
+}
 const active = "agora";   // the chat page checks which SPA tab is showing
 
 /* ---------- api ---------- */
@@ -66,6 +91,7 @@ const AUTH_ERROR_TEXT = {
   disabled: "Your account has been disabled on this instance.",
   google_access_denied: "Google sign-in was cancelled.",
   state: "Sign-in expired — try again.",
+  invite_invalid: "That invite link has been used or has expired — ask for a new one.",
 };
 function authGate() {
   if (document.getElementById("auth-gate")) return;
@@ -80,7 +106,7 @@ function authGate() {
     <p class="auth-sub" id="auth-hint">Admin sign-in: paste this server's admin
        key (printed in its log).</p>
     <button class="btn google" id="auth-google" style="display:none"
-            onclick="location.href='/api/auth/google/start'">
+            onclick="location.href='/api/auth/google/start' + (JOIN_TOKEN ? '?invite=' + encodeURIComponent(JOIN_TOKEN) : '')">
       <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
       Continue with Google</button>
     <div class="auth-divider" id="auth-divider" style="display:none">or</div>
@@ -111,8 +137,9 @@ function authGate() {
       document.getElementById("auth-google").style.display = "";
       document.getElementById("auth-token-form").style.display = "none";
       document.getElementById("auth-token-toggle").style.display = "";
-      document.getElementById("auth-hint").textContent =
-        "Sign in with Google — members and invited emails get in.";
+      document.getElementById("auth-hint").textContent = JOIN_TOKEN
+        ? "You've been invited to this Agora — sign in with Google to join."
+        : "Sign in with Google — members and invited emails get in.";
     }
   }).catch(() => {});
 }
@@ -236,6 +263,9 @@ async function boot() {
     };
     _agoVoiceOK = !!me.voice;   // server has STT/TTS: show the voice controls
     _agoSearchAI = !!me.search_ai;   // server can answer /api/search/ask
+    // Signed in — any pending invite link is consumed or moot.
+    sessionStorage.removeItem("agora_join");
+    JOIN_TOKEN = "";
   } catch (e) {
     return;   // authGate is showing
   }
