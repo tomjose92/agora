@@ -424,7 +424,7 @@ a.btn { text-decoration: none; }
 .ago-gp-chan.is-hidden { opacity: .6; }
 .ago-gp-chan .ago-x { opacity: 0; }
 .ago-gp-chan:hover .ago-x { opacity: 1; }
-.ago-inbox-row .ago-x { opacity: 0; align-self: center; }
+.ago-inbox-row .ago-x { opacity: 0; }
 .ago-inbox-row:hover .ago-x { opacity: 1; }
 .agora-layout.side-collapsed .agora-side .ago-hidden { display: none; }
 
@@ -437,13 +437,24 @@ a.btn { text-decoration: none; }
 .ago-inbox-row:hover { background: var(--panel-strong); border-color: var(--border-strong); }
 .ago-inbox-row.unread { border-color: rgba(139,124,255,.4); }
 .ago-inbox-top {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
   font-size: 11px; color: var(--dim);
 }
-.ago-inbox-top .chan { font-weight: 600; color: var(--text); }
+.ago-inbox-top .chan {
+  font-weight: 600; color: var(--text); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .ago-inbox-top .chan .hash { opacity: .5; }
 .ago-inbox-top .chan .grp { font-weight: 400; color: var(--faint); }
-.ago-inbox-top .ts { color: var(--faint); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+/* Timestamp + actions stay glued on the right (Slack/Linear-style row meta). */
+.ago-inbox-meta {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto;
+}
+.ago-inbox-actions { display: inline-flex; align-items: center; gap: 2px; }
+.ago-inbox-top .ts {
+  color: var(--faint); flex-shrink: 0; font-variant-numeric: tabular-nums;
+  line-height: 20px; /* match .ago-x hit target for optical centering */
+}
 .ago-inbox-main {
   display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12.5px;
 }

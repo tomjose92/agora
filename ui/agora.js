@@ -533,9 +533,10 @@ function agoThreadRowHTML(t) {
          onclick="agoGoToThread('${esc(t.group_id)}','${esc(t.channel_id)}',${root.id})">
       <div class="ago-inbox-top">
         <span class="chan"><span class="hash">#</span>${esc(t.channel_name)}<span class="grp"> · ${esc(t.group_name)}</span></span>
-        <span class="ts">${esc(when)}</span>
-        ${rename}
-        ${del}
+        <div class="ago-inbox-meta">
+          <span class="ts">${esc(when)}</span>
+          <span class="ago-inbox-actions">${rename}${del}</span>
+        </div>
       </div>
       <div class="ago-inbox-main">
         <span class="author">${esc(agoAuthorLabel(root))}</span>
@@ -952,8 +953,10 @@ function agoDrawGroupPage(box) {
            onclick="agoSelectChannel('${esc(g.id)}','${esc(c.id)}')" title="Open #${esc(c.name)}">
         <div class="ago-inbox-top">
           <span class="chan"><span class="hash">#</span>${esc(c.name)}${c.hidden ? '<span class="ago-hidden-tag">hidden</span>' : ""}</span>
-          ${agoBadgeHTML(unread, mentions)}
-          ${eye}
+          <div class="ago-inbox-meta">
+            ${agoBadgeHTML(unread, mentions)}
+            <span class="ago-inbox-actions">${eye}</span>
+          </div>
         </div>
         ${c.topic ? `<div class="ago-gp-topic">${esc(c.topic)}</div>` : ""}
       </div>`;
