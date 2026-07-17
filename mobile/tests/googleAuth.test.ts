@@ -30,7 +30,8 @@ describe("parseRedirect", () => {
 
 describe("signInErrorMessage", () => {
   it("humanizes the server's error codes", () => {
-    expect(signInErrorMessage("no_access")).toMatch(/isn't allowed/);
+    expect(signInErrorMessage("no_access")).toMatch(/isn't invited/);
+    expect(signInErrorMessage("disabled")).toMatch(/disabled/);
     expect(signInErrorMessage("google_access_denied")).toMatch(/cancelled/);
     expect(signInErrorMessage("state")).toMatch(/\(state\)/);
     expect(signInErrorMessage(undefined)).toBe("Google sign-in failed");

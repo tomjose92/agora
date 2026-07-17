@@ -4,11 +4,25 @@
 
 export interface Me {
   username: string;
+  display_name?: string;
+  /** Operator powers: connections, pairing tokens, users & invites. */
+  instance_admin?: boolean;
   version: string;
   /** Server has OPENAI_API_KEY: voice notes / speak-aloud / live voice work. */
   voice?: boolean;
   /** Server has ANTHROPIC_API_KEY: /api/search/ask (Ask AI) works. */
   search_ai?: boolean;
+}
+
+/** One workspace account from GET /api/users (any signed-in user may list
+    them — it feeds the add-person picker). */
+export interface UserInfo {
+  username: string;
+  display_name: string;
+  email: string | null;
+  instance_role: "admin" | "member";
+  created_at: number;
+  disabled: boolean;
 }
 
 export interface Channel {

@@ -578,6 +578,9 @@ function agoToggleUnreadsOnly() {
 function agoDrawSide() {
   const box = document.getElementById("agora-side");
   if (!box) return;
+  // Preserve scroll across full redraws (clicking a channel rebuilds the
+  // sidebar via innerHTML, which would otherwise jump back to the top).
+  const prevTop = box.querySelector(".ago-groups")?.scrollTop || 0;
   const groupRows = _agoGroups.filter(g => !g.hidden).map(g => {
     const open = agoIsExpanded(g.id);
     const sel = g.id === _agoSel.g;
@@ -718,6 +721,8 @@ function agoDrawSide() {
       '<div class="dim" style="padding:10px 12px;font-size:12px">No groups yet — create one to start chatting.</div>'}</div>
     ${hiddenSection}
     <div class="ago-side-foot">${addGroup}</div>`;
+  const groupsEl = box.querySelector(".ago-groups");
+  if (groupsEl) groupsEl.scrollTop = prevTop;
   const input = document.getElementById("ago-new-group") || document.getElementById("ago-new-channel");
   if (input) input.focus();
 }
@@ -1958,14 +1963,47 @@ function agoDrawMembers() {
     return c ? "#" + c.name : id;
   };
   const liveById = Object.fromEntries(_agoAvailAgents.map(a => [a.id, a.live]));
+  /* One row per agent: an agent scoped to several channels comes back as
+     several membership rows, so collapse them and show the scopes as tags. */
+  const agentScopes = new Map();
+  for (const m of _agoMembers) {
+    if (m.member_type !== "agent") continue;
+    if (!agentScopes.has(m.member_id)) agentScopes.set(m.member_id, []);
+    agentScopes.get(m.member_id).push(m);
+  }
+  const drawnAgents = new Set();
   const rows = _agoMembers.map(m => {
     const off = m.member_type === "agent" && liveById[m.member_id] === false;
-    const mark = m.member_type === "agent"
-      ? agoAgentAvatarHTML(m.member_id, "sm")
-      : `<span class="ago-av sm">${icon("user")}</span>`;
-    const self = m.member_type === "user" && CURRENT_USER && m.member_id === CURRENT_USER.username;
+    const offHtml = off
+      ? ' · <span class="ago-off" title="Offline — won\u2019t reply">offline</span>' : "";
+    if (m.member_type === "agent") {
+      if (drawnAgents.has(m.member_id)) return "";
+      drawnAgents.add(m.member_id);
+      const scopes = agentScopes.get(m.member_id) || [m];
+      const tags = scopes.map(s => {
+        const label = s.channel_id ? chanName(s.channel_id) : "whole group";
+        const tagX = admin
+          ? `<button class="ago-tag-x" title="Stop listening ${s.channel_id ? "in " + esc(label) : "group-wide"}"
+               onclick="agoRemoveMember('agent','${esc(m.member_id)}','${esc(s.channel_id || "")}')">${icon("x")}</button>`
+          : "";
+        return `<span class="ago-scope-tag">${esc(label)}${tagX}</span>`;
+      }).join("");
+      const removeBtn = admin
+        ? `<button class="ago-x" title="Remove from the whole group"
+             onclick="agoRemoveAgentEverywhere('${esc(m.member_id)}')">${icon("x")}</button>`
+        : "";
+      return `
+    <div class="ago-member ago-agent">
+      ${agoAgentAvatarHTML(m.member_id, "sm")}
+      <span class="mname">${esc(m.name || m.member_id)}</span>
+      <span class="mmeta short">${esc(m.role)}${offHtml}</span>
+      <span class="ago-scope-tags">${tags}</span>
+      ${removeBtn}
+    </div>`;
+    }
+    const self = CURRENT_USER && m.member_id === CURRENT_USER.username;
     // Group admins can promote/demote people; agents have no roles.
-    const roleBtn = admin && m.member_type === "user"
+    const roleBtn = admin
       ? `<button class="ago-x" title="${m.role === "admin" ? "Demote to member" : "Make group admin"}"
            onclick="agoSetMemberRole('${esc(m.member_id)}','${m.role === "admin" ? "member" : "admin"}')">${m.role === "admin" ? icon("arrow-down") : icon("arrow-up")}</button>`
       : "";
@@ -1975,10 +2013,9 @@ function agoDrawMembers() {
       : "";
     return `
     <div class="ago-member">
-      ${mark}
+      <span class="ago-av sm">${icon("user")}</span>
       <span class="mname">${esc(m.name || m.member_id)}${self ? ' <span class="dim">· you</span>' : ""}</span>
-      <span class="mmeta">${esc(m.role)}${m.channel_id ? " · " + esc(chanName(m.channel_id)) : ""}${off
-        ? ' · <span class="ago-off" title="Offline — won\u2019t reply">offline</span>' : ""}</span>
+      <span class="mmeta">${esc(m.role)}${m.channel_id ? " · " + esc(chanName(m.channel_id)) : ""}</span>
       ${roleBtn}
       ${removeBtn}
     </div>`;
@@ -2086,6 +2123,26 @@ async function agoRemoveMember(type, id, channelId) {
     await apiPost(
       `/api/groups/${encodeURIComponent(g.id)}/members/${encodeURIComponent(type)}/${encodeURIComponent(id)}${qs}`,
       {}, "DELETE");
+    _agoMembers = null;
+    delete _agoGroupMembers[g.id];
+    await agoToggleMembers();
+    agoLoadChannel().catch(console.error);
+  } catch (e) { agoErr("Couldn't remove member", e); }
+}
+
+/* Remove an agent from every scope it listens to — one DELETE per
+   membership row, since the API deletes a single (member, channel) pair. */
+async function agoRemoveAgentEverywhere(id) {
+  const g = agoSelGroup();
+  if (!g || !_agoMembers) return;
+  const scopes = _agoMembers.filter(m => m.member_type === "agent" && m.member_id === id);
+  try {
+    for (const m of scopes) {
+      const qs = m.channel_id ? `?channel_id=${encodeURIComponent(m.channel_id)}` : "";
+      await apiPost(
+        `/api/groups/${encodeURIComponent(g.id)}/members/agent/${encodeURIComponent(id)}${qs}`,
+        {}, "DELETE");
+    }
     _agoMembers = null;
     delete _agoGroupMembers[g.id];
     await agoToggleMembers();

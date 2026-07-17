@@ -29,6 +29,7 @@ import type {
   SearchResponse,
   StarredMessage,
   ThreadRow,
+  UserInfo,
 } from "./types";
 
 const PAGE_SIZE = 50;
@@ -130,6 +131,17 @@ export function useDeleteChannel() {
 }
 
 /* ------------------------------------------------------------- members */
+
+/** Workspace accounts — feeds the members screen's add-person picker. */
+export function useUsers(enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.users,
+    queryFn: async () => (await api.get<{ users: UserInfo[] }>("/api/users")).users,
+    staleTime: 60_000,
+    enabled,
+  });
+}
 
 export function useMembers(groupId: string) {
   const api = useApi();
@@ -568,14 +580,17 @@ export function useForgetAgent() {
 
 /* ------------------------------------------------------------- connections & pairing */
 
-/** Poll while the settings screen is open, like the desktop pane (4s). */
-export function useConnections(poll = false) {
+/** Poll while the settings screen is open, like the desktop pane (4s).
+    Instance-admin only — pass `enabled: false` for regular members so the
+    screen doesn't hammer a 403ing endpoint. */
+export function useConnections(poll = false, enabled = true) {
   const api = useApi();
   return useQuery({
     queryKey: keys.connections,
     queryFn: async () =>
       (await api.get<{ connections: Connection[] }>("/api/connections")).connections,
     refetchInterval: poll ? 4000 : false,
+    enabled,
   });
 }
 
@@ -602,12 +617,13 @@ export function useConnectionMutations() {
   };
 }
 
-export function usePairingTokens() {
+export function usePairingTokens(enabled = true) {
   const api = useApi();
   return useQuery({
     queryKey: keys.pairing,
     queryFn: async () =>
       (await api.get<{ tokens: PairingToken[] }>("/api/pairing")).tokens,
+    enabled,
   });
 }
 

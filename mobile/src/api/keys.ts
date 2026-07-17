@@ -13,6 +13,7 @@ export const keys = {
   channelAgents: (channelId: string) => ["channelAgents", channelId] as const,
   activity: (channelId: string) => ["activity", channelId] as const,
   members: (groupId: string) => ["members", groupId] as const,
+  users: ["users"] as const,
   agents: ["agents"] as const,
   search: (q: string, scope: string, file = "") => ["search", q, scope, file] as const,
   connections: ["connections"] as const,

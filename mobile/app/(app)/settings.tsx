@@ -116,10 +116,12 @@ export default function SettingsScreen() {
   const session = useSession((s) => s.session)!;
   const signOut = useSession((s) => s.signOut);
   const forgetServer = useSession((s) => s.forgetServer);
+  const instanceAdmin = useSession((s) => s.instanceAdmin);
   const me = useQuery({ queryKey: keys.me, queryFn: () => api.get<Me>("/api/me") });
-  const connections = useConnections(true); // poll while this screen is open
+  // Connections & pairing are operator surfaces; members never see them.
+  const connections = useConnections(instanceAdmin, instanceAdmin);
   const { update, remove } = useConnectionMutations();
-  const pairing = usePairingTokens();
+  const pairing = usePairingTokens(instanceAdmin);
   const pairingMut = usePairingMutations();
   const [bridgeName, setBridgeName] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -191,6 +193,7 @@ export default function SettingsScreen() {
     <>
       <Stack.Screen options={{ title: "Settings", headerShown: true }} />
       <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+        {instanceAdmin ? (
         <Section title="Connections">
           {(connections.data ?? []).map((c) => {
             const status = c.status;
@@ -244,7 +247,9 @@ export default function SettingsScreen() {
           ) : null}
           <AddConnection />
         </Section>
+        ) : null}
 
+        {instanceAdmin ? (
         <Section title="Pairing tokens">
           {(pairing.data ?? []).map((t) => (
             <View key={t.token} style={styles.row}>
@@ -293,6 +298,7 @@ export default function SettingsScreen() {
             </Pressable>
           </View>
         </Section>
+        ) : null}
 
         <Section title="Session">
           <View style={styles.row}>
@@ -300,7 +306,8 @@ export default function SettingsScreen() {
               <Text style={styles.name}>{session.baseUrl}</Text>
               <Text style={styles.meta}>
                 {me.data
-                  ? `signed in as ${me.data.username} · server v${me.data.version}`
+                  ? `signed in as ${me.data.display_name || me.data.username}` +
+                    `${me.data.instance_admin ? " (admin)" : ""} · server v${me.data.version}`
                   : me.isError
                     ? "server unreachable"
                     : "…"}

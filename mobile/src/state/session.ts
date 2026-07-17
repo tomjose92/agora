@@ -26,6 +26,9 @@ interface SessionState {
   status: Status;
   session: Session | null;
   username: string;
+  displayName: string;
+  /** Operator powers (me.instance_admin) — gates connections/pairing UI. */
+  instanceAdmin: boolean;
   /** Server-side STT/TTS available (me.voice) — gates all voice UI. */
   voiceOk: boolean;
   /** Last known server URL. Survives a sign-out (an expired Google session
@@ -43,6 +46,8 @@ export const useSession = create<SessionState>((set) => ({
   status: "loading",
   session: null,
   username: "",
+  displayName: "",
+  instanceAdmin: false,
   voiceOk: false,
   savedUrl: "",
 
@@ -86,7 +91,12 @@ export const useSession = create<SessionState>((set) => ({
           await SecureStore.setItemAsync(KEY_URL, canonical);
           set({ session: { baseUrl: canonical, token } });
         }
-        set({ username: me.username, voiceOk: !!me.voice });
+        set({
+          username: me.username,
+          displayName: me.display_name || me.username,
+          instanceAdmin: !!me.instance_admin,
+          voiceOk: !!me.voice,
+        });
       })
       .catch(() => {
         /* offline — keep the stored session */
@@ -118,6 +128,8 @@ export const useSession = create<SessionState>((set) => ({
       status: "signedIn",
       session,
       username: me.username,
+      displayName: me.display_name || me.username,
+      instanceAdmin: !!me.instance_admin,
       voiceOk: !!me.voice,
       savedUrl: session.baseUrl,
     });
@@ -128,7 +140,14 @@ export const useSession = create<SessionState>((set) => ({
     await unregisterPushToken(session);
     // Keep KEY_URL: the login screen should only ask for credentials again.
     await SecureStore.deleteItemAsync(KEY_TOKEN);
-    set({ status: "signedOut", session: null, username: "", voiceOk: false });
+    set({
+      status: "signedOut",
+      session: null,
+      username: "",
+      displayName: "",
+      instanceAdmin: false,
+      voiceOk: false,
+    });
   },
 
   async forgetServer() {
@@ -138,7 +157,15 @@ export const useSession = create<SessionState>((set) => ({
       SecureStore.deleteItemAsync(KEY_URL),
       SecureStore.deleteItemAsync(KEY_TOKEN),
     ]);
-    set({ status: "signedOut", session: null, username: "", voiceOk: false, savedUrl: "" });
+    set({
+      status: "signedOut",
+      session: null,
+      username: "",
+      displayName: "",
+      instanceAdmin: false,
+      voiceOk: false,
+      savedUrl: "",
+    });
   },
 }));
 

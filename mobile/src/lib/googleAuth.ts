@@ -37,7 +37,9 @@ export function parseRedirect(url: string): RedirectResult {
 export function signInErrorMessage(reason: string | undefined): string {
   switch (reason) {
     case "no_access":
-      return "That Google account isn't allowed on this instance";
+      return "That Google account isn't invited to this workspace — ask an admin to invite your email";
+    case "disabled":
+      return "Your account has been disabled on this workspace";
     case "google_access_denied":
       return "Google sign-in was cancelled";
     default:
