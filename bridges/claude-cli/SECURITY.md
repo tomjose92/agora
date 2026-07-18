@@ -16,8 +16,16 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
    with your full user privileges — no sandbox — so it can read your SSH keys,
    keychain, cloud credentials, and edit/delete any file you can. This is the
    feature; treat channel access as shell access.
-   *Not mitigated in code.* Reduce it by running Claude with a confirming
-   permission mode, as a dedicated low-privilege user, or inside a container/VM.
+   *Partially addressed:* the permission mode is now per channel (`/permissions`)
+   and defaults to the bridge's startup mode. A channel may always **lower**
+   privilege (e.g. `/permissions plan` for read-only work), but **raising** it
+   above the startup default is refused unless the bridge is launched with
+   `CLAUDE_ALLOW_PERMISSION_ESCALATION=1` — so chat cannot flip a confirming
+   setup into `bypassPermissions`. The model is likewise allowlisted (`/model`
+   only accepts known ids, never arbitrary argv). *Still open:* even at the
+   default mode Claude runs unsandboxed with your full privileges. Reduce it by
+   starting the bridge in a confirming mode (e.g. `--permission-mode plan`),
+   running as a dedicated low-privilege user, or inside a container/VM.
 
 2. **Any channel participant is an operator.** The bridge trusts whoever the hub
    says is in the channel; there is no per-sender allowlist.
@@ -114,9 +122,9 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
 3. **`/status` leaks absolute paths** of the bound session's working directory.
 
 4. **Credential/state at rest.**
-   - `state.json` (channel→session bindings, working dirs) is written with the
-     default umask and can be world-readable. `chmod 600` it, or point
-     `STATE_FILE` at a private location.
+   - `state.json` (channel→session bindings, working dirs, optional model /
+     permission overrides) is written with the default umask and can be
+     world-readable. `chmod 600` it, or point `STATE_FILE` at a private location.
    - The README's launchd fallback puts a plaintext `ANTHROPIC_API_KEY` in a
      plist under `~/Library/LaunchAgents/`. Prefer the OAuth keychain login where
      possible; if you must use a key file, restrict its permissions.
