@@ -22,10 +22,22 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
-import { ArrowUp, Bot, Camera, Check, Image as ImageIcon, Mic, Paperclip, X } from "lucide-react-native";
+import {
+  ArrowUp,
+  Bot,
+  Camera,
+  Check,
+  ClipboardPaste,
+  Image as ImageIcon,
+  Mic,
+  Paperclip,
+  X,
+} from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "../api/queries";
 import { slugify } from "../lib/format";
@@ -236,6 +248,38 @@ export function Composer({
     const merged = [...files, ...picked].slice(0, MAX_FILES);
     if (files.length + picked.length > MAX_FILES) toast(`Max ${MAX_FILES} files per message`, "warn");
     setFiles(merged);
+  };
+
+  /* Clipboard image → cache file → the same re-encode/attach path photos
+     take. RN's TextInput has no image-paste event, so this is the "paste"
+     the platforms hand us: read the pasteboard on demand. JPEG, because the
+     bridge marshals the image as a base64 string — a lossless PNG of a
+     screenshot is several times the payload for bytes toWebSafeImage would
+     re-encode to JPEG anyway. */
+  const pasteImage = async () => {
+    try {
+      const img = await Clipboard.getImageAsync({ format: "jpeg", jpegQuality: 0.9 });
+      if (!img?.data) {
+        toast("No image on the clipboard", "warn");
+        return;
+      }
+      const name = `pasted-${Date.now()}.jpg`;
+      const uri = `${FileSystem.cacheDirectory}${name}`;
+      await FileSystem.writeAsStringAsync(uri, img.data.replace(/^data:image\/\w+;base64,/, ""), {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      addFiles([
+        await toWebSafeImage({
+          uri,
+          width: img.size.width,
+          height: img.size.height,
+          mimeType: "image/jpeg",
+          fileName: name,
+        } as ImagePicker.ImagePickerAsset),
+      ]);
+    } catch (e) {
+      toastErr("Paste failed", e);
+    }
   };
 
   const pickDocuments = async () => {
@@ -512,6 +556,13 @@ export function Composer({
             <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pickDocuments())}>
               <Icon icon={Paperclip} size={19} color={colors.text} />
               <Text style={styles.sheetText}>Document</Text>
+            </Pressable>
+            {/* Always offered — a clipboard snapshot taken at open time goes
+                stale (copy-after-focus) and its async arrival shifts rows
+                mid-tap; pasteImage itself toasts when there is no image. */}
+            <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pasteImage())}>
+              <Icon icon={ClipboardPaste} size={19} color={colors.text} />
+              <Text style={styles.sheetText}>Paste image</Text>
             </Pressable>
           </View>
         </Pressable>

@@ -39,10 +39,12 @@ import {
 } from "../../../../src/api/queries";
 import type { Message, ThreadRow } from "../../../../src/api/types";
 import { Composer, type MentionCandidate } from "../../../../src/components/Composer";
+import { EmojiPicker } from "../../../../src/components/EmojiPicker";
 import { Icon } from "../../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows";
 import { MessageItem } from "../../../../src/components/MessageItem";
 import { ProfileSheet } from "../../../../src/components/ProfileSheet";
+import { QuickReactions, useReactWith } from "../../../../src/components/Reactions";
 import { toastErr } from "../../../../src/components/Toast";
 import { onAgentMessage } from "../../../../src/lib/agentBus";
 import { headerActions } from "../../../../src/lib/headerItems";
@@ -154,6 +156,8 @@ export default function ThreadScreen() {
 
   const starredIds = useMemo(() => new Set((stars.data ?? []).map((s) => s.id)), [stars.data]);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
+  const [reactFor, setReactFor] = useState<Message | null>(null);
+  const reactWith = useReactWith();
   const [profileFor, setProfileFor] = useState<Message | null>(null);
   const toggleTldr = useTldrView((s) => s.toggle);
   const showingTldr = useTldrView((s) => s.showing);
@@ -310,6 +314,14 @@ export default function ThreadScreen() {
         <Modal transparent animationType="fade" onRequestClose={() => setActionsFor(null)}>
           <Pressable style={styles.sheetBackdrop} onPress={() => setActionsFor(null)}>
             <View style={styles.sheet}>
+              <QuickReactions
+                message={actionsFor}
+                onDone={() => setActionsFor(null)}
+                onMore={() => {
+                  setReactFor(actionsFor);
+                  setActionsFor(null);
+                }}
+              />
               {tldrOf(actionsFor) != null ? (
                 <Pressable
                   style={styles.sheetBtn}
@@ -353,6 +365,14 @@ export default function ThreadScreen() {
           </Pressable>
         </Modal>
       ) : null}
+      <EmojiPicker
+        visible={reactFor != null}
+        onPick={(emoji) => {
+          if (reactFor) reactWith(reactFor, emoji);
+          setReactFor(null);
+        }}
+        onClose={() => setReactFor(null)}
+      />
       {profileFor ? (
         <ProfileSheet message={profileFor} onClose={() => setProfileFor(null)} />
       ) : null}

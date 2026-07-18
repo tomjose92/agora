@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS stars (
     PRIMARY KEY (username, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_stars_user_channel ON stars(username, channel_id);
+-- Emoji reactions: one row per (message, user, emoji). Aggregated onto
+-- message payloads as [{emoji, users: [...]}] in first-reaction order, so
+-- clients derive counts and their own "reacted" state from the user list.
+CREATE TABLE IF NOT EXISTS reactions (
+    channel_id TEXT NOT NULL,
+    message_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    emoji TEXT NOT NULL,
+    reacted_at REAL NOT NULL,
+    PRIMARY KEY (message_id, username, emoji)
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
 CREATE TABLE IF NOT EXISTS reads (
     username TEXT NOT NULL,
     channel_id TEXT NOT NULL,
@@ -866,7 +878,9 @@ impl Store {
                 .unwrap()
                 > 0;
             delete_thread_reads_for_channel(&conn, channel_id);
-            for table in ["messages", "memberships", "pins", "stars", "files", "reads", "mentions"] {
+            for table in
+                ["messages", "memberships", "pins", "stars", "reactions", "files", "reads", "mentions"]
+            {
                 conn.execute(
                     &format!("DELETE FROM {table} WHERE channel_id = ?1"),
                     params![channel_id],
@@ -918,7 +932,7 @@ impl Store {
                     .filter_map(Result::ok)
                     .collect()
                 };
-                for table in ["messages", "files", "pins", "stars", "mentions"] {
+                for table in ["messages", "files", "pins", "stars", "reactions", "mentions"] {
                     let column = if table == "messages" { "id" } else { "message_id" };
                     conn.execute(
                         &format!("DELETE FROM {table} WHERE {column} IN ({placeholders})"),
@@ -928,7 +942,9 @@ impl Store {
                 }
                 ids
             };
-            for table in ["stars", "reads", "thread_reads", "thread_hides", "mentions", "user_prefs"] {
+            for table in
+                ["stars", "reactions", "reads", "thread_reads", "thread_hides", "mentions", "user_prefs"]
+            {
                 conn.execute(
                     &format!("DELETE FROM {table} WHERE username = ?1"),
                     params![username],
@@ -1904,7 +1920,54 @@ impl Store {
             let id = m["id"].as_i64().unwrap_or_default();
             m["attachments"] = Value::Array(by_message.remove(&id).unwrap_or_default());
         }
+        self.attach_reactions(&mut messages);
         messages
+    }
+
+    /// Aggregates the reactions rows onto each message as
+    /// `[{emoji, users: [...]}]`, emoji groups in first-reaction order and
+    /// users in reaction order. Always set (empty array included) so a
+    /// `message_update` merge on the clients can clear the last chip.
+    fn attach_reactions(&self, messages: &mut [Value]) {
+        let ids: Vec<i64> = messages.iter().filter_map(|m| m["id"].as_i64()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let mut by_message: std::collections::HashMap<i64, Vec<(String, Vec<String>)>> =
+            Default::default();
+        {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT message_id, emoji, username FROM reactions \
+                     WHERE message_id IN ({placeholders}) ORDER BY reacted_at, rowid"
+                ))
+                .unwrap();
+            let rows = stmt
+                .query_map(params_from_iter(ids.iter()), |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                })
+                .unwrap()
+                .filter_map(Result::ok);
+            for (mid, emoji, user) in rows {
+                let groups = by_message.entry(mid).or_default();
+                match groups.iter_mut().find(|g| g.0 == emoji) {
+                    Some(g) => g.1.push(user),
+                    None => groups.push((emoji, vec![user])),
+                }
+            }
+        }
+        for m in messages.iter_mut() {
+            let id = m["id"].as_i64().unwrap_or_default();
+            let groups = by_message.remove(&id).unwrap_or_default();
+            m["reactions"] = Value::Array(
+                groups
+                    .into_iter()
+                    .map(|(emoji, users)| json!({"emoji": emoji, "users": users}))
+                    .collect(),
+            );
+        }
     }
 
     fn unlink_files(&self, file_ids: &[String]) {
@@ -1931,6 +1994,36 @@ impl Store {
         conn.execute(
             "DELETE FROM stars WHERE username = ?1 AND message_id = ?2",
             params![username, message_id],
+        )
+        .unwrap()
+            > 0
+    }
+
+    // --------------------------------------------------------- reactions
+
+    pub fn add_reaction(
+        &self,
+        username: &str,
+        channel_id: &str,
+        message_id: i64,
+        emoji: &str,
+    ) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO reactions (channel_id, message_id, username, emoji, reacted_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(message_id, username, emoji) DO NOTHING",
+            params![channel_id, message_id, username, emoji, now()],
+        )
+        .unwrap()
+            > 0
+    }
+
+    pub fn remove_reaction(&self, username: &str, message_id: i64, emoji: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM reactions WHERE username = ?1 AND message_id = ?2 AND emoji = ?3",
+            params![username, message_id, emoji],
         )
         .unwrap()
             > 0
@@ -2940,6 +3033,73 @@ mod tests {
         assert_eq!(s.user_stars("tom", cid).len(), 1);
         assert!(s.unstar_message("tom", mid));
         assert!(s.user_stars("tom", cid).is_empty());
+    }
+
+    #[test]
+    fn reactions_toggle_and_aggregate() {
+        let s = store();
+        let g = s.create_group("G", "", None);
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let m = s.add_message(cid, "root", "user", "tom", None, None, &[]);
+        let mid = m["id"].as_i64().unwrap();
+
+        // Fresh messages carry an empty list so client merges can rely on it.
+        assert_eq!(s.message(mid).unwrap()["reactions"], json!([]));
+
+        assert!(s.add_reaction("tom", cid, mid, "👍"));
+        assert!(!s.add_reaction("tom", cid, mid, "👍")); // idempotent
+        assert!(s.add_reaction("ana", cid, mid, "👍"));
+        assert!(s.add_reaction("ana", cid, mid, "🔥"));
+
+        // Grouped in first-reaction order; users in reaction order.
+        let reactions = s.message(mid).unwrap()["reactions"].clone();
+        assert_eq!(
+            reactions,
+            json!([
+                {"emoji": "👍", "users": ["tom", "ana"]},
+                {"emoji": "🔥", "users": ["ana"]},
+            ])
+        );
+
+        // Removing the last user of an emoji drops the whole group.
+        assert!(s.remove_reaction("ana", mid, "🔥"));
+        assert!(!s.remove_reaction("ana", mid, "🔥")); // already gone
+        assert_eq!(s.message(mid).unwrap()["reactions"].as_array().unwrap().len(), 1);
+
+        // The list pages carry reactions too (attach_files hook).
+        let page = s.messages(cid, None, None, 50);
+        let row = page.iter().find(|x| x["id"] == mid).unwrap();
+        assert_eq!(row["reactions"][0]["emoji"], "👍");
+    }
+
+    #[test]
+    fn reactions_cascade_with_channel_delete_and_user_delete() {
+        let s = store();
+        let g = s.create_group("G", "", None);
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let m = s.add_message(cid, "root", "user", "tom", None, None, &[]);
+        let mid = m["id"].as_i64().unwrap();
+        s.add_reaction("tom", cid, mid, "👍");
+        s.add_reaction("ana", cid, mid, "🎉");
+
+        // A deleted user's reactions disappear from surviving messages.
+        s.delete_user_data("ana");
+        assert_eq!(
+            s.message(mid).unwrap()["reactions"],
+            json!([{"emoji": "👍", "users": ["tom"]}])
+        );
+
+        // Channel delete sweeps the rest.
+        s.delete_channel(cid);
+        let count: i64 = {
+            let conn = s.conn.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM reactions", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(count, 0);
     }
 
     #[test]

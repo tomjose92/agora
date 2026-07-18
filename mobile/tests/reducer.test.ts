@@ -389,6 +389,31 @@ describe("applyWsEvent", () => {
     const data = qc.getQueryData<MessagePages>(keys.messages("general-1a2b", null))!;
     expect(data.pages[0][0].meta?.resolved?.option_id).toBe("approve");
   });
+
+  it("applies message_update frames carrying reactions (add and clear)", () => {
+    const original = msg({ id: 43, reactions: [] });
+    qc.setQueryData(keys.messages("general-1a2b", null), pages([original]));
+    applyWsEvent(
+      qc,
+      {
+        type: "message_update",
+        message: { ...original, reactions: [{ emoji: "👍", users: ["tom", "ana"] }] },
+      },
+      { username: "me" },
+    );
+    let data = qc.getQueryData<MessagePages>(keys.messages("general-1a2b", null))!;
+    expect(data.pages[0][0].reactions).toEqual([{ emoji: "👍", users: ["tom", "ana"] }]);
+
+    // The server always includes `reactions` on the update, so removing the
+    // last reaction clears the chips rather than leaving a stale merge.
+    applyWsEvent(
+      qc,
+      { type: "message_update", message: { ...original, reactions: [] } },
+      { username: "me" },
+    );
+    data = qc.getQueryData<MessagePages>(keys.messages("general-1a2b", null))!;
+    expect(data.pages[0][0].reactions).toEqual([]);
+  });
 });
 
 describe("replaceMessage", () => {

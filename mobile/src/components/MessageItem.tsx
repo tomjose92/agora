@@ -16,6 +16,7 @@ import { AgentAvatar } from "./AgentAvatar";
 import { Attachments } from "./Attachments";
 import { Icon } from "./Icon";
 import { MdText } from "./MdText";
+import { Reactions } from "./Reactions";
 
 export function Avatar({ message }: { message: Message }) {
   if (message.author_type === "agent") {
@@ -140,6 +141,7 @@ export function MessageItem({
           <MdText text={body} onLongPress={longPress} />
           <Attachments session={session} attachments={message.attachments ?? []} />
           <MessageOptions message={message} />
+          <Reactions message={message} />
           <View style={styles.foot}>
             {flags}
             <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
@@ -176,6 +178,7 @@ export function MessageItem({
         <MdText text={body} onLongPress={longPress} />
         <Attachments session={session} attachments={message.attachments ?? []} />
         <MessageOptions message={message} />
+        <Reactions message={message} />
         {replies}
       </View>
     </View>

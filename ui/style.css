@@ -649,6 +649,50 @@ a.btn { text-decoration: none; }
 .ago-addr-opt.selected .ago-addr-check { background: var(--a1); border-color: var(--a1); }
 .ago-addr-empty { padding: 10px 9px; color: var(--dim); font-size: 12px; white-space: normal; }
 
+/* ---------- emoji reactions ---------- */
+.ago-reacts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 8px; }
+.ago-react {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  background: rgba(255,255,255,.05); border: 1px solid var(--border-strong);
+  border-radius: 999px; padding: 2px 8px; font-size: 13px; line-height: 1.4;
+  color: var(--dim);
+}
+.ago-react:hover { border-color: var(--a1); }
+.ago-react.mine {
+  background: rgba(139,124,255,.14); border-color: rgba(139,124,255,.5); color: #cfc8ff;
+}
+.ago-react .rc { font-size: 11px; font-weight: 700; }
+/* The trailing "+" chip only surfaces on hover, like the footer actions. */
+.ago-react-add { opacity: 0; transition: opacity .15s ease; padding: 2px 7px; }
+.ago-bubble:hover .ago-react-add { opacity: 1; }
+
+/* The picker popup is viewport-anchored (JS sets top/left next to the
+   clicked react button) and lives on document.body, so log redraws and
+   scrolling never reflow it. */
+.ago-emoji-pop {
+  position: fixed; z-index: 80;
+  width: 324px; max-width: calc(100vw - 28px); display: flex; flex-direction: column;
+  background: #10141f; border: 1px solid var(--border-strong); border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.55); padding: 8px; animation: rise .12s ease;
+}
+.ago-emoji-pop input {
+  background: rgba(0,0,0,.25); border: 1px solid var(--border-strong); border-radius: 8px;
+  padding: 7px 10px; color: var(--text); font: inherit; font-size: 12.5px; outline: none;
+}
+.ago-emoji-pop input:focus { border-color: var(--a1); }
+.ago-emoji-body { overflow-y: auto; overscroll-behavior: contain; max-height: 300px; margin-top: 6px; }
+.ago-emoji-cat {
+  padding: 8px 4px 3px; font-size: 10.5px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--faint);
+}
+.ago-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); }
+.ago-emoji-cell {
+  border: 0; background: none; font-size: 20px; line-height: 1;
+  padding: 6px 0; border-radius: 8px; cursor: pointer;
+}
+.ago-emoji-cell:hover { background: rgba(139,124,255,.12); }
+.ago-emoji-empty { padding: 12px 4px; color: var(--dim); font-size: 12.5px; }
+
 /* ---------- file attachments ---------- */
 .chat-input .ago-attach { flex-shrink: 0; }
 .ago-pending { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px 0; }
@@ -887,6 +931,7 @@ a.btn { text-decoration: none; }
   .ago-log { padding: 14px; }
   .bubble.ago-bubble { max-width: 88%; }
   .ago-thread-btn { opacity: 1; }
+  .ago-react-add { opacity: 1; }
   .ago-pin-row .ago-x { opacity: 1; }
   .ago-edit-btn { opacity: 1; }          /* no hover on touch */
   /* Comfortable touch targets for the new nav rows. */

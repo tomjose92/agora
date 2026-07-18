@@ -43,10 +43,12 @@ import {
 } from "../../../src/api/queries";
 import type { Message, PinnedMessage, StarredMessage } from "../../../src/api/types";
 import { Composer, type MentionCandidate } from "../../../src/components/Composer";
+import { EmojiPicker } from "../../../src/components/EmojiPicker";
 import { Icon } from "../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../src/components/LiveRows";
 import { MessageItem } from "../../../src/components/MessageItem";
 import { ProfileSheet } from "../../../src/components/ProfileSheet";
+import { QuickReactions, useReactWith } from "../../../src/components/Reactions";
 import { toastErr } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
 import { fmtTs } from "../../../src/lib/format";
@@ -76,6 +78,7 @@ function MessageActions({
   starred,
   pinned,
   onClose,
+  onReact,
 }: {
   message: Message;
   channelId: string;
@@ -83,6 +86,8 @@ function MessageActions({
   starred: boolean;
   pinned: boolean;
   onClose: () => void;
+  /** Open the full emoji picker for this message (quick row's "more"). */
+  onReact: () => void;
 }) {
   const star = useStarMessage(channelId);
   const pin = usePinMessage(channelId);
@@ -98,6 +103,7 @@ function MessageActions({
     <Modal transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
         <View style={styles.sheet}>
+          <QuickReactions message={message} onDone={onClose} onMore={onReact} />
           {hasTldr ? (
             <Pressable style={styles.sheetBtn} onPress={() => act(() => toggleTldr(message.id))}>
               <Icon icon={showingTldr ? Maximize2 : Minimize2} size={18} color={colors.text} />
@@ -316,6 +322,8 @@ export default function ChannelScreen() {
     );
 
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
+  const [reactFor, setReactFor] = useState<Message | null>(null);
+  const reactWith = useReactWith();
   const [profileFor, setProfileFor] = useState<Message | null>(null);
   const [sheet, setSheet] = useState<"pins" | "stars" | null>(null);
 
@@ -500,8 +508,20 @@ export default function ChannelScreen() {
           starred={starredIds.has(actionsFor.id)}
           pinned={pinnedIds.has(actionsFor.id)}
           onClose={() => setActionsFor(null)}
+          onReact={() => {
+            setReactFor(actionsFor);
+            setActionsFor(null);
+          }}
         />
       ) : null}
+      <EmojiPicker
+        visible={reactFor != null}
+        onPick={(emoji) => {
+          if (reactFor) reactWith(reactFor, emoji);
+          setReactFor(null);
+        }}
+        onClose={() => setReactFor(null)}
+      />
       {profileFor ? (
         <ProfileSheet message={profileFor} onClose={() => setProfileFor(null)} />
       ) : null}

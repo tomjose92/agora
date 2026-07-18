@@ -79,6 +79,13 @@ export interface MessageMeta {
   tldr?: string;
 }
 
+/** One emoji's reactions on a message; users in reaction order, so the
+    count is `users.length` and "did I react" is a membership test. */
+export interface Reaction {
+  emoji: string;
+  users: string[];
+}
+
 export interface Message {
   id: number;
   channel_id: string;
@@ -89,6 +96,7 @@ export interface Message {
   text: string;
   ts: number;
   attachments: Attachment[];
+  reactions?: Reaction[];
   meta?: MessageMeta | null;
   /* Top-level pages only. */
   reply_count?: number;
