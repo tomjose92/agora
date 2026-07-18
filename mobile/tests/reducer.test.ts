@@ -20,6 +20,8 @@ import {
   applyThreadRename,
   applyWsEvent,
   bumpReplyCount,
+  dropReplyCount,
+  removeMessage,
   replaceMessage,
   type MessagePages,
 } from "../src/ws/reducer";
@@ -422,5 +424,67 @@ describe("replaceMessage", () => {
     const next = replaceMessage(data, msg({ id: 1, text: "new", meta: { options: [] } }))!;
     expect(next.pages[0][0].text).toBe("new");
     expect(next.pages[0][0].meta).toEqual({ options: [] });
+  });
+});
+
+describe("removeMessage / dropReplyCount", () => {
+  it("drops the message from its page", () => {
+    const data = pages([msg({ id: 1 }), msg({ id: 2 })]);
+    const next = removeMessage(data, 1)!;
+    expect(next.pages[0].map((m) => m.id)).toEqual([2]);
+  });
+
+  it("is a no-op when the message isn't cached", () => {
+    const data = pages([msg({ id: 1 })]);
+    expect(removeMessage(data, 99)).toBe(data);
+    expect(removeMessage(undefined, 1)).toBeUndefined();
+  });
+
+  it("decrements the root's reply_count, never below zero", () => {
+    const data = pages([msg({ id: 5, reply_count: 1 })]);
+    const once = dropReplyCount(data, 5)!;
+    expect(once.pages[0][0].reply_count).toBe(0);
+    const twice = dropReplyCount(once, 5)!;
+    expect(twice.pages[0][0].reply_count).toBe(0);
+  });
+});
+
+describe("message_delete frames", () => {
+  let qc: QueryClient;
+  beforeEach(() => {
+    qc = new QueryClient();
+  });
+  afterEach(() => {
+    qc.clear();
+  });
+
+  it("removes a deleted top-level message and its thread page set", () => {
+    qc.setQueryData(keys.messages("general-1a2b", null), pages([msg({ id: 5 }), msg({ id: 6 })]));
+    qc.setQueryData(keys.messages("general-1a2b", 5), pages([msg({ id: 7, thread_id: 5 })]));
+    applyWsEvent(
+      qc,
+      { type: "message_delete", channel_id: "general-1a2b", message_id: 5, thread_id: null },
+      { username: "me" },
+    );
+    const data = qc.getQueryData<MessagePages>(keys.messages("general-1a2b", null))!;
+    expect(data.pages[0].map((m) => m.id)).toEqual([6]);
+    expect(qc.getQueryData(keys.messages("general-1a2b", 5))).toBeUndefined();
+  });
+
+  it("removes a deleted reply and drops the root's reply_count", () => {
+    qc.setQueryData(keys.messages("general-1a2b", null), pages([msg({ id: 5, reply_count: 2 })]));
+    qc.setQueryData(
+      keys.messages("general-1a2b", 5),
+      pages([msg({ id: 7, thread_id: 5 }), msg({ id: 8, thread_id: 5 })]),
+    );
+    applyWsEvent(
+      qc,
+      { type: "message_delete", channel_id: "general-1a2b", message_id: 7, thread_id: 5 },
+      { username: "me" },
+    );
+    const replies = qc.getQueryData<MessagePages>(keys.messages("general-1a2b", 5))!;
+    expect(replies.pages[0].map((m) => m.id)).toEqual([8]);
+    const top = qc.getQueryData<MessagePages>(keys.messages("general-1a2b", null))!;
+    expect(top.pages[0][0].reply_count).toBe(1);
   });
 });

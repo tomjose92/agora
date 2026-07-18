@@ -1526,6 +1526,63 @@ impl Store {
         self.message(message_id)
     }
 
+    /// Delete one message. A thread root takes its replies with it (replies
+    /// pointing at a deleted root would dangle — same rule as
+    /// [`Store::delete_user_data`]), along with everything keyed to the
+    /// removed rows: attachments (files unlinked from disk), pins, stars,
+    /// reactions, mentions, and the thread's read/hide markers.
+    pub fn delete_message(&self, message_id: i64) -> bool {
+        let file_ids: Vec<String>;
+        let deleted;
+        {
+            let conn = self.conn.lock().unwrap();
+            let message_ids: Vec<i64> = {
+                let mut stmt = conn
+                    .prepare("SELECT id FROM messages WHERE id = ?1 OR thread_id = ?1")
+                    .unwrap();
+                stmt.query_map(params![message_id], |r| r.get::<_, i64>(0))
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .collect()
+            };
+            if message_ids.is_empty() {
+                return false;
+            }
+            let placeholders = vec!["?"; message_ids.len()].join(",");
+            file_ids = {
+                let mut stmt = conn
+                    .prepare(&format!(
+                        "SELECT id FROM files WHERE message_id IN ({placeholders})"
+                    ))
+                    .unwrap();
+                stmt.query_map(params_from_iter(message_ids.iter()), |r| {
+                    r.get::<_, String>(0)
+                })
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect()
+            };
+            for table in ["messages", "files", "pins", "stars", "reactions", "mentions"] {
+                let column = if table == "messages" { "id" } else { "message_id" };
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE {column} IN ({placeholders})"),
+                    params_from_iter(message_ids.iter()),
+                )
+                .unwrap();
+            }
+            for table in ["thread_reads", "thread_hides"] {
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE thread_id = ?1"),
+                    params![message_id],
+                )
+                .unwrap();
+            }
+            deleted = true;
+        }
+        self.unlink_files(&file_ids);
+        deleted
+    }
+
     /// Find a message whose meta.options_id matches (for agent-side resolve).
     pub fn find_message_by_options_id(&self, options_id: &str) -> Option<i64> {
         if options_id.is_empty() {
@@ -2631,6 +2688,55 @@ mod tests {
         assert!(s.my_threads("tom", 50).is_empty());
         assert!(!s.user_in_group("tom", gid));
         assert!(s.group(gid).unwrap()["created_by"].is_null());
+    }
+
+    #[test]
+    fn delete_message_cascades_thread_and_keyed_rows() {
+        let s = store();
+        let g = s.create_group("Team", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "main", "");
+        let cid = c["id"].as_str().unwrap();
+
+        let att = NewAttachment {
+            filename: "note.txt".into(),
+            mime: "text/plain".into(),
+            data: b"hello".to_vec(),
+        };
+        let root = s.add_message(cid, "root", "user", "tom", Some("Tom"), None, &[att]);
+        let root_id = root["id"].as_i64().unwrap();
+        let reply = s.add_message(cid, "reply", "agent", "bot", Some("Bot"), Some(root_id), &[]);
+        let reply_id = reply["id"].as_i64().unwrap();
+        let keeper = s.add_message(cid, "keeper", "user", "tom", None, None, &[]);
+        let keeper_id = keeper["id"].as_i64().unwrap();
+        s.pin_message(cid, root_id, Some("tom"));
+        s.star_message("tom", cid, reply_id);
+        s.add_reaction("tom", cid, root_id, "👍");
+        s.add_mentions(reply_id, cid, &["tom".to_string()]);
+        s.mark_thread_read("tom", root_id, Some(reply_id));
+        let file_id = root["attachments"][0]["id"].as_str().unwrap().to_string();
+
+        // A reply goes alone; its starred row goes with it.
+        assert!(s.delete_message(reply_id));
+        assert!(s.message(reply_id).is_none());
+        assert!(s.message(root_id).is_some());
+        assert!(s.user_stars("tom", cid).is_empty());
+
+        // A root sweeps its whole thread: attachment file, pin, read marker.
+        assert!(s.delete_message(root_id));
+        assert!(s.message(root_id).is_none());
+        assert!(s.file(&file_id).is_none());
+        assert!(s.channel_pins(cid).is_empty());
+        assert!(s.my_threads("tom", 50).is_empty());
+        let remaining = s.messages(cid, None, None, 50);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0]["id"].as_i64().unwrap(), keeper_id);
+        // FTS no longer finds the deleted text.
+        assert!(s.search_messages("root", false, None, None, None, None, None, false, 10, 0).is_empty());
+
+        // Already gone: false, and nothing else is disturbed.
+        assert!(!s.delete_message(root_id));
+        assert_eq!(s.messages(cid, None, None, 50).len(), 1);
     }
 
     #[test]

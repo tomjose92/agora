@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -23,12 +24,14 @@ import {
   Minimize2,
   Pin,
   Star,
+  Trash2,
   Users,
   Volume2,
 } from "lucide-react-native";
 import {
   flattenMessages,
   useChannelAgents,
+  useDeleteMessage,
   useGroups,
   useMarkRead,
   useMembers,
@@ -77,6 +80,7 @@ function MessageActions({
   channelName,
   starred,
   pinned,
+  canDelete,
   onClose,
   onReact,
 }: {
@@ -85,12 +89,15 @@ function MessageActions({
   channelName: string;
   starred: boolean;
   pinned: boolean;
+  /** Sender-or-group-admin, mirroring the server check. */
+  canDelete: boolean;
   onClose: () => void;
   /** Open the full emoji picker for this message (quick row's "more"). */
   onReact: () => void;
 }) {
   const star = useStarMessage(channelId);
   const pin = usePinMessage(channelId);
+  const del = useDeleteMessage();
   const toggleTldr = useTldrView((s) => s.toggle);
   const showingTldr = useTldrView((s) => !!s.showing[message.id]);
   const hasTldr = tldrOf(message) != null;
@@ -154,6 +161,36 @@ function MessageActions({
             >
               <Icon icon={Pin} size={18} color={pinned ? colors.a1 : colors.text} />
               <Text style={styles.sheetText}>{pinned ? "Unpin" : "Pin"}</Text>
+            </Pressable>
+          ) : null}
+          {canDelete ? (
+            <Pressable
+              style={styles.sheetBtn}
+              onPress={() =>
+                act(() =>
+                  Alert.alert(
+                    "Delete message?",
+                    isRoot && (message.reply_count ?? 0) > 0
+                      ? "This deletes the message and its whole thread for everyone."
+                      : "This deletes the message for everyone.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Delete",
+                        style: "destructive",
+                        onPress: () =>
+                          del.mutate(
+                            { message },
+                            { onError: (e) => toastErr("Delete failed", e) },
+                          ),
+                      },
+                    ],
+                  ),
+                )
+              }
+            >
+              <Icon icon={Trash2} size={18} color={colors.red} />
+              <Text style={[styles.sheetText, styles.sheetDanger]}>Delete</Text>
             </Pressable>
           ) : null}
         </View>
@@ -326,6 +363,13 @@ export default function ChannelScreen() {
   const reactWith = useReactWith();
   const [profileFor, setProfileFor] = useState<Message | null>(null);
   const [sheet, setSheet] = useState<"pins" | "stars" | null>(null);
+
+  /* Delete gating: the sender, or any group admin (the groups payload's
+     `role` already folds in instance admins). */
+  const username = useSession((s) => s.username);
+  const groupAdmin = channelMeta?.group.role === "admin";
+  const canDelete = (m: Message) =>
+    groupAdmin || (m.author_type === "user" && username !== "" && m.author_id === username);
 
   /* 🔊 speak-aloud: while this channel is focused (and not covered by the
      live screen), agent replies landing here are read out via server TTS. */
@@ -508,6 +552,7 @@ export default function ChannelScreen() {
           channelName={channelName}
           starred={starredIds.has(actionsFor.id)}
           pinned={pinnedIds.has(actionsFor.id)}
+          canDelete={canDelete(actionsFor)}
           onClose={() => setActionsFor(null)}
           onReact={() => {
             setReactFor(actionsFor);
@@ -606,6 +651,7 @@ const styles = StyleSheet.create({
   sheetTitle: { color: colors.text, fontSize: 16, fontWeight: "800", marginBottom: 8 },
   sheetBtn: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
   sheetText: { color: colors.text, fontSize: 15.5 },
+  sheetDanger: { color: colors.red },
   sheetEmpty: { color: colors.dim, paddingVertical: 20, textAlign: "center" },
   sheetItem: {
     paddingVertical: 10,

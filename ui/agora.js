@@ -1561,7 +1561,14 @@ function agoBubble(m, inThread) {
     : "";
   const reactBtn = `<button class="ago-thread-btn ago-react-btn" title="Add reaction"
        onclick="agoReactPick(${m.id}, event)">${icon("smile")} react</button>`;
-  const foot = `<div class="ago-bubble-foot">${replies}${threadBtn}${reactBtn}${pinBtn}${starBtn}${tldrBtn}</div>`;
+  // Deleting is for the sender or a group admin — mirrors the server check.
+  const delArmed = agoArmed("msg:" + m.id);
+  const delBtn = mine || agoIsAdmin()
+    ? `<button class="ago-thread-btn ago-del-btn ${delArmed ? "armed" : ""}"
+         title="${delArmed ? "Click again to delete for everyone" : "Delete this message"}"
+         onclick="agoDeleteMessage(${m.id})">${icon("trash-2")} ${delArmed ? "sure?" : "delete"}</button>`
+    : "";
+  const foot = `<div class="ago-bubble-foot">${replies}${threadBtn}${reactBtn}${pinBtn}${starBtn}${tldrBtn}${delBtn}</div>`;
   const mark = (pinned ? `<span class="ago-pinned-mark" title="Pinned">${icon("pin")}</span>` : "")
     + (starred ? `<span class="ago-starred-mark" title="Starred by you">${icon("star", "fill")}</span>` : "")
     + (onTldr ? `<span class="ago-tldr-mark" title="Short version — the full message is one click away">TL;DR</span>` : "");
@@ -2091,6 +2098,23 @@ async function agoToggleReaction(mid, emoji) {
       {}, mine ? "DELETE" : "PUT");
     agoApplyMessageUpdate(msg);
   } catch (e) { agoErr("Couldn't react", e); }
+}
+
+/* Sender-or-admin message delete, with the same two-step arm/confirm the
+   other destructive buttons use. The server broadcasts message_delete;
+   applying locally too keeps the click snappy (the echo is a no-op). */
+async function agoDeleteMessage(mid) {
+  const redraw = () => { agoDrawMessages(); agoDrawThread(); };
+  if (!agoArmed("msg:" + mid)) { agoArm("msg:" + mid, redraw); return; }
+  agoDisarm();
+  const m = agoFindMessage(mid);
+  const channel = agoSelChannel();
+  const cid = (m && m.channel_id) || (channel && channel.id);
+  if (!cid) return;
+  try {
+    await apiPost(`/api/channels/${encodeURIComponent(cid)}/messages/${mid}`, {}, "DELETE");
+    agoApplyMessageDelete({ channel_id: cid, message_id: mid, thread_id: m ? m.thread_id : null });
+  } catch (e) { agoErr("Delete failed", e); redraw(); }
 }
 
 function agoReactionsHTML(m) {
@@ -2709,6 +2733,47 @@ function agoApplyMessageUpdate(m) {
   if (redraw) agoDrawMessages();
 }
 
+/* Remove a deleted message everywhere it may be rendered: the channel log,
+   the open thread panel (which closes when its root went — the server
+   deletes roots thread-and-all), pinned threads, the threads inbox, and the
+   root's reply count when a reply went. */
+function agoApplyMessageDelete(data) {
+  const mid = data.message_id;
+  let redraw = false;
+  const idx = _agoMsgs.findIndex(x => x.id === mid);
+  if (idx >= 0) { _agoMsgs.splice(idx, 1); redraw = true; }
+  if (data.thread_id != null) {
+    const root = _agoMsgs.find(x => x.id === data.thread_id);
+    if (root && root.reply_count) { root.reply_count -= 1; redraw = true; }
+    const pinnedRoot = _agoPins.find(p => p.id === data.thread_id);
+    if (pinnedRoot && pinnedRoot.reply_count) pinnedRoot.reply_count -= 1;
+    const t = _agoThreads.find(x => x.root && x.root.id === data.thread_id);
+    if (t && t.reply_count) t.reply_count -= 1;
+  }
+  const pinIdx = _agoPins.findIndex(p => p.id === mid);
+  if (pinIdx >= 0) {
+    _agoPins.splice(pinIdx, 1);
+    if (!_agoPins.length) _agoPinsOpen = false;
+    redraw = true;
+  }
+  if (_agoThreads.some(t => t.root && t.root.id === mid)) {
+    _agoThreads = _agoThreads.filter(t => !(t.root && t.root.id === mid));
+    agoDrawSide();
+    if (_agoInboxOpen) agoDrawMain();
+  }
+  if (_agoThreadRoot && _agoThreadRoot.id === mid) {
+    agoCloseThread();
+  } else {
+    const tIdx = _agoThreadMsgs.findIndex(x => x.id === mid);
+    if (tIdx >= 0) {
+      _agoThreadMsgs.splice(tIdx, 1);
+      if (_agoThreadRoot && _agoThreadRoot.reply_count) _agoThreadRoot.reply_count -= 1;
+      agoDrawThread();
+    }
+  }
+  if (redraw) agoDrawMessages();
+}
+
 function agoHandleEvent(data) {
   const channel = agoSelChannel();
   if (data.type === "message") { agoIngestMessage(data.message); return; }
@@ -2716,6 +2781,7 @@ function agoHandleEvent(data) {
     agoApplyMessageUpdate(data.message);
     return;
   }
+  if (data.type === "message_delete") { agoApplyMessageDelete(data); return; }
   if (data.type === "read") { agoApplyRead(data.channel_id, data.last_read_id); return; }
   if (data.type === "thread_read") { agoApplyThreadRead(data.thread_id, data.last_read_id); return; }
   if (data.type === "thread_renamed") {

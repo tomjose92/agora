@@ -310,6 +310,10 @@ pub fn router(state: AppState) -> Router {
             get(list_messages).post(post_message),
         )
         .route(
+            "/api/channels/{channel_id}/messages/{message_id}",
+            delete(delete_message),
+        )
+        .route(
             "/api/channels/{channel_id}/messages/upload",
             post(post_message_upload).layer(upload_body_limit(&state)),
         )
@@ -1920,6 +1924,47 @@ async fn remove_reaction(
     reaction_result(&state, &channel_id, message_id, changed)
 }
 
+/// Delete a message: the sender, or any admin of the channel's group
+/// (instance admins included, via [`require_group_admin`]). A thread root
+/// takes its replies with it. Clients hear about it as a `message_delete`
+/// transient — `thread_id` tells them which list (and reply count) to fix.
+async fn delete_message(
+    State(state): State<AppState>,
+    Path((channel_id, message_id)): Path<(String, i64)>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    let channel = require_channel_member(&state, &user, &channel_id)?;
+    let message = state
+        .hub
+        .store
+        .message(message_id)
+        .filter(|m| m["channel_id"] == channel_id.as_str())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    let mine = message["author_type"] == "user" && message["author_id"] == user.username.as_str();
+    if !mine {
+        require_group_admin(&state, &user, channel["group_id"].as_str().unwrap_or_default())
+            .map_err(|_| {
+                err(
+                    StatusCode::FORBIDDEN,
+                    "Only the sender or a group admin can delete a message",
+                )
+            })?;
+    }
+    state.hub.store.delete_message(message_id);
+    state.hub.post_transient(
+        &channel_id,
+        json!({
+            "type": "message_delete",
+            "channel_id": channel_id,
+            "message_id": message_id,
+            "thread_id": message["thread_id"],
+        }),
+    );
+    Ok(Json(json!({"ok": true})))
+}
+
 async fn channel_agents(
     State(state): State<AppState>,
     Path(channel_id): Path<String>,
@@ -3140,6 +3185,75 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(res.0["reactions"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn delete_message_allows_sender_and_admins_only() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("boss", "", None, "member").unwrap();
+        store.create_user("ana", "", None, "member").unwrap();
+        store.create_user("mal", "", None, "member").unwrap();
+        let g = store.create_group("Team", "", Some("boss"));
+        let gid = g["id"].as_str().unwrap();
+        store.add_member(gid, "user", "boss", "admin", None);
+        store.add_member(gid, "user", "ana", "member", None);
+        store.add_member(gid, "user", "mal", "member", None);
+        let c = store.create_channel(gid, "general", "");
+        let cid = c["id"].as_str().unwrap().to_string();
+        let q = || Query(HashMap::new());
+        let mid = |m: &Value| m["id"].as_i64().unwrap();
+
+        // The sender deletes their own message.
+        let own = store.add_message(&cid, "oops", "user", "ana", None, None, &[]);
+        delete_message(
+            State(state.clone()),
+            Path((cid.clone(), mid(&own))),
+            q(),
+            session_headers(&state, "ana"),
+        )
+        .await
+        .unwrap();
+        assert!(store.message(mid(&own)).is_none());
+
+        // Another plain member can't delete someone else's message…
+        let root = store.add_message(&cid, "root", "user", "ana", None, None, &[]);
+        let denied = delete_message(
+            State(state.clone()),
+            Path((cid.clone(), mid(&root))),
+            q(),
+            session_headers(&state, "mal"),
+        )
+        .await;
+        assert!(denied.is_err());
+        assert!(store.message(mid(&root)).is_some());
+
+        // …but a group admin can, and the root's replies go with it.
+        let reply =
+            store.add_message(&cid, "reply", "agent", "bot", Some("Bot"), Some(mid(&root)), &[]);
+        delete_message(
+            State(state.clone()),
+            Path((cid.clone(), mid(&root))),
+            q(),
+            session_headers(&state, "boss"),
+        )
+        .await
+        .unwrap();
+        assert!(store.message(mid(&root)).is_none());
+        assert!(store.message(mid(&reply)).is_none());
+
+        // Wrong channel id: 404, nothing deleted.
+        let other = store.create_channel(gid, "random", "");
+        let stray = store.add_message(&cid, "keep", "user", "ana", None, None, &[]);
+        let missed = delete_message(
+            State(state.clone()),
+            Path((other["id"].as_str().unwrap().to_string(), mid(&stray))),
+            q(),
+            session_headers(&state, "ana"),
+        )
+        .await;
+        assert!(missed.is_err());
+        assert!(store.message(mid(&stray)).is_some());
     }
 
     #[tokio::test]

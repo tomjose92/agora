@@ -280,11 +280,21 @@ export interface MessageUpdateEvent {
   message: Message;
 }
 
+/** A message was deleted (sender or an admin). A null thread_id means a
+    top-level message went — roots take their whole thread with them. */
+export interface MessageDeleteEvent {
+  type: "message_delete";
+  channel_id: string;
+  message_id: number;
+  thread_id: number | null;
+}
+
 export type WsEvent =
   | TypingEvent
   | ProgressEvent
   | MessageEvent
   | MessageUpdateEvent
+  | MessageDeleteEvent
   | ReadEvent
   | ThreadReadEvent
   | ThreadRenamedEvent

@@ -11,6 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -21,12 +22,13 @@ import {
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
-import { Headphones, Maximize2, Minimize2, Star, Volume2 } from "lucide-react-native";
+import { Headphones, Maximize2, Minimize2, Star, Trash2, Volume2 } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../../../src/api/keys";
 import {
   flattenMessages,
   useChannelAgents,
+  useDeleteMessage,
   useGroups,
   useMarkThreadRead,
   useMembers,
@@ -87,12 +89,12 @@ export default function ThreadScreen() {
   const { typing, progress } = useChannelLive(channelId, rootId);
 
   const groups = useGroups();
-  const { groupId, resolvedChannelName } = useMemo(() => {
+  const { groupId, groupRole, resolvedChannelName } = useMemo(() => {
     for (const g of groups.data ?? []) {
       const c = g.channels.find((x) => x.id === channelId);
-      if (c) return { groupId: g.id, resolvedChannelName: c.name };
+      if (c) return { groupId: g.id, groupRole: g.role, resolvedChannelName: c.name };
     }
-    return { groupId: null, resolvedChannelName: null };
+    return { groupId: null, groupRole: null, resolvedChannelName: null };
   }, [groups.data, channelId]);
   const members = useMembers(groupId ?? "");
   const channelName = params.channelName || resolvedChannelName;
@@ -161,6 +163,40 @@ export default function ThreadScreen() {
   const [profileFor, setProfileFor] = useState<Message | null>(null);
   const toggleTldr = useTldrView((s) => s.toggle);
   const showingTldr = useTldrView((s) => s.showing);
+
+  /* Delete gating: the sender, or any group admin (the groups payload's
+     `role` already folds in instance admins). Deleting the root takes the
+     whole thread, so the screen pops back to the channel. */
+  const del = useDeleteMessage();
+  const username = useSession((s) => s.username);
+  const canDelete = (m: Message) =>
+    groupRole === "admin" ||
+    (m.author_type === "user" && username !== "" && m.author_id === username);
+  const confirmDelete = (m: Message) => {
+    Alert.alert(
+      "Delete message?",
+      m.id === rootId
+        ? "This deletes the message and its whole thread for everyone."
+        : "This deletes the message for everyone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            del.mutate(
+              { message: m },
+              {
+                onError: (e) => toastErr("Delete failed", e),
+                onSuccess: () => {
+                  if (m.id === rootId) router.back();
+                },
+              },
+            ),
+        },
+      ],
+    );
+  };
 
   /* 🔊 speak-aloud: while this thread is focused (and not covered by the
      live screen), agent replies landing in it are read out via server TTS —
@@ -361,6 +397,19 @@ export default function ThreadScreen() {
                   {starredIds.has(actionsFor.id) ? "Unstar" : "Star"}
                 </Text>
               </Pressable>
+              {canDelete(actionsFor) ? (
+                <Pressable
+                  style={styles.sheetBtn}
+                  onPress={() => {
+                    const m = actionsFor;
+                    setActionsFor(null);
+                    confirmDelete(m);
+                  }}
+                >
+                  <Icon icon={Trash2} size={18} color={colors.red} />
+                  <Text style={[styles.sheetText, styles.sheetDanger]}>Delete</Text>
+                </Pressable>
+              ) : null}
             </View>
           </Pressable>
         </Modal>
@@ -409,4 +458,5 @@ const styles = StyleSheet.create({
   },
   sheetBtn: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
   sheetText: { color: colors.text, fontSize: 15.5 },
+  sheetDanger: { color: colors.red },
 });
