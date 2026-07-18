@@ -195,6 +195,142 @@ function agoCloseProfile() {
   if (ov) { ov.style.display = "none"; ov.innerHTML = ""; }
 }
 
+/* ---------- source viewer ----------
+   Source chips open this overlay: one cited source at a time — site, title,
+   description and preview image once the server has unfurled it — paged
+   with arrows/dots (and arrow keys), so checking a message's sources never
+   means wading through raw URLs. */
+let _agoSrcView = null; // { mid, i }
+function agoMsgById(id) {
+  return _agoMsgs.find(m => m.id === id)
+    || _agoThreadMsgs.find(m => m.id === id)
+    || (_agoThreadRoot && _agoThreadRoot.id === id ? _agoThreadRoot : null);
+}
+function agoMsgSources(id) {
+  const m = agoMsgById(id);
+  return m && m.meta && Array.isArray(m.meta.sources) ? m.meta.sources : [];
+}
+function agoShowSources(messageId, index) {
+  const sources = agoMsgSources(messageId);
+  if (!sources.length) return;
+  _agoSrcView = { mid: messageId, i: Math.max(0, Math.min(index || 0, sources.length - 1)) };
+  let ov = document.getElementById("ago-sources-overlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "ago-sources-overlay";
+    ov.className = "conn-overlay";
+    ov.onclick = (e) => { if (e.target === ov) agoCloseSources(); };
+    document.body.appendChild(ov);
+  }
+  ov.style.display = "";
+  agoDrawSourceView();
+  document.addEventListener("keydown", agoSourceKeys);
+}
+function agoCloseSources() {
+  _agoSrcView = null;
+  const ov = document.getElementById("ago-sources-overlay");
+  if (ov) { ov.style.display = "none"; ov.innerHTML = ""; }
+  document.removeEventListener("keydown", agoSourceKeys);
+}
+function agoSourceKeys(e) {
+  if (e.key === "Escape") agoCloseSources();
+  else if (e.key === "ArrowRight") agoSourceNav(1);
+  else if (e.key === "ArrowLeft") agoSourceNav(-1);
+}
+function agoSourceNav(step) {
+  if (!_agoSrcView) return;
+  const sources = agoMsgSources(_agoSrcView.mid);
+  if (!sources.length) return;
+  _agoSrcView.i = (_agoSrcView.i + step + sources.length) % sources.length;
+  agoDrawSourceView();
+}
+function agoSrcGo(k) {
+  if (!_agoSrcView) return;
+  _agoSrcView.i = k;
+  agoDrawSourceView();
+}
+function agoDrawSourceView() {
+  const ov = document.getElementById("ago-sources-overlay");
+  if (!ov || !_agoSrcView) return;
+  const sources = agoMsgSources(_agoSrcView.mid);
+  if (!sources.length) { agoCloseSources(); return; }
+  const i = Math.min(_agoSrcView.i, sources.length - 1);
+  const s = sources[i];
+  const dots = sources.map((_, k) =>
+    `<button class="ago-src-dot ${k === i ? "on" : ""}" title="Source ${k + 1}" onclick="agoSrcGo(${k})"></button>`).join("");
+  ov.innerHTML = `
+    <div class="conn-panel ago-src-panel">
+      <div class="ago-src-top">
+        <span class="ago-src-count">Source ${i + 1} of ${sources.length}</span>
+        <button class="btn sm" onclick="agoCloseSources()">${icon("x")}</button>
+      </div>
+      ${s.image ? `<img class="ago-src-img" src="${esc(s.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+      <div class="ago-src-body">
+        <div class="ago-src-site">${icon("link")} ${esc(s.site || agoUrlHost(s.url) || "link")}</div>
+        <div class="ago-src-title">${esc(s.title || agoUrlHost(s.url) || s.url)}</div>
+        ${s.description ? `<div class="ago-src-desc">${esc(s.description)}</div>` : ""}
+        <div class="ago-src-url" title="${esc(s.url)}">${esc(s.url)}</div>
+      </div>
+      <div class="ago-src-nav">
+        <button class="btn sm" title="Previous source" onclick="agoSourceNav(-1)" ${sources.length > 1 ? "" : "disabled"}>${icon("chevron-left")}</button>
+        <div class="ago-src-dots">${dots}</div>
+        <button class="btn sm" title="Next source" onclick="agoSourceNav(1)" ${sources.length > 1 ? "" : "disabled"}>${icon("chevron-right")}</button>
+      </div>
+      <a class="ago-src-open" href="${esc(s.url)}" target="_blank" rel="noopener">${icon("external-link")} Open source</a>
+    </div>`;
+}
+
+/* ---------- mermaid diagrams ----------
+   ```mermaid fences arrive from mdLite as a .md-mermaid wrapper around the
+   still-visible code block. The library is ~3.5 MB, so it loads on demand
+   the first time a diagram is actually on screen; until it renders — and
+   whenever a graph fails to parse — the code stays as the fallback.
+   Redraws rebuild bubble innerHTML wholesale, so rendered SVG is cached by
+   graph text ("" = known-bad) and re-applied synchronously on later draws. */
+const _agoMermaidSvg = new Map();
+let _agoMermaidLoad = null;
+let _agoMermaidSeq = 0;
+function agoLoadMermaid() {
+  if (_agoMermaidLoad) return;
+  _agoMermaidLoad = new Promise(res => {
+    const s = document.createElement("script");
+    s.src = "mermaid.min.js";
+    s.onload = res;
+    s.onerror = () => { _agoMermaidLoad = null; res(); };
+    document.head.appendChild(s);
+  }).then(() => {
+    if (!window.mermaid) return;
+    window.mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+    agoRenderMermaid();
+  });
+}
+async function agoRenderMermaid() {
+  const nodes = document.querySelectorAll(".md-mermaid:not(.rendered)");
+  if (!nodes.length) return;
+  const need = new Set();
+  nodes.forEach(node => {
+    const src = node.textContent.trim();
+    const svg = _agoMermaidSvg.get(src);
+    if (svg) { node.innerHTML = svg; node.classList.add("rendered"); }
+    else if (svg === undefined) need.add(src);
+  });
+  if (!need.size) return;
+  if (!window.mermaid) { agoLoadMermaid(); return; }
+  for (const src of need) {
+    const id = `ago-mmd-${++_agoMermaidSeq}`;
+    try {
+      const { svg } = await window.mermaid.render(id, src);
+      _agoMermaidSvg.set(src, svg);
+    } catch (e) {
+      _agoMermaidSvg.set(src, "");
+      // Mermaid can leave its scratch element behind on a parse error.
+      const scratch = document.getElementById(id) || document.getElementById(`d${id}`);
+      if (scratch) scratch.remove();
+    }
+  }
+  agoRenderMermaid(); // apply what just rendered (nodes may have been redrawn)
+}
+
 /* "5m ago" / "3h ago" / "2d ago" from a unix-seconds timestamp. */
 function agoRelTime(ts) {
   const s = Math.max(0, Date.now() / 1000 - ts);
@@ -1424,7 +1560,49 @@ function agoBubble(m, inThread) {
   const mark = (pinned ? `<span class="ago-pinned-mark" title="Pinned">${icon("pin")}</span>` : "")
     + (starred ? `<span class="ago-starred-mark" title="Starred by you">${icon("star", "fill")}</span>` : "")
     + (onTldr ? `<span class="ago-tldr-mark" title="Short version — the full message is one click away">TL;DR</span>` : "");
-  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(onTldr ? tldr : m.text)}${agoAttachmentsHTML(m)}${agoOptionsHTML(m)}${agoReactionsHTML(m)}${foot}</div>`;
+  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(onTldr ? tldr : agoVisibleText(m))}${agoAttachmentsHTML(m)}${agoUnfurlsHTML(m)}${agoSourcesHTML(m)}${agoOptionsHTML(m)}${agoReactionsHTML(m)}${foot}</div>`;
+}
+/* The text a bubble renders: when the server lifted a trailing "Sources:"
+   block into meta.sources, meta.sources_start (a UTF-16 offset — exactly
+   the unit String.slice counts) marks where the block starts. Cut it and
+   let the chips stand in; the stored text itself is never rewritten. */
+function agoVisibleText(m) {
+  const meta = m.meta || {};
+  const cut = meta.sources_start;
+  if (Array.isArray(meta.sources) && meta.sources.length
+      && Number.isInteger(cut) && cut > 0 && cut < (m.text || "").length) {
+    return m.text.slice(0, cut).replace(/\s+$/, "");
+  }
+  return m.text;
+}
+function agoUrlHost(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return ""; }
+}
+/* Cited sources as a numbered chip row (title or host, never the raw URL);
+   a click opens the source viewer at that entry. */
+function agoSourcesHTML(m) {
+  const sources = m.meta && Array.isArray(m.meta.sources) ? m.meta.sources : [];
+  if (!sources.length) return "";
+  const chips = sources.map((s, i) =>
+    `<button class="ago-source-chip" title="${esc(s.title ? `${s.title}\n${s.url}` : s.url)}"
+       onclick="agoShowSources(${m.id}, ${i})"><span class="n">${i + 1}</span><span class="t">${esc(s.title || agoUrlHost(s.url) || s.url)}</span></button>`).join("");
+  return `<div class="ago-sources"><span class="ago-sources-label">${icon("link")} sources</span>${chips}</div>`;
+}
+/* Link previews the server unfurled from URLs in the prose (meta.unfurls,
+   arriving via message_update once fetched). */
+function agoUnfurlsHTML(m) {
+  const unfurls = m.meta && Array.isArray(m.meta.unfurls) ? m.meta.unfurls : [];
+  if (!unfurls.length) return "";
+  const cards = unfurls.map(u => `
+    <a class="ago-unfurl" href="${esc(u.url)}" target="_blank" rel="noopener">
+      <div class="ago-unfurl-body">
+        <div class="ago-unfurl-site">${esc(u.site || agoUrlHost(u.url))}</div>
+        <div class="ago-unfurl-title">${esc(u.title || u.url)}</div>
+        ${u.description ? `<div class="ago-unfurl-desc">${esc(u.description)}</div>` : ""}
+      </div>
+      ${u.image ? `<img class="ago-unfurl-img" src="${esc(u.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+    </a>`).join("");
+  return `<div class="ago-unfurls">${cards}</div>`;
 }
 /* Flip one message between its full text and its TL;DR (agent-supplied
    summary in meta.tldr). View state is local to this client on purpose —
@@ -1493,6 +1671,7 @@ function agoDrawMessages() {
   }
   agoDrawUnreadBar();
   agoMaybeMarkRead();
+  agoRenderMermaid();
 }
 
 function agoStatusHTML(progress, typing) {
@@ -2173,6 +2352,7 @@ function agoDrawThread() {
   const log = document.getElementById("ago-thread-log");
   if (log) log.scrollTop = log.scrollHeight;
   agoDrawStatus();
+  agoRenderMermaid();
 }
 
 /* ---------- members panel ---------- */

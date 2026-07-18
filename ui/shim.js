@@ -162,8 +162,16 @@ function mdLite(s) {
   let t = esc(s);
   const slots = [];
   const stash = html => `\u0000${slots.push(html) - 1}\u0000`;
-  t = t.replace(/```\w*\n?([\s\S]*?)```/g,
-    (_, code) => stash(`<pre class="md-pre">${code.replace(/\n$/, "")}</pre>`));
+  t = t.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    code = code.replace(/\n$/, "");
+    // A mermaid fence keeps its code block visible inside a marker div;
+    // agoRenderMermaid() swaps it for the rendered SVG after each redraw
+    // (and leaves the code standing when the graph doesn't parse).
+    if (lang.toLowerCase() === "mermaid") {
+      return stash(`<div class="md-mermaid"><pre class="md-pre">${code}</pre></div>`);
+    }
+    return stash(`<pre class="md-pre"${lang ? ` data-lang="${lang}"` : ""}>${code}</pre>`);
+  });
   t = t.replace(/`([^`\n]+)`/g, (_, c) => stash(`<code>${c}</code>`));
   t = t.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g,
     (_, label, url) => stash(`<a href="${url}" target="_blank" rel="noopener">${label}</a>`));

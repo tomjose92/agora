@@ -65,6 +65,17 @@ export interface MessageOption {
   style?: "primary" | "danger" | "default" | string;
 }
 
+/** Link metadata for source chips and unfurl cards. Entries start as bare
+    URLs; the server enriches them asynchronously (title/description/image
+    arrive on a message_update once the page is fetched). */
+export interface LinkPreview {
+  url: string;
+  title?: string;
+  description?: string;
+  image?: string;
+  site?: string;
+}
+
 export interface MessageMeta {
   options?: MessageOption[];
   options_id?: string;
@@ -77,6 +88,14 @@ export interface MessageMeta {
   /* Agent-supplied short version of a long message; the UI can swap the
      bubble between it and the full text. */
   tldr?: string;
+  /* Cited URLs — sent structured by the agent or lifted server-side from a
+     trailing "Sources:" block; rendered as chips + viewer, never raw. */
+  sources?: LinkPreview[];
+  /* UTF-16 offset into `text` where a detected trailing sources block
+     starts (String.slice units); clients cut the text there. */
+  sources_start?: number;
+  /* Server-fetched previews for (non-source) links in the prose. */
+  unfurls?: LinkPreview[];
 }
 
 /** One emoji's reactions on a message; users in reaction order, so the

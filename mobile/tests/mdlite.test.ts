@@ -41,12 +41,23 @@ describe("parseInline", () => {
 });
 
 describe("parseMd", () => {
-  it("extracts fenced code blocks", () => {
+  it("extracts fenced code blocks with their language tag", () => {
     const blocks = parseMd("before\n```js\nconst x = 1;\n```\nafter");
     expect(blocks).toEqual([
       { kind: "para", spans: [{ kind: "text", text: "before" }] },
-      { kind: "codeblock", text: "const x = 1;" },
+      { kind: "codeblock", lang: "js", text: "const x = 1;" },
       { kind: "para", spans: [{ kind: "text", text: "after" }] },
+    ]);
+    // No tag → no lang; the tag is lowercased (```Mermaid still renders).
+    expect(parseMd("```\nplain\n```")).toEqual([{ kind: "codeblock", lang: undefined, text: "plain" }]);
+    expect(parseMd("```Mermaid\ngraph TD; A-->B\n```")).toEqual([
+      { kind: "codeblock", lang: "mermaid", text: "graph TD; A-->B" },
+    ]);
+    // Consecutive fences don't shift the text/lang/code group cadence.
+    const two = parseMd("```a\none\n```\n```b\ntwo\n```");
+    expect(two.filter((b) => b.kind === "codeblock")).toEqual([
+      { kind: "codeblock", lang: "a", text: "one" },
+      { kind: "codeblock", lang: "b", text: "two" },
     ]);
   });
 

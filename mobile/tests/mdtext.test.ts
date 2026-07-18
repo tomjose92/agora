@@ -4,6 +4,10 @@
    as a numeric maxWidth. Without it the ScrollView grows to content width and
    the bubble just clips it — no horizontal scroll. */
 
+/* Same stub as messageitem.test.ts: lucide ships untransformed ESM (MdText
+   pulls it in via the mermaid block card). */
+jest.mock("lucide-react-native", () => new Proxy({}, { get: () => () => null }));
+
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { ScrollView, StyleSheet } from "react-native";

@@ -17,6 +17,8 @@ import { Attachments } from "./Attachments";
 import { Icon } from "./Icon";
 import { MdText } from "./MdText";
 import { Reactions } from "./Reactions";
+import { Sources, visibleText } from "./Sources";
+import { Unfurls } from "./Unfurls";
 
 export function Avatar({ message }: { message: Message }) {
   if (message.author_type === "agent") {
@@ -102,7 +104,7 @@ export function MessageItem({
     message.author_type === "user" && username !== "" && message.author_id === username;
   const tldr = tldrOf(message);
   const showTldr = useTldrView((s) => !!s.showing[message.id]) && tldr != null;
-  const body = showTldr && tldr != null ? tldr : message.text;
+  const body = showTldr && tldr != null ? tldr : visibleText(message);
 
   const flags = (
     <>
@@ -140,6 +142,8 @@ export function MessageItem({
           {pressBackdrop}
           <MdText text={body} onLongPress={longPress} />
           <Attachments session={session} attachments={message.attachments ?? []} />
+          <Unfurls message={message} />
+          <Sources message={message} />
           <MessageOptions message={message} />
           <Reactions message={message} />
           <View style={styles.foot}>
@@ -177,6 +181,8 @@ export function MessageItem({
         </View>
         <MdText text={body} onLongPress={longPress} />
         <Attachments session={session} attachments={message.attachments ?? []} />
+        <Unfurls message={message} />
+        <Sources message={message} />
         <MessageOptions message={message} />
         <Reactions message={message} />
         {replies}

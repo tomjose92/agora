@@ -13,7 +13,9 @@ pub mod hub;
 pub mod migrate;
 pub mod push;
 pub mod server;
+pub mod sources;
 pub mod store;
+pub mod unfurl;
 pub mod voice;
 
 use std::net::SocketAddr;
@@ -67,6 +69,10 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
     let store = Arc::new(store::Store::open(&data_dir.join("agora.db"))?);
     bootstrap_admin_user(&config, &store);
     let hub = Arc::new(hub::Hub::new(store));
+    // Link previews are fetched off the post path: posts queue their message
+    // id here; the worker fetches behind SSRF guards and answers with a
+    // `message_update` broadcast when metadata lands.
+    hub.set_unfurler(unfurl::spawn_worker(Arc::clone(&hub)));
     let connections = connections::ConnectionManager::new(Arc::clone(&hub), Arc::clone(&config));
     connections.sync();
 
