@@ -54,10 +54,88 @@ PROGRESS_THROTTLE = 2.0  # seconds between progress frames
 TAIL_BYTES = 256 * 1024  # how much of a session .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
-HELP = """Commands (everything else is forwarded to Claude):
+# Models a channel may switch to via bridge /model. Keys are what a user can
+# type; values are passed to `claude --model`. Allowlisted so chat cannot inject
+# arbitrary argv. Kept as bridge meta (not forwarded) so the choice persists in
+# state.json and applies to every subsequent run for that channel/thread.
+ALLOWED_MODELS = {
+    "opus": "opus",
+    "sonnet": "sonnet",
+    "haiku": "haiku",
+    "fable": "fable",
+    "best": "best",
+    "opusplan": "opusplan",
+    "sonnet[1m]": "sonnet[1m]",
+    "opus[1m]": "opus[1m]",
+    "fable[1m]": "fable[1m]",
+    "claude-opus-4-8": "claude-opus-4-8",
+    "claude-sonnet-5": "claude-sonnet-5",
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",
+    "claude-fable-5": "claude-fable-5",
+}
+MODEL_CHOICES = "opus | sonnet | haiku | fable | best | … | default"
+
+# Permission modes, ordered least→most privileged. A channel may always lower
+# privilege; raising above the bridge startup default needs
+# CLAUDE_ALLOW_PERMISSION_ESCALATION.
+PERMISSION_RANK = {"plan": 0, "default": 1, "acceptEdits": 2, "bypassPermissions": 3}
+_PERMISSION_ALIASES = {
+    "plan": "plan",
+    "default": "default",
+    "acceptedits": "acceptEdits",
+    "accept": "acceptEdits",
+    "edits": "acceptEdits",
+    "bypass": "bypassPermissions",
+    "bypasspermissions": "bypassPermissions",
+    "skip": "bypassPermissions",
+}
+
+
+def normalize_permission_mode(raw: str) -> str | None:
+    """Map a user/CLI spelling to a canonical --permission-mode value (or None)."""
+    return _PERMISSION_ALIASES.get((raw or "").strip().lower())
+
+
+def split_permission_args(tokens: list[str]) -> tuple[str, list[str]]:
+    """Pull the default permission mode out of the base claude args.
+
+    Returns (default_mode, remaining_tokens). Strips --permission-mode /
+    --dangerously-skip-permissions so the per-binding mode passed in
+    run_claude cannot collide with a duplicate in CLAUDE_PERMISSION_ARGS.
+    """
+    mode = "default"
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--permission-mode" and i + 1 < len(tokens):
+            mode = normalize_permission_mode(tokens[i + 1]) or mode
+            i += 2
+            continue
+        if t.startswith("--permission-mode="):
+            mode = normalize_permission_mode(t.split("=", 1)[1]) or mode
+            i += 1
+            continue
+        if t == "--dangerously-skip-permissions":
+            mode = "bypassPermissions"
+            i += 1
+            continue
+        out.append(t)
+        i += 1
+    return mode, out
+
+
+# Bridge meta commands. Everything else is forwarded to the bound session via
+# `claude -p` (including headless-capable Claude slash cmds like /compact).
+# Prefer bridge names that don't collide with Claude Code's interactive-only
+# commands (/help, /resume): https://code.claude.com/docs/en/commands
+HELP = """Bridge commands (plain text + other Claude slash cmds are forwarded):
 /sessions [n] - list recent Claude CLI sessions
-/resume <n | session-id> - bind this channel/thread to a session
+/use <n | session-id> - bind this channel/thread to a session
 /new <dir> - bind to a fresh session in a directory (must be under an allowed root)
+/model <opus|sonnet|haiku|fable|…|default> - set the model for this channel
+/permissions <plan|acceptEdits|bypass|default|reset> - set the permission mode
+/stop - cancel the run in flight on this channel
 /status - show the current binding
 /commands - this message"""
 
@@ -185,7 +263,7 @@ def format_sessions(sessions: list[dict]) -> str:
             prompt = prompt[:90] + "…"
         proj = Path(s["cwd"]).name if s["cwd"] != "?" else "?"
         lines.append(f'{i}. {proj} — "{prompt}" ({_age(s["mtime"])})')
-    lines.append("\nReply /resume <n> to bind this channel to a session.")
+    lines.append("\nReply /use <n> to bind this channel to a session.")
     return "\n".join(lines)
 
 
@@ -265,7 +343,13 @@ class Bridge:
         self.agent_id = args.agent_id
         self.agent_name = args.agent_name
         self.claude_bin = args.claude_bin
-        self.claude_args = shlex.split(args.claude_args)
+        # Separate default permission mode from other base args so a per-binding
+        # /permissions choice can override it without a duplicate flag.
+        self.default_permission_mode, self.base_claude_args = split_permission_args(
+            shlex.split(args.claude_args)
+        )
+        self.default_model = (args.model or "").strip() or None
+        self.allow_escalation = args.allow_permission_escalation
         self.timeout = args.timeout
         self.permission_timeout = args.permission_timeout
         self.sessions_limit = args.sessions
@@ -274,6 +358,8 @@ class Bridge:
         self.bindings: dict[str, dict] = self._load_state()
         self.listings: dict[str, list[dict]] = {}  # binding key -> last /sessions result
         self.busy: set[str] = set()
+        self.procs: dict[str, asyncio.subprocess.Process] = {}  # key -> running claude
+        self.stop_requested: set[str] = set()  # keys cancelled via /stop
         self.outbox: asyncio.Queue = asyncio.Queue()
         # In-flight asks awaiting a channel response: options_id ->
         # (future, channel_id, thread_id). Futures resolve to
@@ -385,22 +471,37 @@ class Bridge:
             sessions = await asyncio.to_thread(recent_sessions, limit)
             self.listings[key] = sessions
             self.post(frame, format_sessions(sessions))
-        elif cmd == "/resume":
+        elif cmd == "/use":
             self.post(frame, await asyncio.to_thread(self._cmd_use, key, rest))
         elif cmd == "/new":
             self.post(frame, self._cmd_new(key, rest))
+        elif cmd == "/model":
+            self.post(frame, self._cmd_model(key, rest))
+        elif cmd == "/permissions":
+            self.post(frame, self._cmd_permissions(key, rest))
+        elif cmd == "/stop":
+            self.post(frame, self._cmd_stop(key))
         elif cmd == "/status":
             self.post(frame, self._cmd_status(key))
-        elif cmd.startswith("/"):
-            self.post(frame, f"Unknown command {cmd}.\n{HELP}")
         else:
+            # Plain text and Claude CLI slash commands (/compact, /usage, …).
             await self.forward_to_claude(key, frame, text)
 
     # ---------------------------------------------------------- commands
 
+    def _set_binding(self, key: str, session_id: str | None, cwd: str) -> None:
+        """Write session/cwd for a channel, keeping any model/permission overrides."""
+        prev = self.bindings.get(key) or {}
+        binding: dict = {"session_id": session_id, "cwd": cwd}
+        for k in ("model", "permission_mode"):
+            if k in prev:
+                binding[k] = prev[k]
+        self.bindings[key] = binding
+        self._save_state()
+
     def _cmd_use(self, key: str, arg: str) -> str:
         if not arg:
-            return "Usage: /resume <n from /sessions | session-id>"
+            return "Usage: /use <n from /sessions | session-id>"
         if arg.isdigit():
             listing = self.listings.get(key) or recent_sessions(self.sessions_limit)
             idx = int(arg) - 1
@@ -411,8 +512,7 @@ class Bridge:
             info = find_session(arg)
             if not info:
                 return f"Session {arg} not found under {CLAUDE_PROJECTS}."
-        self.bindings[key] = {"session_id": info["session_id"], "cwd": info["cwd"]}
-        self._save_state()
+        self._set_binding(key, info["session_id"], info["cwd"])
         prompt = info["last_prompt"][:120]
         return (
             f"Bound to session {info['session_id'][:8]}… in {info['cwd']}\n"
@@ -437,17 +537,80 @@ class Bridge:
         if not any(cwd == root or cwd.is_relative_to(root) for root in self.allowed_roots):
             allowed = ", ".join(str(r) for r in self.allowed_roots)
             return f"{cwd} is not under an allowed root. Allowed: {allowed}"
-        self.bindings[key] = {"session_id": None, "cwd": str(cwd)}
-        self._save_state()
+        self._set_binding(key, None, str(cwd))
         return f"Will start a fresh Claude session in {cwd} on your next message."
+
+    def _cmd_model(self, key: str, arg: str) -> str:
+        b = self.bindings.get(key)
+        if not b:
+            return "No session bound here. Run /sessions then /use <n>."
+        if not arg:
+            cur = b.get("model") or self.default_model or "session default"
+            return f"Model: {cur}\nUsage: /model <{MODEL_CHOICES}>"
+        choice = arg.strip().lower()
+        if choice == "default":
+            b.pop("model", None)
+            self.bindings[key] = b
+            self._save_state()
+            fell_back = self.default_model or "session default"
+            return f"Model reset to the bridge default ({fell_back})."
+        model = ALLOWED_MODELS.get(choice)
+        if not model:
+            return f"Unknown model {arg!r}. Options: {MODEL_CHOICES}"
+        b["model"] = model
+        self.bindings[key] = b
+        self._save_state()
+        return f"Model set to {model} for this channel. Next messages use `claude --model {model}`."
+
+    def _cmd_permissions(self, key: str, arg: str) -> str:
+        b = self.bindings.get(key)
+        if not b:
+            return "No session bound here. Run /sessions then /use <n>."
+        default = self.default_permission_mode
+        if not arg:
+            cur = b.get("permission_mode") or default
+            return (
+                f"Permission mode: {cur} (bridge default: {default})\n"
+                "Usage: /permissions <plan | acceptEdits | bypass | default | reset>"
+            )
+        choice = arg.strip().lower()
+        if choice == "reset":
+            b.pop("permission_mode", None)
+            self.bindings[key] = b
+            self._save_state()
+            return f"Permission mode reset to the bridge default ({default})."
+        mode = normalize_permission_mode(choice)
+        if not mode:
+            return "Unknown mode. Options: plan, acceptEdits, bypass, default, reset."
+        if PERMISSION_RANK[mode] > PERMISSION_RANK[default] and not self.allow_escalation:
+            return (
+                f"Refusing to escalate from {default} to {mode}: privilege escalation "
+                "is disabled. Restart the bridge with "
+                "CLAUDE_ALLOW_PERMISSION_ESCALATION=1 to allow it. You can always "
+                "lower privilege (e.g. /permissions plan)."
+            )
+        b["permission_mode"] = mode
+        self.bindings[key] = b
+        self._save_state()
+        return f"Permission mode set to {mode} for this channel."
+
+    def _cmd_stop(self, key: str) -> str:
+        proc = self.procs.get(key)
+        if not proc or proc.returncode is not None:
+            return "Nothing running here."
+        self.stop_requested.add(key)
+        proc.kill()
+        return "Stopping the current run…"
 
     def _cmd_status(self, key: str) -> str:
         b = self.bindings.get(key)
         if not b:
-            return "No session bound here. Run /sessions then /resume <n>."
+            return "No session bound here. Run /sessions then /use <n>."
         sid = b["session_id"][:8] + "…" if b["session_id"] else "(new, not started)"
+        model = b.get("model") or self.default_model or "session default"
+        mode = b.get("permission_mode") or self.default_permission_mode
         busy = " — a run is in flight" if key in self.busy else ""
-        return f"Session {sid} in {b['cwd']}{busy}"
+        return f"Session {sid} in {b['cwd']}\nModel: {model}\nPermissions: {mode}{busy}"
 
     # ------------------------------------------------------------ claude
 
@@ -456,7 +619,7 @@ class Bridge:
             return
         binding = self.bindings.get(key)
         if not binding:
-            self.post(frame, "No session bound here yet. Run /sessions then /resume <n>.")
+            self.post(frame, "No session bound here yet. Run /sessions then /use <n>.")
             return
         if key in self.busy:
             self.post(frame, "Still working on the previous message — try again when it's done.")
@@ -503,6 +666,8 @@ class Bridge:
         prompt, extra_args, tmpdir = self._stage_attachments(frame, text)
         perm_tasks: list[asyncio.Task] = []
         perm_ids: list[str] = []
+        mode = binding.get("permission_mode") or self.default_permission_mode
+        model = binding.get("model") or self.default_model
         try:
             # Bidirectional stream-json: the prompt rides on stdin and
             # `--permission-prompt-tool stdio` makes the CLI route permission
@@ -513,13 +678,19 @@ class Bridge:
                 "--input-format", "stream-json",
                 "--output-format", "stream-json", "--verbose",
                 "--permission-prompt-tool", "stdio",
+                "--permission-mode", mode,
                 *extra_args,
-                *self.claude_args,
+                *self.base_claude_args,
             ]
+            if model:
+                cmd += ["--model", model]
             if binding.get("session_id"):
                 cmd += ["--resume", binding["session_id"]]
-            log(f"run: session={binding.get('session_id')} cwd={binding['cwd']}"
-                + (f" attachments@{tmpdir}" if tmpdir else ""))
+            log(
+                f"run: session={binding.get('session_id')} cwd={binding['cwd']} "
+                f"model={model or 'default'} mode={mode}"
+                + (f" attachments@{tmpdir}" if tmpdir else "")
+            )
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=binding["cwd"],
@@ -530,11 +701,15 @@ class Bridge:
                 # contents; the default 64 KB readline limit is far too small.
                 limit=64 * 1024 * 1024,
             )
+            self.procs[key] = proc  # so /stop can find and kill this run
             await self._send_to_claude(proc, {
                 "type": "user",
                 "message": {"role": "user", "content": [{"type": "text", "text": prompt}]},
             })
             result_text, last_progress = None, 0.0
+            # Headless-capable slash commands from the CLI's system/init frame
+            # (interactive-only ones like /help are omitted — see _annotate_slash_failure).
+            slash_commands: list[str] = []
             try:
                 async with asyncio.timeout(self.timeout):
                     assert proc.stdout is not None
@@ -547,7 +722,11 @@ class Bridge:
                         except json.JSONDecodeError:
                             continue
                         kind = event.get("type")
-                        if kind == "assistant":
+                        if kind == "system" and event.get("subtype") == "init":
+                            raw_cmds = event.get("slash_commands") or []
+                            if isinstance(raw_cmds, list):
+                                slash_commands = [c for c in raw_cmds if isinstance(c, str)]
+                        elif kind == "assistant":
                             snippet = self._progress_snippet(event)
                             if snippet and time.monotonic() - last_progress > PROGRESS_THROTTLE:
                                 last_progress = time.monotonic()
@@ -586,19 +765,55 @@ class Bridge:
                 if proc.returncode is None:
                     proc.kill()
                     await proc.wait()
+                self.procs.pop(key, None)
                 # Unstick any approval still waiting on a button: cancel it and
                 # lock the buttons so a later tap can't answer a dead run.
                 for oid in perm_ids:
                     self._cancel_perm(oid, "The run ended before a decision.")
                 if perm_tasks:
                     await asyncio.gather(*perm_tasks, return_exceptions=True)
+            if key in self.stop_requested:
+                self.stop_requested.discard(key)
+                return "Stopped."
             if result_text is None:
                 stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
                 raise RuntimeError(stderr[-500:] or f"claude exited {proc.returncode} with no result")
-            return result_text
+            return self._annotate_slash_failure(prompt, result_text, slash_commands)
         finally:
             if tmpdir:
                 shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+    @staticmethod
+    def _annotate_slash_failure(prompt: str, result: str, slash_commands: list[str]) -> str:
+        """Clarify Claude's headless slash-command rejects for chat users.
+
+        The bridge talks to `claude -p` (no TUI). Interactive-only commands
+        (/help, pickers, …) fail with "Unknown skill" or "isn't available in
+        this environment"; the init frame's slash_commands list is the truth
+        for what *does* work over this path.
+        """
+        if not prompt.lstrip().startswith("/"):
+            return result
+        lower = (result or "").lower()
+        if "unknown skill" not in lower and "isn't available in this environment" not in lower:
+            return result
+        available = sorted(
+            f"/{c}" for c in slash_commands if c and not c.startswith("_")
+        )
+        note = (
+            "\n\n_(This chat drives Claude headlessly via `claude -p` — no "
+            "interactive terminal UI. Commands that open pickers/menus only "
+            "work in the local `claude` TUI. "
+        )
+        if available:
+            # Keep the hint short; the full list can be long.
+            preview = ", ".join(available[:24])
+            more = f", … ({len(available)} total)" if len(available) > 24 else ""
+            note += f"Headless-capable examples: {preview}{more}. "
+        note += "Bridge meta-commands: `/commands`.)_"
+        return (result or "").rstrip() + note
+
 
     # -------------------------------------------------------- permissions
 
@@ -984,7 +1199,16 @@ def main() -> None:
     ap.add_argument("--claude-bin", default=os.environ.get("CLAUDE_BIN", "claude"))
     ap.add_argument("--claude-args",
                     default=os.environ.get("CLAUDE_PERMISSION_ARGS", "--permission-mode acceptEdits"),
-                    help="extra args for every claude run (permissions etc.)")
+                    help="extra args for every claude run; the permission mode here "
+                         "is the default, overridable per channel with /permissions")
+    ap.add_argument("--model", default=os.environ.get("CLAUDE_MODEL", ""),
+                    help="default model for every run (channels override with "
+                         f"/model); one of: {MODEL_CHOICES}")
+    ap.add_argument("--allow-permission-escalation", action="store_true",
+                    default=os.environ.get("CLAUDE_ALLOW_PERMISSION_ESCALATION", "").lower()
+                    in ("1", "true", "yes"),
+                    help="allow /permissions to raise privilege above the bridge "
+                         "default (off by default; lowering privilege is always allowed)")
     ap.add_argument("--timeout", type=int, default=int(os.environ.get("CLAUDE_TIMEOUT", "1800")),
                     help="per-run timeout in seconds")
     ap.add_argument("--permission-timeout", type=int,

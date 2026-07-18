@@ -32,8 +32,10 @@ agent, and forwards channel messages to `claude -p --resume <session>`.
 
    ```
    /sessions            -> 1. mimir — "fix the dispatcher tests" (12m ago) ...
-   /resume 1            -> bound to that session
+   /use 1               -> bound to that session
+   /model sonnet        -> persist model for this channel (claude --model)
    also run the full suite      -> resumed headlessly; reply posted back
+   /compact             -> Claude headless slash command, forwarded to the session
    ```
 
 ## Commands
@@ -41,11 +43,25 @@ agent, and forwards channel messages to `claude -p --resume <session>`.
 | command | effect |
 |---|---|
 | `/sessions [n]` | list your most recent Claude CLI sessions (from `~/.claude/projects/`) |
-| `/resume <n \| session-id>` | bind this channel/thread to a session |
+| `/use <n \| session-id>` | bind this channel/thread to a session |
 | `/new <dir>` | bind to a fresh session started in `<dir>` — **`<dir>` must be under an allowed root** (see below); disabled entirely when no roots are configured |
-| `/status` | show the current binding and whether a run is in flight |
-| `/commands` | show this command list |
-| anything else | forwarded to the bound session; the reply is posted back |
+| `/model <opus\|sonnet\|haiku\|fable\|…\|default>` | set the model for this channel (`default` clears the override); persists in the binding and is passed as `claude --model` on every run |
+| `/permissions <plan\|acceptEdits\|bypass\|default\|reset>` | set the permission mode for this channel (`reset` clears the override). Lowering privilege is always allowed; **raising it above the bridge default requires `CLAUDE_ALLOW_PERMISSION_ESCALATION`** |
+| `/stop` | cancel the run in flight on this channel (kills the `claude` child) |
+| `/status` | show the current binding, model, permission mode, and whether a run is in flight |
+| `/commands` | show this bridge command list |
+| anything else | forwarded to the bound session (plain text **and** Claude CLI slash commands the headless CLI supports, e.g. `/compact`, `/usage`, `/context`) |
+
+`/model` and `/permissions` are **per channel/thread** — same as session bindings —
+so one channel can plan read-only on Sonnet while another auto-applies on Opus.
+Both persist in `state.json`. Bridge `/model` is intentional (not Claude's TUI
+`/model` picker): it sticks across runs via `--model`.
+
+**Claude slash commands from chat.** Non-bridge messages go to `claude -p`
+(headless — no interactive terminal UI). Only commands the CLI exposes for that
+mode work when forwarded (see each run's `system/init` `slash_commands`).
+Interactive-only ones like `/help` fail with Claude's "isn't available in this
+environment" / `Unknown skill`; use `/commands` for the bridge list.
 
 Only **human** authors can drive the bridge — messages from other agents/bots
 are ignored even when they `@mention` Claude, so a prompt-injected agent in the
@@ -62,12 +78,12 @@ per channel/thread binding, in memory only — a bridge restart re-asks. If
 nobody taps within `--permission-timeout` (`CLAUDE_PERMISSION_TIMEOUT`, default
 600 s) the request is denied and the buttons lock with a note; the wait counts
 against the overall run `--timeout`. The default permission mode is still
-`acceptEdits` — edits proceed unprompted, everything else asks. The CLI's
-`ExitPlanMode` gate is reworded for the channel: it posts as "Claude finished
-planning and wants approval to start implementing this plan" with the plan
-text and **Approve plan / Reject** buttons (no "always" option — each plan is
-approved on its own), since approving it is what lets Claude leave plan mode
-and start editing.
+`acceptEdits` — edits proceed unprompted, everything else asks — and channels
+can override with `/permissions`. The CLI's `ExitPlanMode` gate is reworded for
+the channel: it posts as "Claude finished planning and wants approval to start
+implementing this plan" with the plan text and **Approve plan / Reject** buttons
+(no "always" option — each plan is approved on its own), since approving it is
+what lets Claude leave plan mode and start editing.
 
 **Clarifying questions.** When Claude asks a question (its `AskUserQuestion`
 tool), there is no Approve/Reject step — the bridge posts each question to the
@@ -94,8 +110,12 @@ works, the bridge streams typing + progress lines to the channel.
 Everything is env-overridable (flags take precedence): `AGORA_URL`,
 `AGORA_PAIRING_TOKEN`, `AGENT_ID` / `AGENT_NAME`, `CLAUDE_BIN`,
 `CLAUDE_PERMISSION_ARGS` (default `--permission-mode acceptEdits`; set
-`--dangerously-skip-permissions` for fully unattended runs), `CLAUDE_TIMEOUT`
-(seconds, default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
+`--dangerously-skip-permissions` for fully unattended runs — the permission mode
+here is just the **default**, overridable per channel with `/permissions`),
+`CLAUDE_MODEL` (default model for every run, e.g. `opus`; channels override with
+`/model`), `CLAUDE_ALLOW_PERMISSION_ESCALATION` (`1` to let `/permissions` raise
+privilege above the default — off by default), `CLAUDE_TIMEOUT` (seconds,
+default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
 
 Security-relevant options:
 
