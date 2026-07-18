@@ -32,6 +32,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.25.2",
     "react-native-svg": "15.15.4",
+    "react-native-webview": "13.16.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -64,6 +65,9 @@
     "testPathIgnorePatterns": [
       "tests/integration.test.ts"
     ],
+    "moduleNameMapper": {
+      "^react-native-webview$": "<rootDir>/tests/mocks/webview.js"
+    },
     "transformIgnorePatterns": [
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|@shopify/flash-list)"
     ]

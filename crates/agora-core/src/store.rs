@@ -196,6 +196,16 @@ CREATE TABLE IF NOT EXISTS user_prefs (
     position INTEGER,             -- NULL = no manual order for this item
     PRIMARY KEY (username, kind, item_id)
 );
+-- Fetched link-preview metadata (see unfurl.rs), keyed by exact URL: one
+-- fetch per URL across all messages. Failures are cached too (ok = 0) so a
+-- dead link is not retried per message; rows expire by fetched_at against
+-- UNFURL_TTL_OK / UNFURL_TTL_ERR.
+CREATE TABLE IF NOT EXISTS unfurl_cache (
+    url TEXT PRIMARY KEY,
+    ok INTEGER NOT NULL,
+    meta TEXT NOT NULL,
+    fetched_at REAL NOT NULL
+);
 -- Full-text index over message text (external content: rows live in
 -- `messages`, the index holds only tokens). Porter stemming so "deploy"
 -- finds "deployed"/"deployment". Kept in sync by the triggers below;
@@ -217,6 +227,11 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF text ON message
     INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
 END;
 "#;
+
+/// How long a successful unfurl row stays fresh (page metadata is stable).
+pub const UNFURL_TTL_OK: f64 = 7.0 * 86_400.0;
+/// Failures retry sooner — the page may have been down, not gone.
+pub const UNFURL_TTL_ERR: f64 = 86_400.0;
 
 /// Columns added after v1 shipped: CREATE TABLE IF NOT EXISTS won't alter
 /// existing tables, so bolt them on when missing.
@@ -1476,20 +1491,32 @@ impl Store {
         })
     }
 
-    /// Merge ``patch`` into a message's ``meta`` JSON and return the updated message.
+    /// Merge ``patch`` into a message's ``meta`` JSON and return the updated
+    /// message. The read-merge-write runs under one connection lock: the
+    /// unfurl worker and an option resolve can patch the same message
+    /// concurrently, and a merge computed from a stale read would silently
+    /// drop the other writer's keys.
     pub fn update_message_meta(&self, message_id: i64, patch: &Value) -> Option<Value> {
-        let existing = self.message(message_id)?;
-        let mut meta = existing.get("meta").cloned().unwrap_or(Value::Null);
-        if !meta.is_object() {
-            meta = json!({});
-        }
-        if let (Some(obj), Some(patch_obj)) = (meta.as_object_mut(), patch.as_object()) {
-            for (k, v) in patch_obj {
-                obj.insert(k.clone(), v.clone());
-            }
-        }
         {
             let conn = self.conn.lock().unwrap();
+            let raw: Option<String> = conn
+                .query_row(
+                    "SELECT meta FROM messages WHERE id = ?1",
+                    params![message_id],
+                    |r| r.get(0),
+                )
+                .ok()?;
+            let mut meta = raw
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .unwrap_or(Value::Null);
+            if !meta.is_object() {
+                meta = json!({});
+            }
+            if let (Some(obj), Some(patch_obj)) = (meta.as_object_mut(), patch.as_object()) {
+                for (k, v) in patch_obj {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
             conn.execute(
                 "UPDATE messages SET meta = ?1 WHERE id = ?2",
                 params![meta.to_string(), message_id],
@@ -1514,6 +1541,41 @@ impl Store {
             |r| r.get(0),
         )
         .ok()
+    }
+
+    // ------------------------------------------------------------- unfurl cache
+
+    /// A cached link preview: `Some((ok, meta))` while fresh, `None` when
+    /// missing or expired (expired rows are simply overwritten by the next
+    /// `unfurl_cache_put` — no sweeper needed at this table's size).
+    pub fn unfurl_cache_get(&self, url: &str) -> Option<(bool, Value)> {
+        let conn = self.conn.lock().unwrap();
+        let (ok, meta, fetched_at): (i64, String, f64) = conn
+            .query_row(
+                "SELECT ok, meta, fetched_at FROM unfurl_cache WHERE url = ?1",
+                params![url],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .ok()?;
+        let ok = ok != 0;
+        let ttl = if ok { UNFURL_TTL_OK } else { UNFURL_TTL_ERR };
+        if now() - fetched_at > ttl {
+            return None;
+        }
+        Some((ok, serde_json::from_str(&meta).unwrap_or_else(|_| json!({}))))
+    }
+
+    pub fn unfurl_cache_put(&self, url: &str, ok: bool, meta: &Value) {
+        self.unfurl_cache_put_at(url, ok, meta, now());
+    }
+
+    fn unfurl_cache_put_at(&self, url: &str, ok: bool, meta: &Value, fetched_at: f64) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO unfurl_cache (url, ok, meta, fetched_at) VALUES (?1, ?2, ?3, ?4)",
+            params![url, ok as i64, meta.to_string(), fetched_at],
+        )
+        .unwrap();
     }
 
     pub fn message(&self, message_id: i64) -> Option<Value> {
@@ -3365,5 +3427,61 @@ mod tests {
         assert!(s.delete_invite_link(stale_token));
         assert!(s.invite_link(stale_token).is_none());
         assert_eq!(s.list_invite_links().len(), 1);
+    }
+
+    #[test]
+    fn update_message_meta_merges_atomically_across_writers() {
+        use std::sync::Arc;
+        let s = Arc::new(store());
+        let g = s.create_group("G", "", None);
+        let c = s.create_channel(g["id"].as_str().unwrap(), "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let m = s.add_message(cid, "hi", "user", "tom", None, None, &[]);
+        let mid = m["id"].as_i64().unwrap();
+
+        // Two writers patching the same message — the unfurl worker vs. an
+        // option resolve. Every write adds a key nobody rewrites, so a merge
+        // computed from a stale read (the write clobbering the other side's
+        // just-added key) stays visible at the end no matter when it happens.
+        const ROUNDS: i64 = 200;
+        let patch_key = move |s: &Store, prefix: &str, i: i64| {
+            let mut patch = serde_json::Map::new();
+            patch.insert(format!("{prefix}{i}"), json!(i));
+            s.update_message_meta(mid, &Value::Object(patch));
+        };
+        let (a, b) = (Arc::clone(&s), Arc::clone(&s));
+        let ta = std::thread::spawn(move || (0..ROUNDS).for_each(|i| patch_key(&a, "a", i)));
+        let tb = std::thread::spawn(move || (0..ROUNDS).for_each(|i| patch_key(&b, "b", i)));
+        ta.join().unwrap();
+        tb.join().unwrap();
+        let meta = &s.message(mid).unwrap()["meta"];
+        for i in 0..ROUNDS {
+            assert_eq!(meta[format!("a{i}")], i, "lost a{i}");
+            assert_eq!(meta[format!("b{i}")], i, "lost b{i}");
+        }
+    }
+
+    #[test]
+    fn unfurl_cache_round_trips_and_expires() {
+        let s = store();
+        assert!(s.unfurl_cache_get("https://a.com").is_none());
+        s.unfurl_cache_put("https://a.com", true, &json!({"title": "A"}));
+        let (ok, meta) = s.unfurl_cache_get("https://a.com").unwrap();
+        assert!(ok);
+        assert_eq!(meta["title"], "A");
+
+        // Failures are cached too, under the shorter TTL.
+        s.unfurl_cache_put("https://dead.com", false, &json!({}));
+        assert_eq!(s.unfurl_cache_get("https://dead.com").unwrap().0, false);
+        s.unfurl_cache_put_at("https://dead.com", false, &json!({}), now() - UNFURL_TTL_ERR - 1.0);
+        assert!(s.unfurl_cache_get("https://dead.com").is_none());
+
+        // A success older than its (longer) TTL expires as well.
+        s.unfurl_cache_put_at("https://a.com", true, &json!({"title": "A"}), now() - UNFURL_TTL_OK - 1.0);
+        assert!(s.unfurl_cache_get("https://a.com").is_none());
+
+        // Re-putting overwrites the stale row.
+        s.unfurl_cache_put("https://a.com", true, &json!({"title": "A2"}));
+        assert_eq!(s.unfurl_cache_get("https://a.com").unwrap().1["title"], "A2");
     }
 }

@@ -719,6 +719,86 @@ a.btn { text-decoration: none; }
 .ago-att-file .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ago-att-file .fsize { color: var(--faint); font-size: 10.5px; flex-shrink: 0; }
 
+/* ---------- sources (cited URLs as chips + viewer) ---------- */
+.ago-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.ago-sources-label {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-right: 2px;
+}
+.ago-sources-label .ico { width: 11px; height: 11px; }
+.ago-source-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px;
+  padding: 3px 9px 3px 4px; border: 1px solid var(--border); border-radius: 999px;
+  background: rgba(255,255,255,.04); color: var(--dim); font-size: 11.5px;
+  cursor: pointer; line-height: 1.4;
+}
+.ago-source-chip:hover { border-color: var(--a2); color: var(--text); }
+.ago-source-chip .n {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 16px; height: 16px; border-radius: 50%; background: rgba(255,255,255,.08);
+  font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.ago-source-chip .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ago-src-panel { width: min(440px, 100%); padding: 16px 18px 18px; gap: 10px; }
+.ago-src-top { display: flex; align-items: center; justify-content: space-between; }
+.ago-src-count { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.ago-src-img {
+  display: block; width: 100%; max-height: 200px; object-fit: cover;
+  border-radius: 12px; border: 1px solid var(--border);
+}
+.ago-src-body { display: flex; flex-direction: column; gap: 6px; min-height: 84px; }
+.ago-src-site { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); }
+.ago-src-site .ico { width: 12px; height: 12px; }
+.ago-src-title { font-size: 15px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.ago-src-desc { font-size: 12.5px; line-height: 1.5; color: var(--dim); }
+.ago-src-url {
+  font-size: 11px; color: var(--faint); font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ago-src-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ago-src-dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; }
+.ago-src-dot {
+  width: 8px; height: 8px; border-radius: 50%; border: none; padding: 0;
+  background: rgba(255,255,255,.14); cursor: pointer;
+}
+.ago-src-dot.on { background: var(--a2); }
+.ago-src-open {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 12px; border-radius: 10px; background: rgba(255,255,255,.06);
+  border: 1px solid var(--border-strong); color: var(--text); font-size: 12.5px;
+  font-weight: 600; text-decoration: none;
+}
+.ago-src-open:hover { border-color: var(--a2); }
+.ago-src-open .ico { width: 13px; height: 13px; }
+
+/* ---------- link previews (meta.unfurls) ---------- */
+.ago-unfurls { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.ago-unfurl {
+  display: flex; gap: 12px; align-items: flex-start; max-width: 480px;
+  padding: 9px 12px; border-left: 3px solid var(--border-strong);
+  border-radius: 6px; background: rgba(255,255,255,.03);
+  text-decoration: none; color: var(--text);
+}
+.ago-unfurl:hover { border-left-color: var(--a2); background: rgba(255,255,255,.05); }
+.ago-unfurl-body { min-width: 0; flex: 1; }
+.ago-unfurl-site { font-size: 11px; color: var(--faint); margin-bottom: 2px; }
+.ago-unfurl-title { font-size: 12.5px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.ago-unfurl-desc {
+  font-size: 12px; line-height: 1.45; color: var(--dim); margin-top: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ago-unfurl-img {
+  width: 74px; height: 74px; object-fit: cover; flex-shrink: 0;
+  border-radius: 8px; border: 1px solid var(--border);
+}
+
+/* ---------- mermaid diagrams ---------- */
+.md-mermaid.rendered {
+  margin: 6px 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: rgba(0,0,0,.25); overflow-x: auto; text-align: center;
+}
+.md-mermaid.rendered svg { max-width: 100%; height: auto; }
+
 .ago-status { padding: 0 22px; min-height: 4px; }
 .agora-thread .ago-status { padding: 0 16px; }
 .ago-typing, .ago-progress { font-size: 11.5px; color: var(--dim); padding: 3px 0; }

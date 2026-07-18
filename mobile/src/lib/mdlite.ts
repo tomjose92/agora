@@ -15,7 +15,7 @@ export type Span =
 export type Block =
   | { kind: "para"; spans: Span[] }
   | { kind: "heading"; spans: Span[] }
-  | { kind: "codeblock"; text: string }
+  | { kind: "codeblock"; text: string; lang?: string }
   | { kind: "table"; aligns: ("" | "left" | "center" | "right")[]; head: Span[][]; rows: Span[][][] };
 
 const INLINE = new RegExp(
@@ -59,11 +59,17 @@ function splitRow(line: string): string[] {
 
 export function parseMd(text: string): Block[] {
   const blocks: Block[] = [];
-  // Fenced code blocks first; everything between them is line-parsed.
-  const parts = String(text ?? "").split(/```\w*\n?([\s\S]*?)```/);
+  // Fenced code blocks first; everything between them is line-parsed. The
+  // fence's language tag is kept (a ```mermaid fence renders as a diagram).
+  const parts = String(text ?? "").split(/```(\w*)\n?([\s\S]*?)```/);
   for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) {
-      blocks.push({ kind: "codeblock", text: parts[i].replace(/\n$/, "") });
+    if (i % 3 === 1) {
+      blocks.push({
+        kind: "codeblock",
+        lang: parts[i] ? parts[i].toLowerCase() : undefined,
+        text: parts[i + 1].replace(/\n$/, ""),
+      });
+      i++; // the code group was consumed alongside its language group
       continue;
     }
     const lines = parts[i].split("\n");

@@ -146,6 +146,9 @@ pub struct Hub {
     ui_active: AtomicBool,
     /// Platform notification callback (desktop shell only).
     notifier: Mutex<Option<Notifier>>,
+    /// Queue to the link-unfurl worker (installed at boot; unit tests leave
+    /// it empty so posting never touches the network).
+    unfurl_tx: Mutex<Option<UnboundedSender<i64>>>,
 }
 
 impl Hub {
@@ -155,6 +158,30 @@ impl Hub {
             state: Mutex::new(HubState::default()),
             ui_active: AtomicBool::new(true),
             notifier: Mutex::new(None),
+            unfurl_tx: Mutex::new(None),
+        }
+    }
+
+    /// Install the unfurl worker's queue (see [`crate::unfurl::spawn_worker`]).
+    pub fn set_unfurler(&self, tx: UnboundedSender<i64>) {
+        *self.unfurl_tx.lock().unwrap() = Some(tx);
+    }
+
+    /// Queue a just-posted message for link unfurling when it could need it:
+    /// any http(s) URL in the text, or cited sources to enrich.
+    fn maybe_unfurl(&self, message: &Value) {
+        let text = message["text"].as_str().unwrap_or_default();
+        if !text.contains("http://")
+            && !text.contains("https://")
+            && !message["meta"]["sources"].is_array()
+        {
+            return;
+        }
+        if let (Some(tx), Some(id)) = (
+            self.unfurl_tx.lock().unwrap().as_ref(),
+            message["id"].as_i64(),
+        ) {
+            let _ = tx.send(id);
         }
     }
 
@@ -499,6 +526,7 @@ impl Hub {
         }
         self.record_mentions(&message);
         self.broadcast(channel_id, &json!({"type": "message", "message": message}));
+        self.maybe_unfurl(&message);
         self.fan_out(&message, false, None, false, voice);
         message
     }
@@ -510,6 +538,10 @@ impl Hub {
     /// UI renders on the message; ``options_id`` ties a click back to the
     /// agent's pending approval. ``tldr`` (optional) is a short summary of a
     /// long message; clients offer it as an alternate view of the same text.
+    /// ``sources`` (optional) is a list of cited URLs (strings or
+    /// ``{url, title?}``) rendered as compact chips instead of raw links;
+    /// without it a trailing "Sources:" block in the text is lifted out
+    /// automatically (see [`crate::sources`]).
     pub fn post_agent_message(
         &self,
         agent_id: &str,
@@ -518,7 +550,7 @@ impl Hub {
         text: &str,
         thread_id: Option<i64>,
     ) -> Value {
-        self.post_agent_message_with_options(agent_id, agent_name, channel_id, text, thread_id, None, None, None)
+        self.post_agent_message_with_options(agent_id, agent_name, channel_id, text, thread_id, None, None, None, None)
     }
 
     pub fn post_agent_message_with_options(
@@ -531,6 +563,7 @@ impl Hub {
         options: Option<&Value>,
         options_id: Option<&str>,
         tldr: Option<&str>,
+        sources: Option<&Value>,
     ) -> Value {
         let mut meta_obj = serde_json::Map::new();
         if let Some(opts) = options {
@@ -542,6 +575,18 @@ impl Hub {
         }
         if let Some(t) = tldr {
             meta_obj.insert("tldr".into(), json!(t));
+        }
+        // Sources: an explicit list from the agent wins; a trailing
+        // "Sources:" block in the text supplies the list otherwise. Either
+        // way a detected block's offset lets clients collapse it into chips
+        // without the stored text changing.
+        let detected = crate::sources::extract_trailing_sources(text);
+        let provided = sources.and_then(crate::sources::normalize_sources);
+        if let Some((start, _)) = &detected {
+            meta_obj.insert("sources_start".into(), json!(start));
+        }
+        if let Some(list) = provided.or_else(|| detected.map(|(_, list)| list)) {
+            meta_obj.insert("sources".into(), list);
         }
         let meta = (!meta_obj.is_empty()).then(|| Value::Object(meta_obj));
         let message = self.store.add_message_with_meta(
@@ -563,6 +608,7 @@ impl Hub {
         };
         self.record_mentions(&message);
         self.broadcast(channel_id, &json!({"type": "message", "message": message}));
+        self.maybe_unfurl(&message);
         self.maybe_notify(&message);
         if streak <= BOT_LOOP_LIMIT {
             self.fan_out(&message, true, Some(agent_id), true, false);
@@ -938,6 +984,7 @@ impl Hub {
                         options,
                         options_id,
                         tldr,
+                        frame.get("sources"),
                     );
                 }
             }
@@ -1730,5 +1777,51 @@ mod tests {
         for msg in &msgs {
             assert!(msg["meta"].get("tldr").is_none(), "meta: {:?}", msg["meta"]);
         }
+    }
+
+    #[test]
+    fn post_frame_structured_sources_land_in_meta() {
+        let h = hub();
+        let _rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": "Answer without a sources block.",
+            "sources": ["https://a.com", {"url": "https://b.com", "title": "B"}, "junk"],
+        }));
+        let msg = &h.store.messages(&cid, None, None, 10)[0];
+        let sources = msg["meta"]["sources"].as_array().unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[1]["title"], "B");
+        // Text carried no block, so there is nothing to collapse.
+        assert!(msg["meta"].get("sources_start").is_none());
+    }
+
+    #[test]
+    fn post_frame_trailing_sources_block_is_lifted() {
+        let h = hub();
+        let _rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": "The answer.\n\nSources:\n- [Doc](https://a.com/doc)\nhttps://b.com",
+        }));
+        let msg = &h.store.messages(&cid, None, None, 10)[0];
+        let sources = msg["meta"]["sources"].as_array().unwrap();
+        assert_eq!(sources[0]["url"], "https://a.com/doc");
+        assert_eq!(sources[0]["title"], "Doc");
+        assert_eq!(msg["meta"]["sources_start"], "The answer.\n\n".len());
+        // The stored text is the contract — lifting never rewrites it.
+        assert!(msg["text"].as_str().unwrap().contains("Sources:"));
+
+        // An explicit list beats detection, but the block still collapses.
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": "More.\nSources:\nhttps://x.com",
+            "sources": ["https://y.com"],
+        }));
+        let msg = &h.store.messages(&cid, None, None, 10)[1];
+        assert_eq!(msg["meta"]["sources"][0]["url"], "https://y.com");
+        assert_eq!(msg["meta"]["sources_start"], "More.\n".len());
     }
 }

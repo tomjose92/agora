@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { parseMd, type Span } from "../lib/mdlite";
 import { openLink } from "../lib/openLink";
 import { colors, mono } from "../lib/theme";
+import { MermaidBlock } from "./Mermaid";
 
 function SpanText({ span }: { span: Span }) {
   switch (span.kind) {
@@ -94,6 +95,9 @@ export function MdText({ text, onLongPress }: { text: string; onLongPress?: () =
       {blocks.map((b, i) => {
         switch (b.kind) {
           case "codeblock":
+            if (b.lang === "mermaid") {
+              return <MermaidBlock key={i} code={b.text} maxWidth={width} />;
+            }
             return (
               <ScrollView
                 key={i}
