@@ -15,7 +15,9 @@ import { AgentAvatar } from "./AgentAvatar";
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <View style={styles.row}>
-      <Text style={styles.rowKey}>{k}</Text>
+      <Text style={styles.rowKey} numberOfLines={1}>
+        {k}
+      </Text>
       <Text style={styles.rowVal}>{v}</Text>
     </View>
   );
@@ -55,7 +57,7 @@ export function ProfileSheet({ message, onClose }: { message: Message; onClose: 
                 ) : null}
               </View>
               <Text style={styles.sub} numberOfLines={1}>
-                @{message.author_id} · {isAgent ? "agent" : "person"}
+                {isAgent ? "agent" : `@${message.author_id} · person`}
               </Text>
             </View>
           </View>
@@ -123,7 +125,7 @@ const styles = StyleSheet.create({
   rows: { gap: 10 },
   row: { flexDirection: "row", alignItems: "baseline", gap: 12 },
   rowKey: {
-    width: 90,
+    width: 110,
     color: colors.dim,
     fontSize: 11,
     fontWeight: "700",
