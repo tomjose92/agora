@@ -479,7 +479,9 @@ impl Hub {
         thread_id: Option<i64>,
         attachments: Vec<NewAttachment>,
     ) -> Value {
-        self.post_user_message_opts(channel_id, text, username, user_name, thread_id, attachments, false, None)
+        self.post_user_message_opts(
+            channel_id, text, username, user_name, thread_id, attachments, false, None, false,
+        )
     }
 
     /// `voice` marks a spoken (live voice) turn: it rides on the inbound
@@ -490,6 +492,12 @@ impl Hub {
     /// each message. It's kept in message `meta` (never rendered by the UI)
     /// and forwarded to agents on the inbound frame so they can reason about
     /// the sender's local time.
+    ///
+    /// `reply_in_thread` is the composer's per-message ask: address agents as
+    /// if this (top-level) message were already a thread root, so their
+    /// replies land in a thread under it (see [`Self::build_inbound`]). Kept
+    /// hidden in message `meta.client` like the timezone; meaningless on
+    /// thread replies and voice turns, so ignored there.
     #[allow(clippy::too_many_arguments)]
     pub fn post_user_message_opts(
         &self,
@@ -501,8 +509,16 @@ impl Hub {
         attachments: Vec<NewAttachment>,
         voice: bool,
         timezone: Option<&str>,
+        reply_in_thread: bool,
     ) -> Value {
-        let meta = timezone.map(|tz| json!({"client": {"tz": tz}}));
+        let mut client = serde_json::Map::new();
+        if let Some(tz) = timezone {
+            client.insert("tz".into(), json!(tz));
+        }
+        if reply_in_thread && thread_id.is_none() && !voice {
+            client.insert("reply_thread".into(), json!(true));
+        }
+        let meta = (!client.is_empty()).then(|| json!({"client": client}));
         let message = self.store.add_message_with_meta(
             channel_id,
             text,
@@ -761,7 +777,19 @@ impl Hub {
         voice: bool,
     ) -> Value {
         let mut text = message["text"].as_str().unwrap_or_default().to_string();
-        let thread_id = message["thread_id"].as_i64();
+        // A sender's "reply in thread" ask (meta.client.reply_thread, set by
+        // the composer toggle) presents their top-level message to agents as
+        // if it were already a thread root: agents echo `thread_id` back, so
+        // their replies land in a thread under the message instead of the
+        // channel. The stored message keeps thread_id NULL. Live-voice turns
+        // are exempt — those replies are read aloud, not browsed.
+        let mut thread_id = message["thread_id"].as_i64();
+        if thread_id.is_none()
+            && !voice
+            && message["meta"]["client"]["reply_thread"].as_bool().unwrap_or(false)
+        {
+            thread_id = message["id"].as_i64();
+        }
         // First reply in a thread: inline the root message so the agent's
         // fresh per-thread session starts with what the thread is about.
         if let Some(tid) = thread_id {
@@ -1535,7 +1563,7 @@ mod tests {
         assert_eq!(frame["voice_live"], false);
         assert!(frame["context_note"].as_str().unwrap().contains("Markdown"));
         // Live voice turn: flagged, spoken-prose steering replaces the hint.
-        let msg = h.post_user_message_opts(&cid, "spoken words", "tom", None, None, vec![], true, None);
+        let msg = h.post_user_message_opts(&cid, "spoken words", "tom", None, None, vec![], true, None, false);
         // The stored message is a plain transcript — nothing voice-specific.
         assert_eq!(msg["text"], "spoken words");
         let frame = rx.try_recv().unwrap();
@@ -1552,7 +1580,7 @@ mod tests {
         let cid = setup_channel(&h, &["bot-a"]);
         let msg = h.post_user_message_opts(
             &cid, "what time is it?", "tom", None, None, vec![], false,
-            Some("Asia/Kolkata"),
+            Some("Asia/Kolkata"), false,
         );
         // Stored hidden in meta (the UI only renders meta.options/resolved).
         assert_eq!(msg["meta"]["client"]["tz"], "Asia/Kolkata");
@@ -1673,6 +1701,59 @@ mod tests {
         assert_eq!(ev["thread_id"], root_id);
         assert_eq!(ev["channel_id"], cid);
         assert!(rx_tom.try_recv().is_err());
+    }
+
+    #[test]
+    fn reply_in_thread_ask_threads_agent_replies_under_the_message() {
+        let h = hub();
+        let mut rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+
+        let msg = h.post_user_message_opts(
+            &cid, "explain x", "tom", Some("Tom"), None, vec![], false, None, true,
+        );
+        let mid = msg["id"].as_i64().unwrap();
+        // The stored message stays a top-level root, the ask hidden in meta...
+        assert!(msg["thread_id"].is_null());
+        assert_eq!(msg["meta"]["client"]["reply_thread"], true);
+        // ...but agents are addressed as if it were already a thread root.
+        let inbound = last_frame(&mut rx, "inbound").unwrap();
+        assert_eq!(inbound["thread_id"].as_i64(), Some(mid));
+        assert_eq!(inbound["message_id"].as_i64(), Some(mid));
+
+        // The agent echoes thread_id (as bridges do): the reply is a thread reply.
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "thread_id": mid, "text": "the answer",
+        }));
+        assert_eq!(h.store.thread_size(mid), 1);
+
+        // On a thread reply the ask is meaningless: dropped from meta, the
+        // message keeps its own thread, no re-rooting.
+        let reply = h.post_user_message_opts(
+            &cid, "follow-up", "tom", Some("Tom"), Some(mid), vec![], false, None, true,
+        );
+        assert!(reply["meta"]["client"]["reply_thread"].is_null());
+        let inbound = last_frame(&mut rx, "inbound").unwrap();
+        assert_eq!(inbound["thread_id"].as_i64(), Some(mid));
+
+        // Live-voice turns are exempt: replies read aloud, not threaded.
+        let spoken = h.post_user_message_opts(
+            &cid, "say hi", "tom", Some("Tom"), None, vec![], true, None, true,
+        );
+        assert!(spoken["meta"]["client"]["reply_thread"].is_null());
+        let inbound = last_frame(&mut rx, "inbound").unwrap();
+        assert!(inbound["thread_id"].is_null());
+    }
+
+    #[test]
+    fn agent_replies_stay_top_level_without_reply_in_thread_ask() {
+        let h = hub();
+        let mut rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        h.post_user_message(&cid, "explain x", "tom", Some("Tom"), None, vec![]);
+        let inbound = last_frame(&mut rx, "inbound").unwrap();
+        assert!(inbound["thread_id"].is_null());
     }
 
     #[test]

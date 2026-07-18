@@ -46,6 +46,14 @@ One Rust core, three clients (see the repo layout table in the
   idempotent.
 - **Hub** (`hub.rs`) — in-memory fan-out across agent sockets, UI websockets,
   notifications, and push. Visibility filtering for UI broadcasts lives here.
+  The composer's per-message *reply in thread* toggle (sent as
+  `reply_in_thread`, kept in the message's hidden `meta.client`) has the hub
+  present that top-level message to agents as if it were already a thread
+  root, so their echoed replies land in a thread under it — implemented
+  entirely at fan-out time; agents and bridges are unchanged. The tradeoff is
+  inherent to threading: agents keep fresh per-thread sessions, so such a
+  message starts its own conversation context (it doubles as the thread root
+  quoted in the agent's context note, and `history_request` covers the rest).
 - **Server** (`server.rs`) — the axum routes. Blocking store/LLM work is
   wrapped in `spawn_blocking` where it matters.
 - **Auth** (`auth.rs`) — HMAC session tokens that embed the user's

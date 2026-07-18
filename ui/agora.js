@@ -60,6 +60,7 @@ let _agoUnreadsOnly =           // sidebar shows only unread/mentioned channels
   localStorage.getItem("agora_unreads_only") === "1";
 let _agoHiddenOpen = false;     // sidebar "Hidden" section expanded
 let _agoEditingChan = false;    // channel header rename/topic editor open
+let _agoReplyThread = false;    // composer "reply in thread" ask; top-level sends only, resets after send
 let _agoDrag = null;            // drag-reorder state {type, id, gid}
 let _agoAddr = {};              // "talk to" selection: channel or channel:t<id> -> agent ids;
                                 // session-level memory so a conversation keeps addressing
@@ -1002,6 +1003,7 @@ function agoSelectChannel(gid, cid) {
     agoLiveStop();      // so is a live voice session
     agoSpeakStop();     // don't keep reading the previous channel's replies
     _agoFiles = {};     // pending attachments belong to the previous channel
+    _agoReplyThread = false;   // so does a pending "reply in thread" ask
     _agoAddrOpen = null;   // the "talk to" selection itself is per channel and persists
     agoEmojiClose();    // an open emoji picker belongs to the previous composer
     _agoSel.g = gid; _agoSel.c = cid;
@@ -1277,6 +1279,9 @@ function agoDrawMain() {
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
       ${agoAttachBtnHTML(null)}
       ${agoVoiceBtnHTML(null)}
+      <button class="btn ago-thread-ask ${_agoReplyThread ? "active" : ""}" id="ago-thread-ask"
+        title="Agents answer this message in a thread under it"
+        onclick="agoToggleThreadAsk()">${icon("messages-square")}</button>
       <button class="btn primary" onclick="agoSend(null)">Send</button>
       ${agoAddrPopHTML(null)}
     </div>`;
@@ -1825,11 +1830,13 @@ async function agoSend(threadId) {
   try {
     let msg;
     const tz = agoTimezone();
+    const askThread = threadId == null && _agoReplyThread;
     if (files.length) {
       const fd = new FormData();
       fd.append("text", outText);
       if (threadId != null) fd.append("thread_id", threadId);
       if (tz) fd.append("timezone", tz);
+      if (askThread) fd.append("reply_in_thread", "true");
       for (const f of files) fd.append("files", f, f.name);
       const res = await fetch(`/api/channels/${encodeURIComponent(channel.id)}/messages/upload`, {
         method: "POST", headers: authHeaders(), body: fd,
@@ -1845,9 +1852,11 @@ async function agoSend(threadId) {
     } else {
       const body = threadId ? { text: outText, thread_id: threadId } : { text: outText };
       if (tz) body.timezone = tz;
+      if (askThread) body.reply_in_thread = true;
       msg = await apiPost(
         `/api/channels/${encodeURIComponent(channel.id)}/messages`, body);
     }
+    if (askThread) agoSetThreadAsk(false);   // an ask covers one message
     agoIngestMessage(msg);   // websocket will dedupe by id
   } catch (e) {
     agoErr("Send failed", e);
@@ -1925,6 +1934,16 @@ function agoHumanSize(n) {
   if (n >= 1024) return Math.round(n / 1024) + " KB";
   return n + " B";
 }
+
+/* The composer's "reply in thread" ask: agents answer this one message in a
+   thread under it (top-level composer only — a thread already is one). The
+   class flip skips a redraw so the draft and focus stay put. */
+function agoSetThreadAsk(on) {
+  _agoReplyThread = on;
+  const btn = document.getElementById("ago-thread-ask");
+  if (btn) btn.classList.toggle("active", on);
+}
+function agoToggleThreadAsk() { agoSetThreadAsk(!_agoReplyThread); }
 
 function agoAttachBtnHTML(threadId) {
   const arg = threadId != null ? threadId : "null";

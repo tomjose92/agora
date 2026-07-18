@@ -1263,6 +1263,7 @@ async fn post_message(
     }
     let thread_id = resolve_thread(&state, &channel_id, payload["thread_id"].as_i64())?;
     let timezone = client_timezone(payload["timezone"].as_str().unwrap_or(""));
+    let reply_in_thread = payload["reply_in_thread"].as_bool().unwrap_or(false);
     let message = state.hub.post_user_message_opts(
         &channel_id,
         &text,
@@ -1272,6 +1273,7 @@ async fn post_message(
         vec![],
         false,
         timezone.as_deref(),
+        reply_in_thread,
     );
     Ok(Json(message))
 }
@@ -1303,6 +1305,7 @@ async fn post_message_upload(
     let mut text = String::new();
     let mut thread_id: Option<i64> = None;
     let mut timezone: Option<String> = None;
+    let mut reply_in_thread = false;
     let mut attachments: Vec<NewAttachment> = Vec::new();
     while let Some(field) = multipart
         .next_field()
@@ -1321,6 +1324,9 @@ async fn post_message_upload(
                 }
             }
             "timezone" => timezone = client_timezone(&field.text().await.unwrap_or_default()),
+            "reply_in_thread" => {
+                reply_in_thread = field.text().await.unwrap_or_default().trim() == "true";
+            }
             "files" => {
                 if attachments.len() >= MAX_FILES_PER_MESSAGE {
                     return Err(err(StatusCode::BAD_REQUEST, "Too many files (max 5 per message)"));
@@ -1359,6 +1365,7 @@ async fn post_message_upload(
         attachments,
         false,
         timezone.as_deref(),
+        reply_in_thread,
     );
     Ok(Json(message))
 }
@@ -1457,6 +1464,7 @@ async fn post_voice_message(
         vec![],
         live,
         timezone.as_deref(),
+        false,
     );
     Ok(Json(message))
 }
