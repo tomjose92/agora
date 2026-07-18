@@ -56,10 +56,10 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
 HELP = """Commands (everything else is forwarded to Claude):
 /sessions [n] - list recent Claude CLI sessions
-/use <n | session-id> - bind this channel/thread to a session
+/resume <n | session-id> - bind this channel/thread to a session
 /new <dir> - bind to a fresh session in a directory (must be under an allowed root)
 /status - show the current binding
-/help - this message"""
+/commands - this message"""
 
 
 def _reject_insecure_ws(url: str) -> None:
@@ -185,7 +185,7 @@ def format_sessions(sessions: list[dict]) -> str:
             prompt = prompt[:90] + "…"
         proj = Path(s["cwd"]).name if s["cwd"] != "?" else "?"
         lines.append(f'{i}. {proj} — "{prompt}" ({_age(s["mtime"])})')
-    lines.append("\nReply /use <n> to bind this channel to a session.")
+    lines.append("\nReply /resume <n> to bind this channel to a session.")
     return "\n".join(lines)
 
 
@@ -378,14 +378,14 @@ class Bridge:
         key = self.binding_key(frame)
         cmd, _, rest = text.partition(" ")
         cmd, rest = cmd.lower(), rest.strip()
-        if cmd == "/help":
+        if cmd == "/commands":
             self.post(frame, HELP)
         elif cmd == "/sessions":
             limit = int(rest) if rest.isdigit() else self.sessions_limit
             sessions = await asyncio.to_thread(recent_sessions, limit)
             self.listings[key] = sessions
             self.post(frame, format_sessions(sessions))
-        elif cmd == "/use":
+        elif cmd == "/resume":
             self.post(frame, await asyncio.to_thread(self._cmd_use, key, rest))
         elif cmd == "/new":
             self.post(frame, self._cmd_new(key, rest))
@@ -400,7 +400,7 @@ class Bridge:
 
     def _cmd_use(self, key: str, arg: str) -> str:
         if not arg:
-            return "Usage: /use <n from /sessions | session-id>"
+            return "Usage: /resume <n from /sessions | session-id>"
         if arg.isdigit():
             listing = self.listings.get(key) or recent_sessions(self.sessions_limit)
             idx = int(arg) - 1
@@ -444,7 +444,7 @@ class Bridge:
     def _cmd_status(self, key: str) -> str:
         b = self.bindings.get(key)
         if not b:
-            return "No session bound here. Run /sessions then /use <n>."
+            return "No session bound here. Run /sessions then /resume <n>."
         sid = b["session_id"][:8] + "…" if b["session_id"] else "(new, not started)"
         busy = " — a run is in flight" if key in self.busy else ""
         return f"Session {sid} in {b['cwd']}{busy}"
@@ -456,7 +456,7 @@ class Bridge:
             return
         binding = self.bindings.get(key)
         if not binding:
-            self.post(frame, "No session bound here yet. Run /sessions then /use <n>.")
+            self.post(frame, "No session bound here yet. Run /sessions then /resume <n>.")
             return
         if key in self.busy:
             self.post(frame, "Still working on the previous message — try again when it's done.")

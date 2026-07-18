@@ -32,7 +32,7 @@ agent, and forwards channel messages to `claude -p --resume <session>`.
 
    ```
    /sessions            -> 1. mimir — "fix the dispatcher tests" (12m ago) ...
-   /use 1               -> bound to that session
+   /resume 1            -> bound to that session
    also run the full suite      -> resumed headlessly; reply posted back
    ```
 
@@ -41,9 +41,10 @@ agent, and forwards channel messages to `claude -p --resume <session>`.
 | command | effect |
 |---|---|
 | `/sessions [n]` | list your most recent Claude CLI sessions (from `~/.claude/projects/`) |
-| `/use <n \| session-id>` | bind this channel/thread to a session |
+| `/resume <n \| session-id>` | bind this channel/thread to a session |
 | `/new <dir>` | bind to a fresh session started in `<dir>` — **`<dir>` must be under an allowed root** (see below); disabled entirely when no roots are configured |
 | `/status` | show the current binding and whether a run is in flight |
+| `/commands` | show this command list |
 | anything else | forwarded to the bound session; the reply is posted back |
 
 Only **human** authors can drive the bridge — messages from other agents/bots
