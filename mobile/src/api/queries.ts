@@ -297,6 +297,28 @@ export function useSelectOption() {
   });
 }
 
+/** Toggle the caller's emoji reaction on a message. The server returns the
+    updated message, which is patched into the cache in place; the
+    message_update broadcast then merges as a no-op. */
+export function useToggleReaction() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { message: Message; emoji: string; on: boolean }) => {
+      const path =
+        `/api/channels/${encodeURIComponent(v.message.channel_id)}` +
+        `/messages/${v.message.id}/reactions/${encodeURIComponent(v.emoji)}`;
+      return v.on ? api.put<Message>(path) : api.delete<Message>(path);
+    },
+    onSuccess: (message) => {
+      qc.setQueryData<MessagePages>(
+        keys.messages(message.channel_id, message.thread_id),
+        (data) => replaceMessage(data, message),
+      );
+    },
+  });
+}
+
 /** Voice note / live-voice turn: upload a recording, the server transcribes
     it and posts the transcript as a normal user message (returned here).
     `live` steers member agents to answer in spoken prose. `mentions` is the

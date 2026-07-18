@@ -36,17 +36,15 @@ import {
   Image as ImageIcon,
   Mic,
   Paperclip,
-  Smile,
   X,
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "../api/queries";
-import { slugify, spliceText } from "../lib/format";
+import { slugify } from "../lib/format";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
 import { useAddressed } from "../state/addressed";
 import { AgentAvatar } from "./AgentAvatar";
-import { EmojiPicker } from "./EmojiPicker";
 import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
 
@@ -116,7 +114,6 @@ export function Composer({
   const [files, setFiles] = useState<OutgoingFile[]>([]);
   const [focused, setFocused] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
-  const [emojiOpen, setEmojiOpen] = useState(false);
   /* "Talk to": which agents this conversation addresses. Session-level state
      keyed by addressKey, so it's remembered when you leave and come back;
      their @mentions are prepended on send ("@a, @b, …"), so the server's
@@ -245,15 +242,6 @@ export function Composer({
     const before = text.slice(0, at).replace(/@[a-z0-9-]*$/i, `@${slugify(c.name)} `);
     setText(before + text.slice(at));
     inputRef.current?.focus();
-  };
-
-  /* Insert at the last known caret; the ref moves past the emoji so runs of
-     picks land in order (onSelectionChange is paused while the sheet is up,
-     so a late native caret event can't clobber the advanced position). */
-  const insertEmoji = (ch: string) => {
-    const next = spliceText(text, selection.current.start, selection.current.end, ch);
-    selection.current = { start: next.caret, end: next.caret };
-    setText(next.text);
   };
 
   const addFiles = (picked: OutgoingFile[]) => {
@@ -445,10 +433,7 @@ export function Composer({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onSelectionChange={(e) => {
-            /* While the emoji sheet is up, programmatic inserts own the
-               caret; a native caret-moved event (fired for the value change)
-               would reset it to the end and misplace the next pick. */
-            if (!emojiOpen) selection.current = e.nativeEvent.selection;
+            selection.current = e.nativeEvent.selection;
           }}
           placeholder={placeholder}
           placeholderTextColor={colors.faint}
@@ -494,9 +479,6 @@ export function Composer({
               </View>
             </Pressable>
           ) : null}
-          <Pressable onPress={() => setEmojiOpen(true)} hitSlop={8} style={styles.toolBtn}>
-            <Icon icon={Smile} size={22} />
-          </Pressable>
           <Pressable onPress={pickPhotos} hitSlop={8} style={styles.toolBtn}>
             <Icon icon={ImageIcon} size={22} />
           </Pressable>
@@ -585,7 +567,6 @@ export function Composer({
           </View>
         </Pressable>
       </Modal>
-      <EmojiPicker visible={emojiOpen} onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />
     </View>
   );
 }

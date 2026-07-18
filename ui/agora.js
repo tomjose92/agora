@@ -1139,12 +1139,10 @@ function agoDrawMain() {
         onkeydown="agoKeydown(event, null)" oninput="autoGrow(this); agoMentionInput('ago-msg')"
         onpaste="agoPaste(event, null)"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
-      ${agoEmojiBtnHTML(null)}
       ${agoAttachBtnHTML(null)}
       ${agoVoiceBtnHTML(null)}
       <button class="btn primary" onclick="agoSend(null)">Send</button>
       ${agoAddrPopHTML(null)}
-      ${agoEmojiPopHTML(null)}
     </div>`;
   const msgBox = document.getElementById("ago-msg");
   if (msgBox && draft) { msgBox.value = draft; autoGrow(msgBox); }
@@ -1420,11 +1418,13 @@ function agoBubble(m, inThread) {
          title="${onTldr ? "Show the full message" : "Show the short version"}"
          onclick="agoToggleTldr(${m.id})">${onTldr ? icon("maximize-2") + " full" : icon("minimize-2") + " tl;dr"}</button>`
     : "";
-  const foot = `<div class="ago-bubble-foot">${replies}${threadBtn}${pinBtn}${starBtn}${tldrBtn}</div>`;
+  const reactBtn = `<button class="ago-thread-btn ago-react-btn" title="Add reaction"
+       onclick="agoReactPick(${m.id}, event)">${icon("smile")} react</button>`;
+  const foot = `<div class="ago-bubble-foot">${replies}${threadBtn}${reactBtn}${pinBtn}${starBtn}${tldrBtn}</div>`;
   const mark = (pinned ? `<span class="ago-pinned-mark" title="Pinned">${icon("pin")}</span>` : "")
     + (starred ? `<span class="ago-starred-mark" title="Starred by you">${icon("star", "fill")}</span>` : "")
     + (onTldr ? `<span class="ago-tldr-mark" title="Short version — the full message is one click away">TL;DR</span>` : "");
-  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(onTldr ? tldr : m.text)}${agoAttachmentsHTML(m)}${agoOptionsHTML(m)}${foot}</div>`;
+  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(onTldr ? tldr : m.text)}${agoAttachmentsHTML(m)}${agoOptionsHTML(m)}${agoReactionsHTML(m)}${foot}</div>`;
 }
 /* Flip one message between its full text and its TL;DR (agent-supplied
    summary in meta.tldr). View state is local to this client on purpose —
@@ -1619,7 +1619,7 @@ function agoKeydown(e, threadId) {
     if (e.key === "Escape") { agoCloseMention(); return; }
   }
   if (e.key === "Escape" && _agoAddrOpen) { agoAddrTogglePop(threadId); return; }
-  if (e.key === "Escape" && _agoEmojiOpen) { agoEmojiClose(); return; }
+  if (e.key === "Escape" && _agoReactFor != null) { agoEmojiClose(); return; }
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agoSend(threadId); }
 }
 /* Sender's IANA timezone, attached hidden to every outgoing message so agents
@@ -1770,14 +1770,14 @@ function agoRedrawComposer(threadId) {
   if (threadId != null) agoDrawThread(); else agoDrawMain();
 }
 
-/* ---------- emoji picker (😊 button in the composers) ----------
-   Standard Unicode emoji only (the curated AGO_EMOJI set in emoji.js);
-   picking one inserts it at the caret. Recently used live in localStorage.
-   Open/close inserts/removes only the popup node — a full composer redraw
-   would reassign the textarea's value and destroy the caret position the
-   pick needs (and steal focus mid-typing). */
+/* ---------- emoji reactions (😊 hover button on messages) ----------
+   Standard Unicode emoji only (the curated AGO_EMOJI set in emoji.js).
+   One fixed-position picker popup, anchored to the message's react button;
+   picking toggles the caller's reaction via the API, and the server's
+   message_update broadcast refreshes every client's chips. The popup lives
+   on document.body so log redraws never disturb it. */
 const AGO_EMOJI_RECENT_MAX = 24;
-let _agoEmojiOpen = null;    // composer key ("main" | "t<rootId>") while open
+let _agoReactFor = null;     // message id while the reaction picker is open
 let _agoEmojiQuery = "";
 let _agoEmojiSet = null;     // curated chars, for validating stored recents
 
@@ -1800,34 +1800,38 @@ function agoEmojiRemember(ch) {
   try { localStorage.setItem("agoEmojiRecent", JSON.stringify(list)); } catch (e) {}
 }
 
-/* Closes whichever composer's picker is open (there is at most one). */
 function agoEmojiClose() {
-  _agoEmojiOpen = null;
+  _agoReactFor = null;
   _agoEmojiQuery = "";
   const pop = document.getElementById("ago-emoji-pop");
   if (pop) pop.remove();
-  document.querySelectorAll(".ago-emoji-btn.active").forEach(b => b.classList.remove("active"));
 }
 
-function agoEmojiToggle(threadId) {
-  const key = agoRecKey(threadId);
-  const open = _agoEmojiOpen !== key;
+/* Opens the picker for a message, anchored to the clicked button (above it
+   when there's headroom, below otherwise, clamped to the viewport). */
+function agoReactPick(mid, ev) {
+  const open = _agoReactFor !== mid;
   agoEmojiClose();
   if (!open) return;
-  const input = document.getElementById(threadId != null ? "ago-thread-msg" : "ago-msg");
-  if (!input) return;
-  _agoEmojiOpen = key;
-  input.parentElement.insertAdjacentHTML("beforeend", agoEmojiPopHTML(threadId));
-  const btn = input.parentElement.querySelector(".ago-emoji-btn");
-  if (btn) btn.classList.add("active");
+  _agoReactFor = mid;
+  document.body.insertAdjacentHTML("beforeend", agoEmojiPopHTML());
+  const pop = document.getElementById("ago-emoji-pop");
+  const btn = ev && ev.currentTarget;
+  if (pop && btn && btn.getBoundingClientRect) {
+    const r = btn.getBoundingClientRect();
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8));
+    const above = r.top - pop.offsetHeight - 6;
+    const top = above >= 8 ? above : Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 8);
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+  }
   const search = document.getElementById("ago-emoji-search");
   if (search) search.focus();
 }
 
-function agoEmojiSectionsHTML(threadId) {
-  const arg = threadId != null ? threadId : "null";
+function agoEmojiSectionsHTML() {
   const cell = (pair) => `<button class="ago-emoji-cell" ${pair[1] ? `title="${esc(pair[1])}"` : ""}
-    onmousedown="event.preventDefault()" onclick="agoPickEmoji(${arg}, '${pair[0]}')">${pair[0]}</button>`;
+    onmousedown="event.preventDefault()" onclick="agoPickReaction('${pair[0]}')">${pair[0]}</button>`;
   const q = _agoEmojiQuery.trim().toLowerCase();
   if (q) {
     const hits = AGO_EMOJI.flatMap(cat => cat.emoji.filter(p => p[1].includes(q))).slice(0, 64);
@@ -1843,54 +1847,83 @@ function agoEmojiSectionsHTML(threadId) {
     <div class="ago-emoji-grid">${cat.emoji.map(cell).join("")}</div>`).join("");
 }
 
-function agoEmojiPopHTML(threadId) {
-  if (_agoEmojiOpen !== agoRecKey(threadId)) return "";
-  const arg = threadId != null ? threadId : "null";
+function agoEmojiPopHTML() {
   return `<div class="ago-emoji-pop" id="ago-emoji-pop">
     <input id="ago-emoji-search" type="search" placeholder="Search emoji…" autocomplete="off"
       value="${esc(_agoEmojiQuery)}"
-      oninput="agoEmojiFilter(${arg}, this.value)"
+      oninput="agoEmojiFilter(this.value)"
       onkeydown="if (event.key === 'Escape') { event.stopPropagation(); agoEmojiClose(); }">
-    <div class="ago-emoji-body" id="ago-emoji-body">${agoEmojiSectionsHTML(threadId)}</div>
+    <div class="ago-emoji-body" id="ago-emoji-body">${agoEmojiSectionsHTML()}</div>
   </div>`;
 }
 
 /* Refilter updates only the grid so the search input keeps focus. */
-function agoEmojiFilter(threadId, q) {
+function agoEmojiFilter(q) {
   _agoEmojiQuery = q || "";
   const body = document.getElementById("ago-emoji-body");
-  if (body) body.innerHTML = agoEmojiSectionsHTML(threadId);
+  if (body) body.innerHTML = agoEmojiSectionsHTML();
 }
 
-function agoPickEmoji(threadId, ch) {
+function agoPickReaction(ch) {
+  const mid = _agoReactFor;
   agoEmojiRemember(ch);
   agoEmojiClose();
-  const input = document.getElementById(threadId != null ? "ago-thread-msg" : "ago-msg");
-  if (!input) return;
-  const start = input.selectionStart != null ? input.selectionStart : input.value.length;
-  const end = input.selectionEnd != null ? input.selectionEnd : start;
-  input.value = input.value.slice(0, start) + ch + input.value.slice(end);
-  const pos = start + ch.length;
-  input.focus();
-  input.setSelectionRange(pos, pos);
-  autoGrow(input);
+  if (mid != null) agoToggleReaction(mid, ch);
 }
 
-/* Click-away closes the picker (the button and panel clicks are exempt).
-   agoEmojiClose only removes the popup node, so the click target — often
-   the textarea the user is returning to — keeps its focus. */
+function agoFindMessage(mid) {
+  return _agoMsgs.find(x => x.id === mid)
+    || _agoThreadMsgs.find(x => x.id === mid)
+    || (_agoThreadRoot && _agoThreadRoot.id === mid ? _agoThreadRoot : null);
+}
+
+/* One reaction per (user, emoji): reacting again from the chip or the picker
+   removes it, like Slack. The API returns the updated message; applying it
+   immediately keeps the UI snappy (the WS broadcast merges as a no-op). */
+async function agoToggleReaction(mid, emoji) {
+  const channel = agoSelChannel();
+  if (!channel) return;
+  const m = agoFindMessage(mid);
+  const me = CURRENT_USER ? CURRENT_USER.username : null;
+  const mine = !!(m && (m.reactions || []).some(r =>
+    r.emoji === emoji && (r.users || []).includes(me)));
+  try {
+    const msg = await apiPost(
+      `/api/channels/${encodeURIComponent(channel.id)}/messages/${mid}/reactions/${encodeURIComponent(emoji)}`,
+      {}, mine ? "DELETE" : "PUT");
+    agoApplyMessageUpdate(msg);
+  } catch (e) { agoErr("Couldn't react", e); }
+}
+
+function agoReactionsHTML(m) {
+  const list = m.reactions || [];
+  if (!list.length) return "";
+  const me = CURRENT_USER ? CURRENT_USER.username : null;
+  const chips = list.map(r => {
+    const users = r.users || [];
+    const mine = users.includes(me);
+    return `<button class="ago-react ${mine ? "mine" : ""}" title="${esc(users.join(", "))}"
+      onclick="agoToggleReaction(${m.id}, '${esc(r.emoji)}')">${esc(r.emoji)}<span class="rc">${users.length}</span></button>`;
+  }).join("");
+  return `<div class="ago-reacts">${chips}<button class="ago-react ago-react-add"
+    title="Add reaction" onclick="agoReactPick(${m.id}, event)">${icon("smile")}</button></div>`;
+}
+
+/* Click-away closes the picker (the react buttons and the panel are exempt);
+   so does scrolling the log, since the popup is viewport-anchored and would
+   drift off its message. */
 document.addEventListener("click", (e) => {
-  if (!_agoEmojiOpen) return;
+  if (_agoReactFor == null) return;
   const t = e.target;
-  if (t && t.closest && (t.closest(".ago-emoji-pop") || t.closest(".ago-emoji-btn"))) return;
+  if (t && t.closest && (t.closest(".ago-emoji-pop") || t.closest(".ago-react-btn") || t.closest(".ago-react-add"))) return;
   agoEmojiClose();
 });
-
-function agoEmojiBtnHTML(threadId) {
-  const arg = threadId != null ? threadId : "null";
-  return `<button class="btn ago-emoji-btn ${_agoEmojiOpen === agoRecKey(threadId) ? "active" : ""}"
-    title="Insert emoji" onclick="agoEmojiToggle(${arg})">${icon("smile")}</button>`;
-}
+document.addEventListener("scroll", (e) => {
+  if (_agoReactFor == null) return;
+  const t = e.target;
+  if (t && t.closest && t.closest(".ago-emoji-pop")) return;
+  agoEmojiClose();
+}, true);
 
 /* ---------- "talk to" agent multi-select (@ button in the composer) ----------
    Pick which of the channel's agents a conversation addresses; the selection
@@ -2130,12 +2163,10 @@ function agoDrawThread() {
         onkeydown="agoKeydown(event, ${_agoThreadRoot.id})" oninput="autoGrow(this); agoMentionInput('ago-thread-msg')"
         onpaste="agoPaste(event, ${_agoThreadRoot.id})"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
-      ${agoEmojiBtnHTML(_agoThreadRoot.id)}
       ${agoAttachBtnHTML(_agoThreadRoot.id)}
       ${agoVoiceBtnHTML(_agoThreadRoot.id)}
       <button class="btn primary" onclick="agoSend(${_agoThreadRoot.id})">Send</button>
       ${agoAddrPopHTML(_agoThreadRoot.id)}
-      ${agoEmojiPopHTML(_agoThreadRoot.id)}
     </div>`;
   const input = document.getElementById("ago-thread-msg");
   if (input && draft) { input.value = draft; autoGrow(input); }
@@ -2469,6 +2500,11 @@ function agoApplyMessageUpdate(m) {
   const tIdx = _agoThreadMsgs.findIndex(x => x.id === m.id);
   if (tIdx >= 0) {
     _agoThreadMsgs[tIdx] = { ..._agoThreadMsgs[tIdx], ...m };
+    agoDrawThread();
+  } else if (_agoThreadRoot && _agoThreadRoot.id === m.id) {
+    // The open thread renders its root from _agoThreadRoot, not _agoMsgs —
+    // without this merge a reaction on the root goes stale in the panel.
+    _agoThreadRoot = { ..._agoThreadRoot, ...m, reply_count: m.reply_count ?? _agoThreadRoot.reply_count };
     agoDrawThread();
   }
   if (redraw) agoDrawMessages();

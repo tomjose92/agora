@@ -31,6 +31,8 @@ use crate::store::{new_token, now, NewAttachment};
 const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
 const MAX_FILES_PER_MESSAGE: usize = 5;
+/// Distinct emoji per message — bounds the chip row like Slack does.
+const MAX_REACTION_KINDS_PER_MESSAGE: usize = 20;
 
 /// Upper bound on an uploaded import archive. An import carries the whole
 /// database plus every attachment, so it is legitimately large — but a 1 GiB
@@ -337,6 +339,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/channels/{channel_id}/pins/{message_id}",
             put(pin_message).delete(unpin_message),
+        )
+        .route(
+            "/api/channels/{channel_id}/messages/{message_id}/reactions/{emoji}",
+            put(add_reaction).delete(remove_reaction),
         )
         .route("/api/channels/{channel_id}/agents", get(channel_agents))
         .route("/api/channels/{channel_id}/activity", get(channel_activity))
@@ -1820,6 +1826,92 @@ async fn unpin_message(
     Ok(Json(json!({"ok": true})))
 }
 
+/* ---------- emoji reactions ---------- */
+
+/// Reactions come from clients as a raw pathname segment; requiring every
+/// char to be non-ASCII rules out markup/script metacharacters wholesale
+/// (real emoji — including ZWJ sequences and variation selectors — never
+/// contain ASCII) while staying agnostic to the clients' curated sets.
+fn valid_reaction_emoji(emoji: &str) -> bool {
+    !emoji.is_empty() && emoji.len() <= 32 && emoji.chars().all(|c| !c.is_ascii())
+}
+
+/// Reloads the message (reactions freshly aggregated), broadcasts it as a
+/// `message_update` when something changed — both clients already merge that
+/// event — and returns it so the caller can update its cache immediately.
+fn reaction_result(
+    state: &AppState,
+    channel_id: &str,
+    message_id: i64,
+    changed: bool,
+) -> Result<Json<Value>, ApiError> {
+    let message = state
+        .hub
+        .store
+        .message(message_id)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    if changed {
+        state.hub.post_transient(
+            channel_id,
+            json!({"type": "message_update", "message": message}),
+        );
+    }
+    Ok(Json(message))
+}
+
+async fn add_reaction(
+    State(state): State<AppState>,
+    Path((channel_id, message_id, emoji)): Path<(String, i64, String)>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
+    let message = state
+        .hub
+        .store
+        .message(message_id)
+        .filter(|m| m["channel_id"] == channel_id.as_str())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    if !valid_reaction_emoji(&emoji) {
+        return Err(err(StatusCode::BAD_REQUEST, "Not a valid reaction emoji"));
+    }
+    let groups = message["reactions"].as_array().cloned().unwrap_or_default();
+    let already = groups.iter().any(|r| r["emoji"] == emoji.as_str());
+    if !already && groups.len() >= MAX_REACTION_KINDS_PER_MESSAGE {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Reaction limit reached for this message",
+        ));
+    }
+    let changed = state
+        .hub
+        .store
+        .add_reaction(&user.username, &channel_id, message_id, &emoji);
+    reaction_result(&state, &channel_id, message_id, changed)
+}
+
+async fn remove_reaction(
+    State(state): State<AppState>,
+    Path((channel_id, message_id, emoji)): Path<(String, i64, String)>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
+    state
+        .hub
+        .store
+        .message(message_id)
+        .filter(|m| m["channel_id"] == channel_id.as_str())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    let changed = state
+        .hub
+        .store
+        .remove_reaction(&user.username, message_id, &emoji);
+    reaction_result(&state, &channel_id, message_id, changed)
+}
+
 async fn channel_agents(
     State(state): State<AppState>,
     Path(channel_id): Path<String>,
@@ -2969,6 +3061,77 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("authorization", format!("Bearer {token}").parse().unwrap());
         h
+    }
+
+    #[tokio::test]
+    async fn reactions_toggle_validate_and_gate_membership() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("ana", "", None, "member").unwrap();
+        store.create_user("mal", "", None, "member").unwrap();
+        let g = store.create_group("Team", "", Some("ana"));
+        let gid = g["id"].as_str().unwrap();
+        store.add_member(gid, "user", "ana", "admin", None);
+        let c = store.create_channel(gid, "general", "");
+        let cid = c["id"].as_str().unwrap().to_string();
+        let m = store.add_message(&cid, "hello", "user", "ana", None, None, &[]);
+        let mid = m["id"].as_i64().unwrap();
+        let ana = session_headers(&state, "ana");
+        let q = || Query(HashMap::new());
+
+        // PUT adds and returns the updated message payload.
+        let res = add_reaction(
+            State(state.clone()),
+            Path((cid.clone(), mid, "👍".to_string())),
+            q(),
+            ana.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["reactions"], json!([{"emoji": "👍", "users": ["ana"]}]));
+
+        // Duplicate PUT is a no-op but still succeeds with the same payload.
+        let res = add_reaction(
+            State(state.clone()),
+            Path((cid.clone(), mid, "👍".to_string())),
+            q(),
+            ana.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["reactions"][0]["users"], json!(["ana"]));
+
+        // ASCII (markup-capable) "emoji" are rejected.
+        let bad = add_reaction(
+            State(state.clone()),
+            Path((cid.clone(), mid, "<img>".to_string())),
+            q(),
+            ana.clone(),
+        )
+        .await;
+        assert!(bad.is_err());
+
+        // Non-members can't react.
+        let mal = session_headers(&state, "mal");
+        let denied = add_reaction(
+            State(state.clone()),
+            Path((cid.clone(), mid, "👍".to_string())),
+            q(),
+            mal,
+        )
+        .await;
+        assert!(denied.is_err());
+
+        // DELETE removes and the payload reflects it.
+        let res = remove_reaction(
+            State(state.clone()),
+            Path((cid.clone(), mid, "👍".to_string())),
+            q(),
+            ana,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["reactions"], json!([]));
     }
 
     #[tokio::test]

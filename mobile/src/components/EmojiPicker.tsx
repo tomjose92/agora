@@ -1,6 +1,7 @@
 /* Emoji picker sheet: the curated Unicode set from src/lib/emoji.ts with
-   keyword search and a persisted "recently used" row (usePrefs). Picking
-   inserts into the composer and keeps the sheet open for multi-emoji runs. */
+   keyword search and a persisted "recently used" row (usePrefs). Used to
+   pick a reaction from the message long-press sheet; the caller decides
+   whether a pick closes the sheet. */
 
 import React, { useMemo, useState } from "react";
 import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
