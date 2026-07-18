@@ -249,13 +249,17 @@ export function useSendMessage(channelId: string) {
       text: string;
       threadId: number | null;
       files?: OutgoingFile[];
+      /** Ask agents to answer in a thread under this (top-level) message. */
+      replyInThread?: boolean;
     }) => {
       const tz = clientTimezone();
+      const askThread = v.replyInThread === true && v.threadId == null;
       if (v.files && v.files.length > 0) {
         const form = new FormData();
         form.append("text", v.text);
         if (v.threadId != null) form.append("thread_id", String(v.threadId));
         if (tz) form.append("timezone", tz);
+        if (askThread) form.append("reply_in_thread", "true");
         for (const f of v.files) {
           form.append("files", formFile(f));
         }
@@ -265,6 +269,7 @@ export function useSendMessage(channelId: string) {
         text: v.text,
         thread_id: v.threadId,
         ...(tz ? { timezone: tz } : {}),
+        ...(askThread ? { reply_in_thread: true } : {}),
       });
     },
     onSuccess: (message, v) => {

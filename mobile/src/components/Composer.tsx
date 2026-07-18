@@ -34,6 +34,7 @@ import {
   Check,
   ClipboardPaste,
   Image as ImageIcon,
+  MessageSquareReply,
   Mic,
   Paperclip,
   X,
@@ -92,6 +93,7 @@ export function Composer({
   agents = [],
   addressKey,
   sending,
+  threadToggle,
   onSend,
   onSendVoice,
 }: {
@@ -103,7 +105,10 @@ export function Composer({
       is remembered under for the app session; unset hides the picker. */
   addressKey?: string;
   sending: boolean;
-  onSend: (v: { text: string; files: OutgoingFile[] }) => Promise<void>;
+  /** Offer the per-message "reply in thread" ask (agents answer in a thread
+      under the message). Channel composer only — a thread already is one. */
+  threadToggle?: boolean;
+  onSend: (v: { text: string; files: OutgoingFile[]; replyInThread?: boolean }) => Promise<void>;
   /** When set (server has voice), a 🎤 button records a voice note and hands
       the file here for the transcribe-and-post upload. `mentions` carries the
       "talk to" prefix ("@a, @b") so the transcript addresses the same agents
@@ -114,6 +119,8 @@ export function Composer({
   const [files, setFiles] = useState<OutgoingFile[]>([]);
   const [focused, setFocused] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
+  /* "Reply in thread": one message's ask, so it resets after each send. */
+  const [replyInThread, setReplyInThread] = useState(false);
   /* "Talk to": which agents this conversation addresses. Session-level state
      keyed by addressKey, so it's remembered when you leave and come back;
      their @mentions are prepended on send ("@a, @b, …"), so the server's
@@ -333,9 +340,14 @@ export function Composer({
     if (!body && files.length === 0) return;
     const prefix = addressedAgents.map((a) => `@${slugify(a.name)}`).join(", ");
     try {
-      await onSend({ text: prefix ? (body ? `${prefix}, ${body}` : prefix) : body, files });
+      await onSend({
+        text: prefix ? (body ? `${prefix}, ${body}` : prefix) : body,
+        files,
+        replyInThread: threadToggle ? replyInThread : undefined,
+      });
       setText("");
       setFiles([]);
+      setReplyInThread(false);
     } catch (e) {
       toastErr("Send failed", e);
     }
@@ -488,6 +500,20 @@ export function Composer({
             </Pressable>
           ) : null}
           <View style={{ flex: 1 }} />
+          {threadToggle ? (
+            <Pressable
+              onPress={() => setReplyInThread((v) => !v)}
+              hitSlop={8}
+              style={styles.toolBtn}
+              accessibilityLabel="Agents answer this message in a thread under it"
+            >
+              <Icon
+                icon={MessageSquareReply}
+                size={22}
+                color={replyInThread ? colors.a1 : colors.dim}
+              />
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={send}
             disabled={sending || (!text.trim() && files.length === 0)}

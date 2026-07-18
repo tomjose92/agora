@@ -488,8 +488,9 @@ export default function ChannelScreen() {
           agents={agentCandidates}
           addressKey={channelId}
           sending={send.isPending}
-          onSend={async ({ text, files }) => {
-            await send.mutateAsync({ text, threadId: null, files });
+          threadToggle
+          onSend={async ({ text, files, replyInThread }) => {
+            await send.mutateAsync({ text, threadId: null, files, replyInThread });
           }}
           onSendVoice={
             voiceOk

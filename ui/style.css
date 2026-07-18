@@ -695,6 +695,8 @@ a.btn { text-decoration: none; }
 
 /* ---------- file attachments ---------- */
 .chat-input .ago-attach { flex-shrink: 0; }
+.chat-input .ago-thread-ask { flex-shrink: 0; }
+.ago-thread-ask.active { border-color: var(--a1); color: var(--a1); }
 .ago-pending { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px 0; }
 .ago-pending-chip {
   display: inline-flex; align-items: center; gap: 6px; max-width: 260px;
