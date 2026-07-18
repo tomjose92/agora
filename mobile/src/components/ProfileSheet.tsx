@@ -57,7 +57,7 @@ export function ProfileSheet({ message, onClose }: { message: Message; onClose: 
                 ) : null}
               </View>
               <Text style={styles.sub} numberOfLines={1}>
-                {isAgent ? "agent" : `@${message.author_id} · person`}
+                @{message.author_id} · {isAgent ? "agent" : "person"}
               </Text>
             </View>
           </View>
