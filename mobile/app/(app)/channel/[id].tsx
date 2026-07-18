@@ -46,6 +46,7 @@ import { Composer, type MentionCandidate } from "../../../src/components/Compose
 import { Icon } from "../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../src/components/LiveRows";
 import { MessageItem } from "../../../src/components/MessageItem";
+import { ProfileSheet } from "../../../src/components/ProfileSheet";
 import { toastErr } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
 import { fmtTs } from "../../../src/lib/format";
@@ -315,6 +316,7 @@ export default function ChannelScreen() {
     );
 
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
+  const [profileFor, setProfileFor] = useState<Message | null>(null);
   const [sheet, setSheet] = useState<"pins" | "stars" | null>(null);
 
   /* 🔊 speak-aloud: while this channel is focused (and not covered by the
@@ -363,6 +365,7 @@ export default function ChannelScreen() {
           pinned={pinnedIds.has(item.m.id)}
           onOpenThread={(root) => openThread(channelId, root, channelName)}
           onLongPress={setActionsFor}
+          onAvatarPress={setProfileFor}
         />
       );
     },
@@ -498,6 +501,9 @@ export default function ChannelScreen() {
           pinned={pinnedIds.has(actionsFor.id)}
           onClose={() => setActionsFor(null)}
         />
+      ) : null}
+      {profileFor ? (
+        <ProfileSheet message={profileFor} onClose={() => setProfileFor(null)} />
       ) : null}
       {sheet === "pins" ? (
         <ListSheet<PinnedMessage>

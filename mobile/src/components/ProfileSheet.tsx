@@ -1,0 +1,134 @@
+/* Profile card opened by tapping a message author's avatar: an agent's
+   picture plus everything /api/agents knows about it (home connection, live
+   status, last seen, mention requirement), or a person's account details
+   from /api/users. Same bottom-sheet pattern as the channel screen's
+   MessageActions. */
+
+import React from "react";
+import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { useAgents, useUsers } from "../api/queries";
+import type { Message } from "../api/types";
+import { fmtTs } from "../lib/format";
+import { colors } from "../lib/theme";
+import { AgentAvatar } from "./AgentAvatar";
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <View style={styles.row}>
+      <Text style={styles.rowKey}>{k}</Text>
+      <Text style={styles.rowVal}>{v}</Text>
+    </View>
+  );
+}
+
+export function ProfileSheet({ message, onClose }: { message: Message; onClose: () => void }) {
+  const isAgent = message.author_type === "agent";
+  const agents = useAgents();
+  const users = useUsers(!isAgent);
+  const agent = isAgent
+    ? ((agents.data ?? []).find((a) => a.id === message.author_id) ?? null)
+    : null;
+  const user = !isAgent
+    ? ((users.data ?? []).find((u) => u.username === message.author_id) ?? null)
+    : null;
+  const name = agent?.name || user?.display_name || message.author_name || message.author_id;
+
+  return (
+    <Modal transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <View style={styles.sheet}>
+          <View style={styles.top}>
+            {isAgent ? (
+              <AgentAvatar agentId={message.author_id} size={64} />
+            ) : (
+              <View style={styles.userAvatar}>
+                <Text style={styles.userInitial}>{(name || "?")[0].toUpperCase()}</Text>
+              </View>
+            )}
+            <View style={styles.id}>
+              <View style={styles.nameRow}>
+                <Text style={styles.name} numberOfLines={1}>
+                  {name}
+                </Text>
+                {agent ? (
+                  <View style={[styles.dot, agent.live ? styles.dotOn : styles.dotOff]} />
+                ) : null}
+              </View>
+              <Text style={styles.sub} numberOfLines={1}>
+                @{message.author_id} · {isAgent ? "agent" : "person"}
+              </Text>
+            </View>
+          </View>
+          {agent ? (
+            <View style={styles.rows}>
+              <Row
+                k="Status"
+                v={agent.live ? "Online" : `Offline · last seen ${fmtTs(agent.last_seen)}`}
+              />
+              {agent.source ? <Row k="Connection" v={agent.source} /> : null}
+              <Row
+                k="Responds"
+                v={
+                  agent.requires_mention
+                    ? "Only when @-mentioned"
+                    : "To every message in its channels"
+                }
+              />
+            </View>
+          ) : null}
+          {user ? (
+            <View style={styles.rows}>
+              <Row k="Role" v={user.instance_role} />
+              {user.email ? <Row k="Email" v={user.email} /> : null}
+              <Row k="Joined" v={fmtTs(user.created_at)} />
+            </View>
+          ) : null}
+        </View>
+      </Pressable>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "#14161d",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 20,
+    paddingBottom: 40,
+    gap: 16,
+  },
+  top: { flexDirection: "row", alignItems: "center", gap: 14 },
+  id: { flex: 1, minWidth: 0 },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  name: { color: colors.text, fontSize: 17, fontWeight: "700", flexShrink: 1 },
+  sub: { color: colors.dim, fontSize: 12.5, marginTop: 2 },
+  dot: { width: 9, height: 9, borderRadius: 5 },
+  dotOn: { backgroundColor: colors.green },
+  dotOff: { backgroundColor: colors.faint },
+  userAvatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 19,
+    backgroundColor: colors.panelStrong,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  userInitial: { color: colors.a2, fontSize: 28, fontWeight: "700" },
+  rows: { gap: 10 },
+  row: { flexDirection: "row", alignItems: "baseline", gap: 12 },
+  rowKey: {
+    width: 90,
+    color: colors.dim,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  rowVal: { color: colors.text, fontSize: 13.5, flex: 1 },
+});

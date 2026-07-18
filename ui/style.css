@@ -1060,3 +1060,34 @@ a.btn { text-decoration: none; }
   .ago-search-bar input { font-size: 16px; }   /* iOS anti-zoom */
   .ago-search-scope { max-width: 34vw; }
 }
+
+/* ---------- thread header channel link ---------- */
+.ago-thread-chan { cursor: pointer; }
+.ago-thread-chan:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------- agent profile card ---------- */
+.ago-av.clickable { cursor: pointer; }
+.ago-av.clickable:hover { border-color: var(--a1); }
+.ago-profile-panel { width: min(360px, 100%); }
+.ago-profile-top {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 20px 14px; border-bottom: 1px solid var(--border);
+}
+.ago-av.profile { width: 64px; height: 64px; font-size: 30px; }
+.ago-profile-id { min-width: 0; flex: 1; }
+.ago-profile-name {
+  font-size: 16px; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ago-profile-sub { font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ago-profile-close { align-self: flex-start; }
+.ago-profile-rows { padding: 12px 20px 18px; display: flex; flex-direction: column; gap: 10px; }
+.ago-profile-row { display: flex; gap: 12px; font-size: 13px; align-items: baseline; }
+.ago-profile-row .k {
+  flex-shrink: 0; width: 86px; color: var(--dim);
+  font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+}
+.ago-profile-row .v { min-width: 0; word-break: break-word; }
+.ago-profile-row .ago-live-dot {
+  display: inline-block; vertical-align: baseline; background: #34d399; margin-right: 2px;
+}

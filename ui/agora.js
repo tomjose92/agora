@@ -122,21 +122,86 @@ function agoDisarm() { _agoConfirm = null; clearTimeout(_agoConfirmTimer); }
    (/api/agents/{id}/avatar), with the bot icon as fallback when the agent
    has none or the fetch fails. <img> can't send the auth header, so the
    session token rides the URL like agoFileUrl. */
-function agoAgentAvatarHTML(agentId, cls) {
+function agoAgentAvatarHTML(agentId, cls, clickable) {
   const meta = _agoAvailAgents.find(a => a.id === agentId);
   const av = meta && meta.avatar;
+  const click = clickable
+    ? ` role="button" title="View ${esc((meta && meta.name) || agentId)}'s profile"
+        onclick="agoShowAgentProfile('${esc(agentId)}')"`
+    : "";
   if (av) {
     const t = sessionToken();
     const src = av + (t ? (av.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : "");
-    return `<span class="ago-av ${cls || ""} has-avatar"><img src="${esc(src)}" alt=""
+    return `<span class="ago-av ${cls || ""} ${clickable ? "clickable" : ""} has-avatar"${click}><img src="${esc(src)}" alt=""
       onerror="agoAvatarFallback(this)"></span>`;
   }
-  return `<span class="ago-av ${cls || ""}">${icon("bot")}</span>`;
+  return `<span class="ago-av ${cls || ""} ${clickable ? "clickable" : ""}"${click}>${icon("bot")}</span>`;
 }
 function agoAvatarFallback(img) {
   const wrap = img.parentElement;
   wrap.classList.remove("has-avatar");
   wrap.innerHTML = icon("bot");
+}
+
+/* ---------- agent profile card ----------
+   Clicking an agent's avatar in the message log opens a small overlay with
+   the picture and everything the /api/agents payload knows about the agent:
+   name, home connection, live status, last seen, mention requirement. */
+async function agoShowAgentProfile(agentId) {
+  // Refresh the roster on open — _agoAvailAgents is only loaded at boot and
+  // when the members panel opens, so live/last_seen can be stale.
+  try {
+    const data = await api("/api/agents");
+    if (data && data.agents) _agoAvailAgents = data.agents;
+  } catch (e) { /* the cached list still works */ }
+  const a = _agoAvailAgents.find(x => x.id === agentId);
+  if (!a) { toast("Agent not found", { variant: "warn" }); return; }
+  let ov = document.getElementById("ago-profile-overlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "ago-profile-overlay";
+    ov.className = "conn-overlay";
+    ov.onclick = (e) => { if (e.target === ov) agoCloseProfile(); };
+    document.body.appendChild(ov);
+  }
+  ov.style.display = "";
+  ov.innerHTML = `
+    <div class="conn-panel ago-profile-panel">
+      <div class="ago-profile-top">
+        ${agoAgentAvatarHTML(a.id, "profile")}
+        <div class="ago-profile-id">
+          <div class="ago-profile-name">${esc(a.name || a.id)}</div>
+          <div class="ago-profile-sub dim">@${esc(a.id)} · agent</div>
+        </div>
+        <button class="btn sm ago-profile-close" onclick="agoCloseProfile()">${icon("x")}</button>
+      </div>
+      <div class="ago-profile-rows">
+        <div class="ago-profile-row">
+          <span class="k">Status</span>
+          <span class="v">${a.live
+            ? `<span class="ago-live-dot"></span> Online`
+            : `<span class="ago-off">Offline</span>${a.last_seen ? ` · last seen ${esc(agoRelTime(a.last_seen))}` : ""}`}</span>
+        </div>
+        ${a.source ? `<div class="ago-profile-row"><span class="k">Connection</span><span class="v">${esc(a.source)}</span></div>` : ""}
+        <div class="ago-profile-row">
+          <span class="k">Responds</span>
+          <span class="v">${a.requires_mention ? "Only when @-mentioned" : "To every message in its channels"}</span>
+        </div>
+      </div>
+    </div>`;
+}
+function agoCloseProfile() {
+  const ov = document.getElementById("ago-profile-overlay");
+  if (ov) { ov.style.display = "none"; ov.innerHTML = ""; }
+}
+
+/* "5m ago" / "3h ago" / "2d ago" from a unix-seconds timestamp. */
+function agoRelTime(ts) {
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }
 
 /* Slack-style drill-down on phones. */
@@ -1395,7 +1460,7 @@ async function agoSelectOption(messageId, optionId) {
 function agoMsgHTML(m, inThread) {
   const bubble = agoBubble(m, inThread);
   if (m.author_type !== "agent") return bubble;
-  return `<div class="ago-msg-row">${agoAgentAvatarHTML(m.author_id)}${bubble}</div>`;
+  return `<div class="ago-msg-row">${agoAgentAvatarHTML(m.author_id, "", true)}${bubble}</div>`;
 }
 function agoDrawMessages() {
   const box = document.getElementById("ago-log");
@@ -1905,7 +1970,8 @@ function agoDrawThread() {
         onclick="agoCloseThread()">${icon("chevron-left")}</button>
       <div class="ago-head-text">
         <span class="ago-chan-name">Thread</span>
-        ${channel ? `<span class="dim"><span class="hash">#</span>${esc(channel.name)}</span>` : ""}
+        ${channel ? `<span class="dim ago-thread-chan" title="Go to #${esc(channel.name)}"
+          onclick="agoCloseThread()"><span class="hash">#</span>${esc(channel.name)}</span>` : ""}
       </div>
       <div class="ago-head-actions">
         ${_agoVoiceOK ? `
