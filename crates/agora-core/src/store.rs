@@ -1491,20 +1491,32 @@ impl Store {
         })
     }
 
-    /// Merge ``patch`` into a message's ``meta`` JSON and return the updated message.
+    /// Merge ``patch`` into a message's ``meta`` JSON and return the updated
+    /// message. The read-merge-write runs under one connection lock: the
+    /// unfurl worker and an option resolve can patch the same message
+    /// concurrently, and a merge computed from a stale read would silently
+    /// drop the other writer's keys.
     pub fn update_message_meta(&self, message_id: i64, patch: &Value) -> Option<Value> {
-        let existing = self.message(message_id)?;
-        let mut meta = existing.get("meta").cloned().unwrap_or(Value::Null);
-        if !meta.is_object() {
-            meta = json!({});
-        }
-        if let (Some(obj), Some(patch_obj)) = (meta.as_object_mut(), patch.as_object()) {
-            for (k, v) in patch_obj {
-                obj.insert(k.clone(), v.clone());
-            }
-        }
         {
             let conn = self.conn.lock().unwrap();
+            let raw: Option<String> = conn
+                .query_row(
+                    "SELECT meta FROM messages WHERE id = ?1",
+                    params![message_id],
+                    |r| r.get(0),
+                )
+                .ok()?;
+            let mut meta = raw
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .unwrap_or(Value::Null);
+            if !meta.is_object() {
+                meta = json!({});
+            }
+            if let (Some(obj), Some(patch_obj)) = (meta.as_object_mut(), patch.as_object()) {
+                for (k, v) in patch_obj {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
             conn.execute(
                 "UPDATE messages SET meta = ?1 WHERE id = ?2",
                 params![meta.to_string(), message_id],
@@ -3415,6 +3427,38 @@ mod tests {
         assert!(s.delete_invite_link(stale_token));
         assert!(s.invite_link(stale_token).is_none());
         assert_eq!(s.list_invite_links().len(), 1);
+    }
+
+    #[test]
+    fn update_message_meta_merges_atomically_across_writers() {
+        use std::sync::Arc;
+        let s = Arc::new(store());
+        let g = s.create_group("G", "", None);
+        let c = s.create_channel(g["id"].as_str().unwrap(), "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let m = s.add_message(cid, "hi", "user", "tom", None, None, &[]);
+        let mid = m["id"].as_i64().unwrap();
+
+        // Two writers patching the same message — the unfurl worker vs. an
+        // option resolve. Every write adds a key nobody rewrites, so a merge
+        // computed from a stale read (the write clobbering the other side's
+        // just-added key) stays visible at the end no matter when it happens.
+        const ROUNDS: i64 = 200;
+        let patch_key = move |s: &Store, prefix: &str, i: i64| {
+            let mut patch = serde_json::Map::new();
+            patch.insert(format!("{prefix}{i}"), json!(i));
+            s.update_message_meta(mid, &Value::Object(patch));
+        };
+        let (a, b) = (Arc::clone(&s), Arc::clone(&s));
+        let ta = std::thread::spawn(move || (0..ROUNDS).for_each(|i| patch_key(&a, "a", i)));
+        let tb = std::thread::spawn(move || (0..ROUNDS).for_each(|i| patch_key(&b, "b", i)));
+        ta.join().unwrap();
+        tb.join().unwrap();
+        let meta = &s.message(mid).unwrap()["meta"];
+        for i in 0..ROUNDS {
+            assert_eq!(meta[format!("a{i}")], i, "lost a{i}");
+            assert_eq!(meta[format!("b{i}")], i, "lost b{i}");
+        }
     }
 
     #[test]
