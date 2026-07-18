@@ -23,6 +23,7 @@ import {
   useAudioRecorderState,
 } from "expo-audio";
 import * as Clipboard from "expo-clipboard";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
@@ -52,6 +53,9 @@ import { toast, toastErr } from "./Toast";
 const NONE_ADDRESSED: string[] = [];
 
 const MAX_FILES = 5;
+
+/** Keep-awake tag for voice notes: the screen must not auto-lock mid-take. */
+const REC_KEEP_AWAKE = "composer-voice-note";
 
 /* Image types the rest of the stack digests: browsers render them and the
    vision APIs accept them. Everything else (HEIC on every iPhone, AVIF...)
@@ -173,9 +177,16 @@ export function Composer({
         toast("Microphone access is needed for voice messages", "warn");
         return;
       }
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      // allowsBackgroundRecording: a long voice note must survive the phone
+      // locking (auto-lock or pocketed mid-take); keep-awake just delays it.
+      await setAudioModeAsync({
+        allowsRecording: true,
+        allowsBackgroundRecording: true,
+        playsInSilentMode: true,
+      });
       await recorder.prepareToRecordAsync();
       recorder.record();
+      void activateKeepAwakeAsync(REC_KEEP_AWAKE).catch(() => {});
       setRecPhase("recording");
     } catch (e) {
       toastErr("Couldn't start recording", e);
@@ -188,7 +199,12 @@ export function Composer({
     } catch {
       /* already stopped */
     }
-    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    void deactivateKeepAwake(REC_KEEP_AWAKE).catch(() => {});
+    await setAudioModeAsync({
+      allowsRecording: false,
+      allowsBackgroundRecording: false,
+      playsInSilentMode: true,
+    }).catch(() => {});
     return recorder.uri;
   };
 

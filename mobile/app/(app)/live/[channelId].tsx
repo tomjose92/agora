@@ -107,7 +107,15 @@ export default function LiveScreen() {
   const startMic = useCallback(async () => {
     if (ended.current) return;
     try {
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      // Background flags keep the session alive when the phone locks mid-
+      // conversation: the mic (foreground service on Android, background
+      // audio session on iOS) and the TTS replies both survive the lock.
+      await setAudioModeAsync({
+        allowsRecording: true,
+        allowsBackgroundRecording: true,
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+      });
       await recorder.prepareToRecordAsync();
       recorder.record();
       vad.current = initialVadState();
@@ -146,7 +154,12 @@ export default function LiveScreen() {
       if (turnTimer.current) clearTimeout(turnTimer.current);
       stopSpeech();
       void stopMic().then(() =>
-        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {}),
+        setAudioModeAsync({
+          allowsRecording: false,
+          allowsBackgroundRecording: false,
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+        }).catch(() => {}),
       );
     };
   }, [startMic, stopMic]);
@@ -220,9 +233,12 @@ export default function LiveScreen() {
       if (turnTimer.current) clearTimeout(turnTimer.current);
       void (async () => {
         await stopMic(); // half-duplex: never record our own playback
-        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
-          () => {},
-        );
+        await setAudioModeAsync({
+          allowsRecording: false,
+          allowsBackgroundRecording: false,
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+        }).catch(() => {});
         if (ended.current) return;
         setStatus("speaking");
         enqueueSpeech(session, m.id);
