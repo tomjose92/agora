@@ -42,6 +42,7 @@ import { Composer, type MentionCandidate } from "../../../../src/components/Comp
 import { Icon } from "../../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows";
 import { MessageItem } from "../../../../src/components/MessageItem";
+import { ProfileSheet } from "../../../../src/components/ProfileSheet";
 import { toastErr } from "../../../../src/components/Toast";
 import { onAgentMessage } from "../../../../src/lib/agentBus";
 import { headerActions } from "../../../../src/lib/headerItems";
@@ -84,13 +85,25 @@ export default function ThreadScreen() {
   const { typing, progress } = useChannelLive(channelId, rootId);
 
   const groups = useGroups();
-  const groupId = useMemo(() => {
+  const { groupId, resolvedChannelName } = useMemo(() => {
     for (const g of groups.data ?? []) {
-      if (g.channels.some((c) => c.id === channelId)) return g.id;
+      const c = g.channels.find((x) => x.id === channelId);
+      if (c) return { groupId: g.id, resolvedChannelName: c.name };
     }
-    return null;
+    return { groupId: null, resolvedChannelName: null };
   }, [groups.data, channelId]);
   const members = useMembers(groupId ?? "");
+  const channelName = params.channelName || resolvedChannelName;
+
+  /* Tapping the header title jumps to the thread's channel. `navigate`
+     (not `push`) pops back to the channel screen when the thread was opened
+     from it, instead of stacking a duplicate. */
+  const openChannel = useCallback(() => {
+    router.navigate({
+      pathname: "/(app)/channel/[id]",
+      params: { id: channelId, name: channelName ?? "", groupId: groupId ?? "" },
+    });
+  }, [channelId, channelName, groupId]);
 
   // The root usually sits in the already-loaded top-level page set; when it
   // doesn't (inbox / notification / old pin), fetch it directly.
@@ -141,6 +154,7 @@ export default function ThreadScreen() {
 
   const starredIds = useMemo(() => new Set((stars.data ?? []).map((s) => s.id)), [stars.data]);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
+  const [profileFor, setProfileFor] = useState<Message | null>(null);
   const toggleTldr = useTldrView((s) => s.toggle);
   const showingTldr = useTldrView((s) => s.showing);
 
@@ -189,6 +203,7 @@ export default function ThreadScreen() {
           message={item.m}
           starred={starredIds.has(item.m.id)}
           onLongPress={setActionsFor}
+          onAvatarPress={setProfileFor}
         />
       </View>
     ),
@@ -199,7 +214,16 @@ export default function ThreadScreen() {
     <>
       <Stack.Screen
         options={{
-          title: params.channelName ? `Thread · # ${params.channelName}` : "Thread",
+          headerTitle: () =>
+            channelName ? (
+              <Pressable onPress={openChannel} hitSlop={6}>
+                <Text style={styles.headerTitle}>
+                  Thread · <Text style={styles.headerChan}># {channelName}</Text>
+                </Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.headerTitle}>Thread</Text>
+            ),
           headerShown: true,
           ...headerActions(
             voiceOk ? (
@@ -329,6 +353,9 @@ export default function ThreadScreen() {
           </Pressable>
         </Modal>
       ) : null}
+      {profileFor ? (
+        <ProfileSheet message={profileFor} onClose={() => setProfileFor(null)} />
+      ) : null}
     </>
   );
 }
@@ -337,6 +364,8 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   headerBtns: { flexDirection: "row", gap: 16 },
   headerBtnOff: { opacity: 0.35 },
+  headerTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
+  headerChan: { color: colors.dim },
   rootMsg: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.borderStrong,

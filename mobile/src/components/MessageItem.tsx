@@ -84,6 +84,7 @@ export function MessageItem({
   message,
   onOpenThread,
   onLongPress,
+  onAvatarPress,
   starred,
   pinned,
 }: {
@@ -91,6 +92,7 @@ export function MessageItem({
   message: Message;
   onOpenThread?: (root: Message) => void;
   onLongPress?: (message: Message) => void;
+  onAvatarPress?: (message: Message) => void;
   starred?: boolean;
   pinned?: boolean;
 }) {
@@ -148,9 +150,19 @@ export function MessageItem({
     );
   }
 
+  /* The avatar sits outside the bubble, so wrapping it in a Pressable is
+     safe from the gesture-stealing issue described above. */
+  const avatar = onAvatarPress ? (
+    <Pressable onPress={() => onAvatarPress(message)} hitSlop={6}>
+      <Avatar message={message} />
+    </Pressable>
+  ) : (
+    <Avatar message={message} />
+  );
+
   return (
     <View style={styles.row}>
-      <Avatar message={message} />
+      {avatar}
       <View style={[styles.bubble, styles.bubbleOther]}>
         {pressBackdrop}
         <View style={styles.head}>
