@@ -21,6 +21,7 @@ jest.mock("expo-constants", () => ({
 }));
 
 import * as SecureStore from "expo-secure-store";
+import { KEY_RECENT } from "../src/state/servers";
 import { KEY_URL, useSession } from "../src/state/session";
 
 function resp(body: unknown, status = 200, url = ""): Response {
@@ -55,6 +56,11 @@ describe("signIn", () => {
     expect(state.status).toBe("signedIn");
     expect(state.session).toEqual({ baseUrl: "https://a.example", token: "tok" });
     expect(SecureStore.setItemAsync).toHaveBeenCalledWith(KEY_URL, "https://a.example");
+    // A successful sign-in records the server in the recent list.
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
+      KEY_RECENT,
+      JSON.stringify(["https://a.example"]),
+    );
   });
 
   it("surfaces a 401 as an error", async () => {

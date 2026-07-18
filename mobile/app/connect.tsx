@@ -23,6 +23,7 @@ import { normalizeBaseUrl, originOf } from "../src/api/client";
 import { appleAvailable, runAppleFlow } from "../src/lib/appleAuth";
 import { probeAuth } from "../src/lib/authConfig";
 import { runGoogleFlow } from "../src/lib/googleAuth";
+import { forgetRecentServer, loadRecentServers } from "../src/state/servers";
 import { useSession } from "../src/state/session";
 import { colors, radius } from "../src/lib/theme";
 
@@ -44,6 +45,12 @@ export default function Connect() {
   const [error, setError] = useState("");
   // Force Google's account chooser on retries (see runGoogleFlow).
   const [googleRetry, setGoogleRetry] = useState(false);
+  // Previously joined servers: tap to reconnect, × to forget.
+  const [recent, setRecent] = useState<string[]>([]);
+
+  useEffect(() => {
+    void loadRecentServers().then(setRecent);
+  }, []);
 
   // A signed-out relaunch knows the server before the first render settles.
   useEffect(() => {
@@ -78,12 +85,13 @@ export default function Connect() {
 
   if (status === "signedIn") return <Redirect href="/(app)" />;
 
-  const toSignin = async () => {
-    if (!url.trim() || busy) return;
+  const toSignin = async (target?: string) => {
+    const entered = target ?? url;
+    if (!entered.trim() || busy) return;
     setBusy(true);
     setError("");
     try {
-      const normalized = normalizeBaseUrl(url);
+      const normalized = normalizeBaseUrl(entered);
       // Reachability check that also learns the sign-in methods. Keep the
       // origin the server actually answered from (http 301s to https): later
       // authorized requests must not cross a redirect, which strips the
@@ -169,12 +177,12 @@ export default function Connect() {
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="url"
-              onSubmitEditing={toSignin}
+              onSubmitEditing={() => void toSignin()}
             />
             {error ? <Text style={styles.error}>{error}</Text> : null}
             <Pressable
               style={[styles.btn, (!url.trim() || busy) && styles.btnOff]}
-              onPress={toSignin}
+              onPress={() => void toSignin()}
               disabled={!url.trim() || busy}
             >
               {busy ? (
@@ -183,6 +191,36 @@ export default function Connect() {
                 <Text style={styles.btnText}>Continue</Text>
               )}
             </Pressable>
+            {recent.length ? (
+              <View style={styles.recent}>
+                <Text style={styles.recentTitle}>Recent servers</Text>
+                {recent.map((server) => (
+                  <View key={server} style={styles.recentRow}>
+                    <Pressable
+                      style={[styles.recentPick, busy && styles.btnOff]}
+                      onPress={() => {
+                        setUrl(server);
+                        void toSignin(server);
+                      }}
+                      disabled={busy}
+                    >
+                      <Text style={styles.recentPickText} numberOfLines={1}>
+                        {server.replace(/^https?:\/\//, "")}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.recentRemove}
+                      onPress={() => void forgetRecentServer(server).then(setRecent)}
+                      disabled={busy}
+                      accessibilityLabel={`Remove ${server} from recent servers`}
+                      hitSlop={8}
+                    >
+                      <Text style={styles.recentRemoveText}>×</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            ) : null}
           </>
         ) : (
           <>
@@ -329,6 +367,34 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   btnGhostText: { color: colors.text, fontSize: 14.5, fontWeight: "600" },
+  recent: { gap: 6, marginTop: 2 },
+  recentTitle: {
+    color: colors.dim,
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+  recentRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  recentPick: {
+    flex: 1,
+    backgroundColor: colors.panelStrong,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  recentPickText: { color: colors.text, fontSize: 13.5, fontWeight: "600" },
+  recentRemove: {
+    width: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  recentRemoveText: { color: colors.dim, fontSize: 17, lineHeight: 18 },
   // Tertiary: quiet but still a full-width tappable button.
   btnSubtle: {
     borderRadius: 10,

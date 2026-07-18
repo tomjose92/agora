@@ -71,6 +71,32 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .server-chip b { color: var(--text); font-weight: 600; }
+  .recent { margin-top: 18px; }
+  .recent-title {
+    margin: 0 0 6px; color: var(--dim); font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.6px;
+  }
+  .recent-row {
+    display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  }
+  .recent-row .server {
+    flex: 1; min-width: 0; margin: 0; padding: 9px 12px; text-align: left;
+    background: rgba(255, 255, 255, 0.04); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    font-size: 13.5px; font-weight: 500; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .recent-row .server:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.07);
+  }
+  .recent-row .remove {
+    flex: none; width: 32px; margin: 0; padding: 8px 0;
+    background: transparent; color: var(--dim); border: 1px solid transparent;
+    border-radius: 10px; font-size: 15px; font-weight: 500; line-height: 1;
+  }
+  .recent-row .remove:hover:not(:disabled) {
+    color: var(--red); border-color: var(--border); background: rgba(255, 255, 255, 0.04);
+  }
   .status { margin-top: 14px; font-size: 13.5px; min-height: 1.4em; text-align: center; }
   .status.error { color: var(--red); }
   .status.ok { color: var(--green); }
@@ -91,6 +117,11 @@
       <label for="url">Agora server URL</label>
       <input id="url" placeholder="https://agora.up.railway.app" autocapitalize="off" autocorrect="off" spellcheck="false" />
       <button class="primary" id="continue">Continue</button>
+      <!-- Previously joined servers (URLs only); tap to reconnect, × to forget. -->
+      <div class="recent hidden" id="recent">
+        <p class="recent-title">Recent servers</p>
+        <div id="recent-list"></div>
+      </div>
       <div class="divider">or</div>
       <button class="ghost" id="embedded">Run everything on this Mac</button>
       <button class="subtle hidden" id="cancel">Cancel</button>
@@ -153,6 +184,42 @@
     };
     [urlEl, tokenEl].forEach((el) => el.addEventListener("input", draft.save));
 
+    /* Previously joined servers: tap to reconnect, × to forget. Built with
+       DOM nodes (not innerHTML) so URLs need no escaping. */
+    function drawRecent(urls) {
+      const list = $("recent-list");
+      list.textContent = "";
+      $("recent").classList.toggle("hidden", !urls || !urls.length);
+      (urls || []).forEach((server) => {
+        const row = document.createElement("div");
+        row.className = "recent-row";
+        const pick = document.createElement("button");
+        pick.className = "server";
+        pick.type = "button";
+        pick.textContent = server.replace(/^https?:\/\//, "");
+        pick.title = server;
+        pick.addEventListener("click", () => {
+          urlEl.value = server;
+          $("continue").click();
+        });
+        const remove = document.createElement("button");
+        remove.className = "remove";
+        remove.type = "button";
+        remove.textContent = "\u00d7";
+        remove.title = "Remove from recent servers";
+        remove.setAttribute("aria-label", "Remove " + server + " from recent servers");
+        remove.addEventListener("click", async () => {
+          try {
+            drawRecent(await invoke("forget_recent_server", { url: server }));
+          } catch (e) {
+            setStatus(String(e), "error");
+          }
+        });
+        row.append(pick, remove);
+        list.appendChild(row);
+      });
+    }
+
     /* Move to the sign-in step for the current URL: probe which methods the
        server offers and lay the step out accordingly. */
     async function toSignin(errText) {
@@ -183,6 +250,7 @@
       const saved = draft.load();
       urlEl.value = (saved && saved.url) || settings.url || "";
       tokenEl.value = (saved && saved.token) || settings.token || "";
+      drawRecent(settings.recent);
       $("cancel").classList.toggle("hidden", !editing);
       if (editing || settings.mode !== "remote" || !settings.url) {
         show("server");

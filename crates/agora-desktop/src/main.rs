@@ -88,7 +88,8 @@ fn main() {
             connect_remote,
             open_current_server,
             google_sign_in,
-            probe_server
+            probe_server,
+            forget_recent_server
         ])
         .menu(|handle| {
             let menu = Menu::default(handle)?;
@@ -276,12 +277,19 @@ fn get_server_settings(app: AppHandle) -> Result<DesktopSettings, String> {
 #[tauri::command]
 async fn set_server_settings(app: AppHandle, settings: DesktopSettings) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // The recent-servers list is owned by this side: re-merge it from disk so
+    // the webview payload (which never carries it) can't clobber the history.
+    let mut settings = settings;
+    settings.recent = settings::load(&data_dir).recent;
     match settings.mode {
         Mode::Remote => {
             let url = settings
                 .remote_url()
                 .ok_or("Server URL and admin key are both required")?;
             validate_remote(&settings).await?;
+            if let Some(base) = settings.url.clone() {
+                settings.remember(&base);
+            }
             settings::save(&data_dir, &settings).map_err(|e| e.to_string())?;
             open_main(&app, url.parse().map_err(|_| "Invalid server URL")?);
         }
@@ -302,11 +310,19 @@ async fn set_server_settings(app: AppHandle, settings: DesktopSettings) -> Resul
 #[tauri::command]
 async fn connect_remote(app: AppHandle) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let stored = settings::load(&data_dir);
+    let mut stored = settings::load(&data_dir);
     let url = stored
         .remote_url()
         .ok_or("No remote server configured yet")?;
     validate_remote(&stored).await?;
+    // Refresh the history too — installs that predate the recent list pick
+    // up their current server on the first successful reconnect.
+    if let Some(base) = stored.url.clone() {
+        stored.remember(&base);
+        if let Err(e) = settings::save(&data_dir, &stored) {
+            tracing::warn!("failed to record recent server: {e}");
+        }
+    }
     open_main(&app, url.parse().map_err(|_| "Invalid server URL")?);
     sync_remote_notifier(&app, &stored);
     Ok(())
@@ -400,18 +416,31 @@ async fn google_sign_in(
         return Err("Server URL must start with http:// or https://".into());
     }
     let token = google_login::run_flow(base.clone(), select_account.unwrap_or(false)).await?;
-    let settings = DesktopSettings {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut settings = DesktopSettings {
         mode: Mode::Remote,
-        url: Some(base),
+        url: Some(base.clone()),
         token: Some(token),
+        recent: settings::load(&data_dir).recent,
     };
     validate_remote(&settings).await?;
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    settings.remember(&base);
     settings::save(&data_dir, &settings).map_err(|e| e.to_string())?;
     let url = settings.remote_url().ok_or("sign-in produced no session")?;
     open_main(&app, url.parse().map_err(|_| "Invalid server URL")?);
     sync_remote_notifier(&app, &settings);
     Ok(())
+}
+
+/// Remove one entry from the previously-joined-servers list and return the
+/// updated list, so the connect page can re-render without a reload.
+#[tauri::command]
+fn forget_recent_server(app: AppHandle, url: String) -> Result<Vec<String>, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut stored = settings::load(&data_dir);
+    stored.forget(&url);
+    settings::save(&data_dir, &stored).map_err(|e| e.to_string())?;
+    Ok(stored.recent)
 }
 
 /// GET /api/me with the admin key; distinguishes bad-token from unreachable.
