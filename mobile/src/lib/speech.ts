@@ -16,10 +16,11 @@ let watchdog: ReturnType<typeof setTimeout> | null = null;
 const CLIP_TIMEOUT_MS = 180_000;
 
 /** TTS must sound with the mute switch on — a spoken reply the user asked
-    for is not a notification sound. */
+    for is not a notification sound — and must keep playing when the phone
+    locks mid-reply (UIBackgroundModes audio is enabled in app.json). */
 export async function prepareSpeechAudio(): Promise<void> {
   try {
-    await setAudioModeAsync({ playsInSilentMode: true });
+    await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true });
   } catch {
     /* non-fatal: playback still works with the switch off */
   }
