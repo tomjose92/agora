@@ -867,6 +867,7 @@ function agoSelectChannel(gid, cid) {
     agoSpeakStop();     // don't keep reading the previous channel's replies
     _agoFiles = {};     // pending attachments belong to the previous channel
     _agoAddrOpen = null;   // the "talk to" selection itself is per channel and persists
+    agoEmojiClose();    // an open emoji picker belongs to the previous composer
     _agoSel.g = gid; _agoSel.c = cid;
     _agoThreadRoot = null; _agoThreadMsgs = []; _agoMembers = null;
     _agoPins = []; _agoPinsOpen = false;
@@ -1138,10 +1139,12 @@ function agoDrawMain() {
         onkeydown="agoKeydown(event, null)" oninput="autoGrow(this); agoMentionInput('ago-msg')"
         onpaste="agoPaste(event, null)"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
+      ${agoEmojiBtnHTML(null)}
       ${agoAttachBtnHTML(null)}
       ${agoVoiceBtnHTML(null)}
       <button class="btn primary" onclick="agoSend(null)">Send</button>
       ${agoAddrPopHTML(null)}
+      ${agoEmojiPopHTML(null)}
     </div>`;
   const msgBox = document.getElementById("ago-msg");
   if (msgBox && draft) { msgBox.value = draft; autoGrow(msgBox); }
@@ -1616,6 +1619,7 @@ function agoKeydown(e, threadId) {
     if (e.key === "Escape") { agoCloseMention(); return; }
   }
   if (e.key === "Escape" && _agoAddrOpen) { agoAddrTogglePop(threadId); return; }
+  if (e.key === "Escape" && _agoEmojiOpen) { agoEmojiClose(); return; }
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agoSend(threadId); }
 }
 /* Sender's IANA timezone, attached hidden to every outgoing message so agents
@@ -1764,6 +1768,128 @@ function agoFileChipsHTML(threadId) {
 
 function agoRedrawComposer(threadId) {
   if (threadId != null) agoDrawThread(); else agoDrawMain();
+}
+
+/* ---------- emoji picker (😊 button in the composers) ----------
+   Standard Unicode emoji only (the curated AGO_EMOJI set in emoji.js);
+   picking one inserts it at the caret. Recently used live in localStorage.
+   Open/close inserts/removes only the popup node — a full composer redraw
+   would reassign the textarea's value and destroy the caret position the
+   pick needs (and steal focus mid-typing). */
+const AGO_EMOJI_RECENT_MAX = 24;
+let _agoEmojiOpen = null;    // composer key ("main" | "t<rootId>") while open
+let _agoEmojiQuery = "";
+let _agoEmojiSet = null;     // curated chars, for validating stored recents
+
+function agoEmojiValid(ch) {
+  if (!_agoEmojiSet) _agoEmojiSet = new Set(AGO_EMOJI.flatMap(c => c.emoji.map(p => p[0])));
+  return _agoEmojiSet.has(ch);
+}
+
+/* Stored recents are untrusted (any tab can write the key): keep only
+   curated emoji, so nothing unexpected reaches the innerHTML templates. */
+function agoEmojiRecent() {
+  let list = null;
+  try { list = JSON.parse(localStorage.getItem("agoEmojiRecent")); } catch (e) {}
+  return Array.isArray(list) ? list.filter(agoEmojiValid) : [];
+}
+
+function agoEmojiRemember(ch) {
+  const list = [ch].concat(agoEmojiRecent().filter(c => c !== ch))
+    .slice(0, AGO_EMOJI_RECENT_MAX);
+  try { localStorage.setItem("agoEmojiRecent", JSON.stringify(list)); } catch (e) {}
+}
+
+/* Closes whichever composer's picker is open (there is at most one). */
+function agoEmojiClose() {
+  _agoEmojiOpen = null;
+  _agoEmojiQuery = "";
+  const pop = document.getElementById("ago-emoji-pop");
+  if (pop) pop.remove();
+  document.querySelectorAll(".ago-emoji-btn.active").forEach(b => b.classList.remove("active"));
+}
+
+function agoEmojiToggle(threadId) {
+  const key = agoRecKey(threadId);
+  const open = _agoEmojiOpen !== key;
+  agoEmojiClose();
+  if (!open) return;
+  const input = document.getElementById(threadId != null ? "ago-thread-msg" : "ago-msg");
+  if (!input) return;
+  _agoEmojiOpen = key;
+  input.parentElement.insertAdjacentHTML("beforeend", agoEmojiPopHTML(threadId));
+  const btn = input.parentElement.querySelector(".ago-emoji-btn");
+  if (btn) btn.classList.add("active");
+  const search = document.getElementById("ago-emoji-search");
+  if (search) search.focus();
+}
+
+function agoEmojiSectionsHTML(threadId) {
+  const arg = threadId != null ? threadId : "null";
+  const cell = (pair) => `<button class="ago-emoji-cell" ${pair[1] ? `title="${esc(pair[1])}"` : ""}
+    onmousedown="event.preventDefault()" onclick="agoPickEmoji(${arg}, '${pair[0]}')">${pair[0]}</button>`;
+  const q = _agoEmojiQuery.trim().toLowerCase();
+  if (q) {
+    const hits = AGO_EMOJI.flatMap(cat => cat.emoji.filter(p => p[1].includes(q))).slice(0, 64);
+    return hits.length
+      ? `<div class="ago-emoji-grid">${hits.map(cell).join("")}</div>`
+      : `<div class="ago-emoji-empty">No matching emoji.</div>`;
+  }
+  const recent = agoEmojiRecent();
+  const cats = (recent.length ? [{ name: "Recently used", emoji: recent.map(ch => [ch, ""]) }] : [])
+    .concat(AGO_EMOJI);
+  return cats.map(cat => `
+    <div class="ago-emoji-cat">${esc(cat.name)}</div>
+    <div class="ago-emoji-grid">${cat.emoji.map(cell).join("")}</div>`).join("");
+}
+
+function agoEmojiPopHTML(threadId) {
+  if (_agoEmojiOpen !== agoRecKey(threadId)) return "";
+  const arg = threadId != null ? threadId : "null";
+  return `<div class="ago-emoji-pop" id="ago-emoji-pop">
+    <input id="ago-emoji-search" type="search" placeholder="Search emoji…" autocomplete="off"
+      value="${esc(_agoEmojiQuery)}"
+      oninput="agoEmojiFilter(${arg}, this.value)"
+      onkeydown="if (event.key === 'Escape') { event.stopPropagation(); agoEmojiClose(); }">
+    <div class="ago-emoji-body" id="ago-emoji-body">${agoEmojiSectionsHTML(threadId)}</div>
+  </div>`;
+}
+
+/* Refilter updates only the grid so the search input keeps focus. */
+function agoEmojiFilter(threadId, q) {
+  _agoEmojiQuery = q || "";
+  const body = document.getElementById("ago-emoji-body");
+  if (body) body.innerHTML = agoEmojiSectionsHTML(threadId);
+}
+
+function agoPickEmoji(threadId, ch) {
+  agoEmojiRemember(ch);
+  agoEmojiClose();
+  const input = document.getElementById(threadId != null ? "ago-thread-msg" : "ago-msg");
+  if (!input) return;
+  const start = input.selectionStart != null ? input.selectionStart : input.value.length;
+  const end = input.selectionEnd != null ? input.selectionEnd : start;
+  input.value = input.value.slice(0, start) + ch + input.value.slice(end);
+  const pos = start + ch.length;
+  input.focus();
+  input.setSelectionRange(pos, pos);
+  autoGrow(input);
+}
+
+/* Click-away closes the picker (the button and panel clicks are exempt).
+   agoEmojiClose only removes the popup node, so the click target — often
+   the textarea the user is returning to — keeps its focus. */
+document.addEventListener("click", (e) => {
+  if (!_agoEmojiOpen) return;
+  const t = e.target;
+  if (t && t.closest && (t.closest(".ago-emoji-pop") || t.closest(".ago-emoji-btn"))) return;
+  agoEmojiClose();
+});
+
+function agoEmojiBtnHTML(threadId) {
+  const arg = threadId != null ? threadId : "null";
+  return `<button class="btn ago-emoji-btn ${_agoEmojiOpen === agoRecKey(threadId) ? "active" : ""}"
+    title="Insert emoji" onclick="agoEmojiToggle(${arg})">${icon("smile")}</button>`;
 }
 
 /* ---------- "talk to" agent multi-select (@ button in the composer) ----------
@@ -1947,6 +2073,7 @@ function agoCloseThread() {
   // Discard a recording — and end a live session — scoped to this thread.
   if (_agoRec && _agoRec.threadId != null) agoVoiceCancel();
   if (_agoLive && _agoLive.threadId != null) agoLiveStop();
+  if (_agoEmojiOpen && _agoEmojiOpen !== "main") agoEmojiClose();
   _agoThreadRoot = null;
   _agoThreadMsgs = [];
   agoSetView("main");
@@ -2003,10 +2130,12 @@ function agoDrawThread() {
         onkeydown="agoKeydown(event, ${_agoThreadRoot.id})" oninput="autoGrow(this); agoMentionInput('ago-thread-msg')"
         onpaste="agoPaste(event, ${_agoThreadRoot.id})"
         onblur="setTimeout(agoCloseMention, 150)"></textarea>
+      ${agoEmojiBtnHTML(_agoThreadRoot.id)}
       ${agoAttachBtnHTML(_agoThreadRoot.id)}
       ${agoVoiceBtnHTML(_agoThreadRoot.id)}
       <button class="btn primary" onclick="agoSend(${_agoThreadRoot.id})">Send</button>
       ${agoAddrPopHTML(_agoThreadRoot.id)}
+      ${agoEmojiPopHTML(_agoThreadRoot.id)}
     </div>`;
   const input = document.getElementById("ago-thread-msg");
   if (input && draft) { input.value = draft; autoGrow(input); }

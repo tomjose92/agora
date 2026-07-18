@@ -8,10 +8,13 @@ import { create } from "zustand";
 
 const PREFS_FILE = `${FileSystem.documentDirectory ?? ""}ui-prefs.json`;
 
+const RECENT_EMOJI_MAX = 24;
+
 interface PersistedPrefs {
   collapsedGroups: string[];
   unreadsOnly: boolean;
   speakAloud: boolean;
+  recentEmoji: string[];
 }
 
 interface PrefsState {
@@ -21,10 +24,13 @@ interface PrefsState {
   unreadsOnly: boolean;
   /** 🔊: agent replies in the channel you're viewing are read aloud (TTS). */
   speakAloud: boolean;
+  /** Most-recently-picked emoji, newest first (the picker's top row). */
+  recentEmoji: string[];
   load: () => Promise<void>;
   toggleGroup: (groupId: string) => void;
   setUnreadsOnly: (on: boolean) => void;
   setSpeakAloud: (on: boolean) => void;
+  rememberEmoji: (ch: string) => void;
 }
 
 function persist(state: PrefsState): void {
@@ -32,6 +38,7 @@ function persist(state: PrefsState): void {
     collapsedGroups: Object.keys(state.collapsedGroups),
     unreadsOnly: state.unreadsOnly,
     speakAloud: state.speakAloud,
+    recentEmoji: state.recentEmoji,
   };
   FileSystem.writeAsStringAsync(PREFS_FILE, JSON.stringify(data)).catch(() => {
     /* best-effort */
@@ -43,6 +50,7 @@ export const usePrefs = create<PrefsState>((set, get) => ({
   collapsedGroups: {},
   unreadsOnly: false,
   speakAloud: false,
+  recentEmoji: [],
 
   async load() {
     try {
@@ -55,6 +63,9 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         ),
         unreadsOnly: !!data.unreadsOnly,
         speakAloud: !!data.speakAloud,
+        recentEmoji: Array.isArray(data.recentEmoji)
+          ? data.recentEmoji.filter((c) => typeof c === "string").slice(0, RECENT_EMOJI_MAX)
+          : [],
       });
     } catch {
       set({ loaded: true }); // first run
@@ -76,6 +87,13 @@ export const usePrefs = create<PrefsState>((set, get) => ({
 
   setSpeakAloud(on) {
     set({ speakAloud: on });
+    persist(get());
+  },
+
+  rememberEmoji(ch) {
+    set({
+      recentEmoji: [ch, ...get().recentEmoji.filter((c) => c !== ch)].slice(0, RECENT_EMOJI_MAX),
+    });
     persist(get());
   },
 }));

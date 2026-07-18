@@ -22,17 +22,31 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
-import { ArrowUp, Bot, Camera, Check, Image as ImageIcon, Mic, Paperclip, X } from "lucide-react-native";
+import {
+  ArrowUp,
+  Bot,
+  Camera,
+  Check,
+  ClipboardPaste,
+  Image as ImageIcon,
+  Mic,
+  Paperclip,
+  Smile,
+  X,
+} from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "../api/queries";
-import { slugify } from "../lib/format";
+import { slugify, spliceText } from "../lib/format";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
 import { useAddressed } from "../state/addressed";
 import { AgentAvatar } from "./AgentAvatar";
+import { EmojiPicker } from "./EmojiPicker";
 import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
 
@@ -102,6 +116,7 @@ export function Composer({
   const [files, setFiles] = useState<OutgoingFile[]>([]);
   const [focused, setFocused] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   /* "Talk to": which agents this conversation addresses. Session-level state
      keyed by addressKey, so it's remembered when you leave and come back;
      their @mentions are prepended on send ("@a, @b, …"), so the server's
@@ -232,10 +247,51 @@ export function Composer({
     inputRef.current?.focus();
   };
 
+  /* Insert at the last known caret; the ref moves past the emoji so runs of
+     picks land in order (onSelectionChange is paused while the sheet is up,
+     so a late native caret event can't clobber the advanced position). */
+  const insertEmoji = (ch: string) => {
+    const next = spliceText(text, selection.current.start, selection.current.end, ch);
+    selection.current = { start: next.caret, end: next.caret };
+    setText(next.text);
+  };
+
   const addFiles = (picked: OutgoingFile[]) => {
     const merged = [...files, ...picked].slice(0, MAX_FILES);
     if (files.length + picked.length > MAX_FILES) toast(`Max ${MAX_FILES} files per message`, "warn");
     setFiles(merged);
+  };
+
+  /* Clipboard image → cache file → the same re-encode/attach path photos
+     take. RN's TextInput has no image-paste event, so this is the "paste"
+     the platforms hand us: read the pasteboard on demand. JPEG, because the
+     bridge marshals the image as a base64 string — a lossless PNG of a
+     screenshot is several times the payload for bytes toWebSafeImage would
+     re-encode to JPEG anyway. */
+  const pasteImage = async () => {
+    try {
+      const img = await Clipboard.getImageAsync({ format: "jpeg", jpegQuality: 0.9 });
+      if (!img?.data) {
+        toast("No image on the clipboard", "warn");
+        return;
+      }
+      const name = `pasted-${Date.now()}.jpg`;
+      const uri = `${FileSystem.cacheDirectory}${name}`;
+      await FileSystem.writeAsStringAsync(uri, img.data.replace(/^data:image\/\w+;base64,/, ""), {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      addFiles([
+        await toWebSafeImage({
+          uri,
+          width: img.size.width,
+          height: img.size.height,
+          mimeType: "image/jpeg",
+          fileName: name,
+        } as ImagePicker.ImagePickerAsset),
+      ]);
+    } catch (e) {
+      toastErr("Paste failed", e);
+    }
   };
 
   const pickDocuments = async () => {
@@ -389,7 +445,10 @@ export function Composer({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onSelectionChange={(e) => {
-            selection.current = e.nativeEvent.selection;
+            /* While the emoji sheet is up, programmatic inserts own the
+               caret; a native caret-moved event (fired for the value change)
+               would reset it to the end and misplace the next pick. */
+            if (!emojiOpen) selection.current = e.nativeEvent.selection;
           }}
           placeholder={placeholder}
           placeholderTextColor={colors.faint}
@@ -435,6 +494,9 @@ export function Composer({
               </View>
             </Pressable>
           ) : null}
+          <Pressable onPress={() => setEmojiOpen(true)} hitSlop={8} style={styles.toolBtn}>
+            <Icon icon={Smile} size={22} />
+          </Pressable>
           <Pressable onPress={pickPhotos} hitSlop={8} style={styles.toolBtn}>
             <Icon icon={ImageIcon} size={22} />
           </Pressable>
@@ -513,9 +575,17 @@ export function Composer({
               <Icon icon={Paperclip} size={19} color={colors.text} />
               <Text style={styles.sheetText}>Document</Text>
             </Pressable>
+            {/* Always offered — a clipboard snapshot taken at open time goes
+                stale (copy-after-focus) and its async arrival shifts rows
+                mid-tap; pasteImage itself toasts when there is no image. */}
+            <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pasteImage())}>
+              <Icon icon={ClipboardPaste} size={19} color={colors.text} />
+              <Text style={styles.sheetText}>Paste image</Text>
+            </Pressable>
           </View>
         </Pressable>
       </Modal>
+      <EmojiPicker visible={emojiOpen} onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />
     </View>
   );
 }
