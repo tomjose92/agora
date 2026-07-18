@@ -548,6 +548,8 @@ a.btn { text-decoration: none; }
 .ago-thread-btn { color: var(--faint); opacity: 0; transition: opacity .15s ease; }
 .ago-bubble:hover .ago-thread-btn { opacity: 1; }
 .ago-thread-btn:hover, .ago-replies:hover { color: var(--a1); }
+.ago-del-btn:hover { color: #f87171; }
+.ago-del-btn.armed { opacity: 1; color: #f87171; font-weight: 700; }
 /* TL;DR view: the toggle stays visible while the short version is shown, and
    the bubble header carries a badge so a summarized message reads as such. */
 .ago-tldr-btn.on { opacity: 1; color: var(--a1); }

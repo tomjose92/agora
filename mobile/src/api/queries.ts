@@ -13,7 +13,13 @@ import { useEffect } from "react";
 import { keys } from "./keys";
 import { useApi } from "../state/session";
 import { useLive } from "../state/live";
-import { appendMessage, applyMessageToGroups, replaceMessage, type MessagePages } from "../ws/reducer";
+import {
+  appendMessage,
+  applyMessageDelete,
+  applyMessageToGroups,
+  replaceMessage,
+  type MessagePages,
+} from "../ws/reducer";
 import type {
   AgentInfo,
   AskResponse,
@@ -321,6 +327,28 @@ export function useToggleReaction() {
         (data) => replaceMessage(data, message),
       );
     },
+  });
+}
+
+/** Delete a message — the sender's own, or any message for a group admin
+    (the server enforces both). The message_delete broadcast scrubs caches
+    for everyone else; applying it locally too makes the sheet's delete
+    feel immediate. */
+export function useDeleteMessage() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { message: Message }) =>
+      api.delete(
+        `/api/channels/${encodeURIComponent(v.message.channel_id)}/messages/${v.message.id}`,
+      ),
+    onSuccess: (_res, v) =>
+      applyMessageDelete(qc, {
+        type: "message_delete",
+        channel_id: v.message.channel_id,
+        message_id: v.message.id,
+        thread_id: v.message.thread_id,
+      }),
   });
 }
 

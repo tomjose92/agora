@@ -7,6 +7,7 @@ import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type {
   Group,
   Message,
+  MessageDeleteEvent,
   MessageEvent,
   PinEvent,
   ReadEvent,
@@ -50,6 +51,32 @@ export function replaceMessage(
     }),
   );
   return found ? { ...data, pages } : data;
+}
+
+/** Drop a message from its page set (deleted by its sender or an admin). */
+export function removeMessage(
+  data: MessagePages | undefined,
+  messageId: number,
+): MessagePages | undefined {
+  if (!data) return undefined;
+  if (!data.pages.some((p) => p.some((m) => m.id === messageId))) return data;
+  return { ...data, pages: data.pages.map((p) => p.filter((m) => m.id !== messageId)) };
+}
+
+/** A reply was deleted: drop reply_count on its root in the top-level set. */
+export function dropReplyCount(
+  data: MessagePages | undefined,
+  rootId: number,
+): MessagePages | undefined {
+  if (!data) return undefined;
+  return {
+    ...data,
+    pages: data.pages.map((p) =>
+      p.map((m) =>
+        m.id === rootId ? { ...m, reply_count: Math.max(0, (m.reply_count ?? 0) - 1) } : m,
+      ),
+    ),
+  };
 }
 
 /** A reply arrived: bump reply_count on its root in the top-level page set. */
@@ -165,6 +192,30 @@ export function applyThreadRename(
   );
 }
 
+/** Scrub a deleted message from every cache that may hold it. Shared by the
+    WS case and useDeleteMessage's onSuccess (the echo then no-ops). A root
+    takes its whole thread with it server-side, so its reply page set and
+    single-message cache go too; pins/stars/threads rows may reference the
+    id, so those refetch. */
+export function applyMessageDelete(qc: QueryClient, ev: MessageDeleteEvent): void {
+  qc.setQueryData<MessagePages>(
+    keys.messages(ev.channel_id, ev.thread_id),
+    (data) => removeMessage(data, ev.message_id),
+  );
+  if (ev.thread_id != null) {
+    qc.setQueryData<MessagePages>(
+      keys.messages(ev.channel_id, null),
+      (data) => dropReplyCount(data, ev.thread_id!),
+    );
+  } else {
+    qc.removeQueries({ queryKey: keys.messages(ev.channel_id, ev.message_id) });
+    qc.removeQueries({ queryKey: keys.message(ev.message_id) });
+    void qc.invalidateQueries({ queryKey: keys.pins(ev.channel_id) });
+  }
+  void qc.invalidateQueries({ queryKey: keys.threads });
+  void qc.invalidateQueries({ queryKey: keys.stars(ev.channel_id) });
+}
+
 /* ------------------------------------------------------------- driver */
 
 export interface WsContext {
@@ -220,6 +271,10 @@ export function applyWsEvent(
         keys.messages(message.channel_id, message.thread_id),
         (data) => replaceMessage(data, message),
       );
+      break;
+    }
+    case "message_delete": {
+      applyMessageDelete(qc, ev);
       break;
     }
     case "read": {
