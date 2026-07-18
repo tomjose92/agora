@@ -74,6 +74,9 @@ export interface MessageMeta {
     label?: string;
     ts?: number;
   } | null;
+  /* Agent-supplied short version of a long message; the UI can swap the
+     bubble between it and the full text. */
+  tldr?: string;
 }
 
 export interface Message {

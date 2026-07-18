@@ -21,7 +21,7 @@ import {
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
-import { Headphones, Star, Volume2 } from "lucide-react-native";
+import { Headphones, Maximize2, Minimize2, Star, Volume2 } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "../../../../src/api/keys";
 import {
@@ -56,6 +56,7 @@ import { threadAddressKey } from "../../../../src/state/addressed";
 import { useChannelLive } from "../../../../src/state/live";
 import { usePrefs } from "../../../../src/state/prefs";
 import { useSession } from "../../../../src/state/session";
+import { tldrOf, useTldrView } from "../../../../src/state/tldr";
 
 type Row = { kind: "root"; m: Message } | { kind: "msg"; m: Message };
 
@@ -140,6 +141,8 @@ export default function ThreadScreen() {
 
   const starredIds = useMemo(() => new Set((stars.data ?? []).map((s) => s.id)), [stars.data]);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
+  const toggleTldr = useTldrView((s) => s.toggle);
+  const showingTldr = useTldrView((s) => s.showing);
 
   /* 🔊 speak-aloud: while this thread is focused (and not covered by the
      live screen), agent replies landing in it are read out via server TTS —
@@ -283,6 +286,24 @@ export default function ThreadScreen() {
         <Modal transparent animationType="fade" onRequestClose={() => setActionsFor(null)}>
           <Pressable style={styles.sheetBackdrop} onPress={() => setActionsFor(null)}>
             <View style={styles.sheet}>
+              {tldrOf(actionsFor) != null ? (
+                <Pressable
+                  style={styles.sheetBtn}
+                  onPress={() => {
+                    toggleTldr(actionsFor.id);
+                    setActionsFor(null);
+                  }}
+                >
+                  <Icon
+                    icon={showingTldr[actionsFor.id] ? Maximize2 : Minimize2}
+                    size={18}
+                    color={colors.text}
+                  />
+                  <Text style={styles.sheetText}>
+                    {showingTldr[actionsFor.id] ? "Show full message" : "Show TL;DR"}
+                  </Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 style={styles.sheetBtn}
                 onPress={() => {

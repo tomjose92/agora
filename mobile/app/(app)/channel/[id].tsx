@@ -18,7 +18,9 @@ import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import {
   Headphones,
+  Maximize2,
   MessageCircle,
+  Minimize2,
   Pin,
   Star,
   Users,
@@ -54,6 +56,7 @@ import { colors } from "../../../src/lib/theme";
 import { useChannelLive } from "../../../src/state/live";
 import { usePrefs } from "../../../src/state/prefs";
 import { useSession } from "../../../src/state/session";
+import { tldrOf, useTldrView } from "../../../src/state/tldr";
 
 type Row = { kind: "msg"; m: Message } | { kind: "divider" };
 
@@ -82,6 +85,9 @@ function MessageActions({
 }) {
   const star = useStarMessage(channelId);
   const pin = usePinMessage(channelId);
+  const toggleTldr = useTldrView((s) => s.toggle);
+  const showingTldr = useTldrView((s) => !!s.showing[message.id]);
+  const hasTldr = tldrOf(message) != null;
   const isRoot = message.thread_id == null;
   const act = (fn: () => void) => {
     fn();
@@ -91,6 +97,14 @@ function MessageActions({
     <Modal transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
         <View style={styles.sheet}>
+          {hasTldr ? (
+            <Pressable style={styles.sheetBtn} onPress={() => act(() => toggleTldr(message.id))}>
+              <Icon icon={showingTldr ? Maximize2 : Minimize2} size={18} color={colors.text} />
+              <Text style={styles.sheetText}>
+                {showingTldr ? "Show full message" : "Show TL;DR"}
+              </Text>
+            </Pressable>
+          ) : null}
           {isRoot ? (
             <Pressable
               style={styles.sheetBtn}

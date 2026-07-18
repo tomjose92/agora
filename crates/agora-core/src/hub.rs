@@ -43,6 +43,11 @@ pub const HISTORY_PAGE_MAX: i64 = 50;
 pub const SEARCH_PAGE_DEFAULT: i64 = 20;
 pub const SEARCH_PAGE_MAX: i64 = 50;
 
+/// Longest `tldr` accepted on an agent `post` frame; anything longer (or not
+/// strictly shorter than the message text) is dropped — the full text always
+/// stands on its own.
+pub const MAX_TLDR_CHARS: usize = 2_000;
+
 /// Minimum gap between notifications for the same channel, so a burst of
 /// agent replies (or a bot exchange) becomes one banner, not a pile.
 const NOTIFY_THROTTLE: Duration = Duration::from_secs(5);
@@ -503,7 +508,8 @@ impl Hub {
     ///
     /// ``options`` (optional) is a list of ``{id, label, style?}`` buttons the
     /// UI renders on the message; ``options_id`` ties a click back to the
-    /// agent's pending approval.
+    /// agent's pending approval. ``tldr`` (optional) is a short summary of a
+    /// long message; clients offer it as an alternate view of the same text.
     pub fn post_agent_message(
         &self,
         agent_id: &str,
@@ -512,7 +518,7 @@ impl Hub {
         text: &str,
         thread_id: Option<i64>,
     ) -> Value {
-        self.post_agent_message_with_options(agent_id, agent_name, channel_id, text, thread_id, None, None)
+        self.post_agent_message_with_options(agent_id, agent_name, channel_id, text, thread_id, None, None, None)
     }
 
     pub fn post_agent_message_with_options(
@@ -524,15 +530,20 @@ impl Hub {
         thread_id: Option<i64>,
         options: Option<&Value>,
         options_id: Option<&str>,
+        tldr: Option<&str>,
     ) -> Value {
-        let meta = match options {
-            Some(opts) if opts.as_array().map(|a| !a.is_empty()).unwrap_or(false) => Some(json!({
-                "options": opts,
-                "options_id": options_id.unwrap_or(""),
-                "resolved": Value::Null,
-            })),
-            _ => None,
-        };
+        let mut meta_obj = serde_json::Map::new();
+        if let Some(opts) = options {
+            if opts.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+                meta_obj.insert("options".into(), opts.clone());
+                meta_obj.insert("options_id".into(), json!(options_id.unwrap_or("")));
+                meta_obj.insert("resolved".into(), Value::Null);
+            }
+        }
+        if let Some(t) = tldr {
+            meta_obj.insert("tldr".into(), json!(t));
+        }
+        let meta = (!meta_obj.is_empty()).then(|| Value::Object(meta_obj));
         let message = self.store.add_message_with_meta(
             channel_id,
             text,
@@ -913,6 +924,11 @@ impl Hub {
                 if !text.is_empty() {
                     let options = frame.get("options");
                     let options_id = frame["options_id"].as_str();
+                    let tldr = frame["tldr"].as_str().map(str::trim).filter(|t| {
+                        !t.is_empty()
+                            && t.chars().count() <= MAX_TLDR_CHARS
+                            && t.chars().count() < text.chars().count()
+                    });
                     self.post_agent_message_with_options(
                         &agent_id,
                         &agent_name,
@@ -921,6 +937,7 @@ impl Hub {
                         thread_id,
                         options,
                         options_id,
+                        tldr,
                     );
                 }
             }
@@ -1665,5 +1682,53 @@ mod tests {
         assert_eq!(ev["type"], "message");
         assert_eq!(ev["message"]["author_id"], "bot-a");
         assert_eq!(h.store.messages(&cid, None, None, 10).len(), 1);
+    }
+
+    #[test]
+    fn post_frame_tldr_lands_in_meta() {
+        let h = hub();
+        let _rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        let long = "word ".repeat(400);
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": long, "tldr": "  short version  ",
+        }));
+        let msg = &h.store.messages(&cid, None, None, 10)[0];
+        assert_eq!(msg["meta"]["tldr"], "short version");
+
+        // A tldr can ride alongside options without clobbering them.
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": long, "tldr": "gist",
+            "options_id": "o1", "options": [{"id": "yes", "label": "Yes"}],
+        }));
+        let msg = &h.store.messages(&cid, None, None, 10)[1];
+        assert_eq!(msg["meta"]["tldr"], "gist");
+        assert_eq!(msg["meta"]["options_id"], "o1");
+        assert!(msg["meta"]["resolved"].is_null());
+    }
+
+    #[test]
+    fn post_frame_tldr_rejected_when_useless() {
+        let h = hub();
+        let _rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        // Not shorter than the text, blank, or oversized: dropped, message kept.
+        for (text, tldr) in [
+            ("short text".to_string(), json!("longer than the text itself")),
+            ("short text".to_string(), json!("   ")),
+            ("y".repeat(MAX_TLDR_CHARS * 2), json!("x".repeat(MAX_TLDR_CHARS + 1))),
+        ] {
+            h.handle_agent_frame(&json!({
+                "type": "post", "agent_id": "bot-a", "channel_id": cid,
+                "text": text, "tldr": tldr,
+            }));
+        }
+        let msgs = h.store.messages(&cid, None, None, 10);
+        assert_eq!(msgs.len(), 3);
+        for msg in &msgs {
+            assert!(msg["meta"].get("tldr").is_none(), "meta: {:?}", msg["meta"]);
+        }
     }
 }
