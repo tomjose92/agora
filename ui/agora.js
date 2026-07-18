@@ -19,6 +19,7 @@ let _agoThreadRoot = null;      // root message when the thread panel is open
 let _agoThreadMsgs = [];
 let _agoChanAgents = [];        // live member agents of the channel (mention chips)
 let _agoTyping = {};            // agent_id -> {name, thread_id}
+const _agoTldrOn = new Set();   // message ids currently showing their TL;DR view
 let _agoProgress = {};          // handle -> {agent_id, agent_name, text, thread_id}
 let _agoMembers = null;         // members of the selected group (panel open) or null
 let _agoWs = null;
@@ -1344,10 +1345,27 @@ function agoBubble(m, inThread) {
   const starBtn = `<button class="ago-thread-btn ago-star-btn ${starred ? "starred" : ""}"
        title="${starred ? "Remove from your starred messages" : "Star this message"}"
        onclick="agoToggleStar(${m.id})">${starred ? icon("star", "fill") + " starred" : icon("star") + " star"}</button>`;
-  const foot = `<div class="ago-bubble-foot">${replies}${threadBtn}${pinBtn}${starBtn}</div>`;
+  const tldr = m.meta && typeof m.meta.tldr === "string" && m.meta.tldr.trim() ? m.meta.tldr : null;
+  const onTldr = tldr != null && _agoTldrOn.has(m.id);
+  const tldrBtn = tldr != null
+    ? `<button class="ago-thread-btn ago-tldr-btn ${onTldr ? "on" : ""}"
+         title="${onTldr ? "Show the full message" : "Show the short version"}"
+         onclick="agoToggleTldr(${m.id})">${onTldr ? icon("maximize-2") + " full" : icon("minimize-2") + " tl;dr"}</button>`
+    : "";
+  const foot = `<div class="ago-bubble-foot">${replies}${threadBtn}${pinBtn}${starBtn}${tldrBtn}</div>`;
   const mark = (pinned ? `<span class="ago-pinned-mark" title="Pinned">${icon("pin")}</span>` : "")
-    + (starred ? `<span class="ago-starred-mark" title="Starred by you">${icon("star", "fill")}</span>` : "");
-  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(m.text)}${agoAttachmentsHTML(m)}${agoOptionsHTML(m)}${foot}</div>`;
+    + (starred ? `<span class="ago-starred-mark" title="Starred by you">${icon("star", "fill")}</span>` : "")
+    + (onTldr ? `<span class="ago-tldr-mark" title="Short version — the full message is one click away">TL;DR</span>` : "");
+  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(onTldr ? tldr : m.text)}${agoAttachmentsHTML(m)}${agoOptionsHTML(m)}${foot}</div>`;
+}
+/* Flip one message between its full text and its TL;DR (agent-supplied
+   summary in meta.tldr). View state is local to this client on purpose —
+   which version you're reading isn't shared state. */
+function agoToggleTldr(messageId) {
+  if (!_agoTldrOn.delete(messageId)) _agoTldrOn.add(messageId);
+  if (_agoMsgs.some(m => m.id === messageId)) agoDrawMessages();
+  if ((_agoThreadRoot && _agoThreadRoot.id === messageId)
+    || _agoThreadMsgs.some(m => m.id === messageId)) agoDrawThread();
 }
 function agoOptionsHTML(m) {
   const meta = m.meta;

@@ -548,6 +548,14 @@ a.btn { text-decoration: none; }
 .ago-thread-btn { color: var(--faint); opacity: 0; transition: opacity .15s ease; }
 .ago-bubble:hover .ago-thread-btn { opacity: 1; }
 .ago-thread-btn:hover, .ago-replies:hover { color: var(--a1); }
+/* TL;DR view: the toggle stays visible while the short version is shown, and
+   the bubble header carries a badge so a summarized message reads as such. */
+.ago-tldr-btn.on { opacity: 1; color: var(--a1); }
+.ago-tldr-mark {
+  font-size: 9px; font-weight: 700; letter-spacing: .4px; margin: 0 6px;
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(139,124,255,.16); color: var(--a1);
+}
 
 .ago-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .ago-option-btn {

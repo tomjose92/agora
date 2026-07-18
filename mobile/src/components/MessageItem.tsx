@@ -11,6 +11,7 @@ import type { Message } from "../api/types";
 import { fmtTs } from "../lib/format";
 import { colors } from "../lib/theme";
 import { useSession } from "../state/session";
+import { tldrOf, useTldrView } from "../state/tldr";
 import { AgentAvatar } from "./AgentAvatar";
 import { Attachments } from "./Attachments";
 import { Icon } from "./Icon";
@@ -96,11 +97,15 @@ export function MessageItem({
   const username = useSession((s) => s.username);
   const mine =
     message.author_type === "user" && username !== "" && message.author_id === username;
+  const tldr = tldrOf(message);
+  const showTldr = useTldrView((s) => !!s.showing[message.id]) && tldr != null;
+  const body = showTldr && tldr != null ? tldr : message.text;
 
   const flags = (
     <>
       {pinned ? <Icon icon={Pin} size={11} color={colors.a1} /> : null}
       {starred ? <Icon icon={Star} size={11} color={colors.amber} fill={colors.amber} /> : null}
+      {showTldr ? <Text style={styles.tldrMark}>TL;DR</Text> : null}
     </>
   );
 
@@ -130,7 +135,7 @@ export function MessageItem({
       <View style={[styles.row, styles.rowMine]}>
         <View style={[styles.bubble, styles.bubbleMine]}>
           {pressBackdrop}
-          <MdText text={message.text} onLongPress={longPress} />
+          <MdText text={body} onLongPress={longPress} />
           <Attachments session={session} attachments={message.attachments ?? []} />
           <MessageOptions message={message} />
           <View style={styles.foot}>
@@ -156,7 +161,7 @@ export function MessageItem({
           {flags}
           <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
         </View>
-        <MdText text={message.text} onLongPress={longPress} />
+        <MdText text={body} onLongPress={longPress} />
         <Attachments session={session} attachments={message.attachments ?? []} />
         <MessageOptions message={message} />
         {replies}
@@ -236,4 +241,15 @@ const styles = StyleSheet.create({
   optionPrimaryLabel: { color: "#6ee7a0" },
   optionDangerLabel: { color: "#fca5a5" },
   optionResult: { color: colors.faint, fontSize: 12, fontWeight: "600" },
+  tldrMark: {
+    color: colors.a1,
+    fontSize: 9,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    backgroundColor: "rgba(139,124,255,0.16)",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    overflow: "hidden",
+  },
 });
