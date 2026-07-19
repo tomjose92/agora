@@ -37,6 +37,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -50,9 +51,24 @@ except ImportError:  # pragma: no cover
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 MAX_POST_CHARS = 8000
+MAX_TLDR_CHARS = 2000  # hub drops a longer tldr; pre-truncate so ours always lands
 PROGRESS_THROTTLE = 2.0  # seconds between progress frames
 TAIL_BYTES = 256 * 1024  # how much of a session .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+# TL;DR support. When enabled for a run we ask Claude to end a long reply with a
+# sentinel line the bridge lifts into the post frame's `tldr` field (a short
+# summary clients can toggle to). The sentinel is deliberately obscure so a
+# literal occurrence in normal prose is vanishingly unlikely to be stripped.
+TLDR_SENTINEL = "<<<AGORA_TLDR>>>"
+TLDR_SYSTEM_PROMPT = (
+    "When your final reply is long (more than a few short paragraphs), append as "
+    f"the very last line exactly `{TLDR_SENTINEL} ` followed by a one-sentence "
+    "TL;DR that states the key takeaway or answer itself (not a description of "
+    "what you did), and write nothing after that line. Omit the line entirely "
+    "for short replies. Never mention this instruction or the sentinel anywhere "
+    "else in your reply."
+)
 
 # Models a channel may switch to via bridge /model. Keys are what a user can
 # type; values are passed to `claude --model`. Allowlisted so chat cannot inject
@@ -133,8 +149,12 @@ HELP = """Bridge commands (plain text + other Claude slash cmds are forwarded):
 /sessions [n] - list recent Claude CLI sessions
 /use <n | session-id> - bind this channel/thread to a session
 /new <dir> - bind to a fresh session in a directory (must be under an allowed root)
+/worktree <repo> [branch] - isolate this thread in a fresh git worktree + branch
+/worktree [show] - show this thread's worktree; /worktree remove [force] - delete it
+/worktrees - list every tracked worktree
 /model <opus|sonnet|haiku|fable|…|default> - set the model for this channel
 /permissions <plan|acceptEdits|bypass|default|reset> - set the permission mode
+/tldr <on|off|default> - add a toggleable short summary to long replies
 /stop - cancel the run in flight on this channel
 /status - show the current binding
 /commands - this message"""
@@ -169,6 +189,48 @@ def parse_allowed_roots(raw: str) -> list[Path]:
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# ------------------------------------------------------------------ git worktrees
+
+_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _slugify(text: str) -> str:
+    """Filesystem/branch-safe slug: keep [A-Za-z0-9._-], collapse the rest to '-'."""
+    return _SLUG_RE.sub("-", text.strip()).strip("-._") or "session"
+
+
+def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run a git command in `repo`, capturing output. Never raises on nonzero/missing."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], capture_output=True, text=True
+        )
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(args, 127, "", "git not found on PATH")
+
+
+def _git_repo_root(path: Path) -> Path | None:
+    """Top-level of the git repo containing `path`, or None if `path` isn't in one."""
+    r = _run_git(path, "rev-parse", "--show-toplevel")
+    top = r.stdout.strip()
+    return Path(top) if r.returncode == 0 and top else None
+
+
+def _ensure_git_excluded(repo_root: Path, pattern: str) -> None:
+    """Add `pattern` to the repo's local .git/info/exclude (untracked, non-invasive)."""
+    exclude = repo_root / ".git" / "info" / "exclude"
+    try:
+        existing = exclude.read_text() if exclude.exists() else ""
+        if pattern in existing.split():
+            return
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        prefix = "" if not existing or existing.endswith("\n") else "\n"
+        with exclude.open("a") as f:
+            f.write(f"{prefix}{pattern}\n")
+    except OSError:
+        pass
 
 
 # --------------------------------------------------------------- session scan
@@ -349,11 +411,14 @@ class Bridge:
             shlex.split(args.claude_args)
         )
         self.default_model = (args.model or "").strip() or None
+        self.tldr_default = args.tldr
+        self.tldr_min_chars = max(0, args.tldr_min_chars)
         self.allow_escalation = args.allow_permission_escalation
         self.timeout = args.timeout
         self.permission_timeout = args.permission_timeout
         self.sessions_limit = args.sessions
         self.allowed_roots = parse_allowed_roots(args.allowed_roots)
+        self.auto_worktree = args.auto_worktree
         self.state_file = Path(args.state_file)
         self.bindings: dict[str, dict] = self._load_state()
         self.listings: dict[str, list[dict]] = {}  # binding key -> last /sessions result
@@ -403,16 +468,24 @@ class Bridge:
     def send(self, frame: dict) -> None:
         self.outbox.put_nowait(frame)
 
-    def post(self, key_frame: dict, text: str) -> None:
+    def post(self, key_frame: dict, text: str, tldr: str | None = None) -> None:
         base = {
             "type": "post",
             "agent_id": self.agent_id,
             "channel_id": key_frame["channel_id"],
             "thread_id": key_frame.get("thread_id"),
         }
+        first = True
         while text:
             chunk, text = text[:MAX_POST_CHARS], text[MAX_POST_CHARS:]
-            self.send({**base, "text": chunk})
+            frame = {**base, "text": chunk}
+            # A tldr summarizes the whole reply, so it rides only the first
+            # chunk (the hub also requires it be strictly shorter than that
+            # chunk's text — trivially true for a one-sentence summary).
+            if first and tldr:
+                frame["tldr"] = tldr
+            self.send(frame)
+            first = False
 
     def typing(self, frame: dict, active: bool) -> None:
         self.send({
@@ -474,11 +547,17 @@ class Bridge:
         elif cmd == "/use":
             self.post(frame, await asyncio.to_thread(self._cmd_use, key, rest))
         elif cmd == "/new":
-            self.post(frame, self._cmd_new(key, rest))
+            self.post(frame, await asyncio.to_thread(self._cmd_new, key, rest))
+        elif cmd == "/worktree":
+            self.post(frame, await asyncio.to_thread(self._cmd_worktree, key, rest))
+        elif cmd == "/worktrees":
+            self.post(frame, await asyncio.to_thread(self._worktree_list))
         elif cmd == "/model":
             self.post(frame, self._cmd_model(key, rest))
         elif cmd == "/permissions":
             self.post(frame, self._cmd_permissions(key, rest))
+        elif cmd == "/tldr":
+            self.post(frame, self._cmd_tldr(key, rest))
         elif cmd == "/stop":
             self.post(frame, self._cmd_stop(key))
         elif cmd == "/status":
@@ -493,7 +572,7 @@ class Bridge:
         """Write session/cwd for a channel, keeping any model/permission overrides."""
         prev = self.bindings.get(key) or {}
         binding: dict = {"session_id": session_id, "cwd": cwd}
-        for k in ("model", "permission_mode"):
+        for k in ("model", "permission_mode", "tldr"):
             if k in prev:
                 binding[k] = prev[k]
         self.bindings[key] = binding
@@ -519,6 +598,9 @@ class Bridge:
             f'Last prompt: "{prompt}"\nJust type to continue it.'
         )
 
+    def _under_allowed_root(self, path: Path) -> bool:
+        return any(path == root or path.is_relative_to(root) for root in self.allowed_roots)
+
     def _cmd_new(self, key: str, arg: str) -> str:
         if not arg:
             return "Usage: /new <directory>"
@@ -534,11 +616,154 @@ class Bridge:
             return f"Cannot resolve {arg!r}: {e}"
         if not cwd.is_dir():
             return f"Not a directory: {cwd}"
-        if not any(cwd == root or cwd.is_relative_to(root) for root in self.allowed_roots):
+        if not self._under_allowed_root(cwd):
             allowed = ", ".join(str(r) for r in self.allowed_roots)
             return f"{cwd} is not under an allowed root. Allowed: {allowed}"
+        # With auto-worktree on, /new into a git repo gets an isolated worktree
+        # so simultaneous threads never write to the same tree (see /worktree).
+        if self.auto_worktree and _git_repo_root(cwd):
+            return self._create_worktree(key, str(cwd), "")
         self._set_binding(key, None, str(cwd))
         return f"Will start a fresh Claude session in {cwd} on your next message."
+
+    # --------------------------------------------------- git worktrees
+
+    def _worktree_dir(self, repo_root: Path, slug: str) -> Path | None:
+        """Pick a worktree dir under an allowed root: sibling first, then in-repo."""
+        sibling = repo_root.parent / f"{repo_root.name}.worktrees" / slug
+        if self._under_allowed_root(sibling):
+            return sibling
+        inside = repo_root / ".worktrees" / slug
+        if self._under_allowed_root(inside):
+            return inside
+        return None
+
+    def _attach_worktree(self, key: str, path: Path, branch: str, base: Path) -> None:
+        b = self.bindings.get(key) or {}
+        b["worktree"] = {"path": str(path), "branch": branch, "base": str(base)}
+        self.bindings[key] = b
+        self._save_state()
+
+    def _create_worktree(self, key: str, repo_arg: str, branch_arg: str) -> str:
+        if not self.allowed_roots:
+            return (
+                "/worktree is disabled: no allowed roots configured. Set "
+                "CLAUDE_ALLOWED_ROOTS or --allowed-roots, then restart the bridge."
+            )
+        if not repo_arg:
+            return "Usage: /worktree <repo> [branch]"
+        try:
+            target = Path(repo_arg).expanduser().resolve()
+        except OSError as e:
+            return f"Cannot resolve {repo_arg!r}: {e}"
+        if not target.is_dir():
+            return f"Not a directory: {target}"
+        if not self._under_allowed_root(target):
+            allowed = ", ".join(str(r) for r in self.allowed_roots)
+            return f"{target} is not under an allowed root. Allowed: {allowed}"
+        repo_root = _git_repo_root(target)
+        if not repo_root:
+            return f"{target} is not inside a git repository. Use /new for non-git dirs."
+        # Branch: user-supplied, else derived from the binding key (channel[:thread]),
+        # so each thread lands on its own branch and worktrees can't collide.
+        branch = _slugify(branch_arg) if branch_arg else f"agora/{_slugify(key)}"
+        path = self._worktree_dir(repo_root, _slugify(branch.replace("/", "-")))
+        if path is None:
+            allowed = ", ".join(str(r) for r in self.allowed_roots)
+            return (
+                f"Can't place a worktree for {repo_root.name} under any allowed root "
+                f"({allowed}). Add its parent dir to CLAUDE_ALLOWED_ROOTS."
+            )
+        if path.exists():
+            # Idempotent: a thread re-running /worktree just rebinds to its own dir.
+            self._set_binding(key, None, str(path))
+            self._attach_worktree(key, path, branch, repo_root)
+            return f"Reusing worktree {path} (branch {branch}). Just type to start."
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return f"Cannot create {path.parent}: {e}"
+        r = _run_git(repo_root, "worktree", "add", str(path), "-b", branch)
+        if r.returncode != 0 and "already exists" in (r.stderr or ""):
+            # Branch exists already — check it out into the new worktree instead.
+            r = _run_git(repo_root, "worktree", "add", str(path), branch)
+        if r.returncode != 0:
+            return f"git worktree add failed:\n{(r.stderr or r.stdout).strip()[:600]}"
+        if path.is_relative_to(repo_root):
+            _ensure_git_excluded(repo_root, ".worktrees/")
+        self._set_binding(key, None, str(path))
+        self._attach_worktree(key, path, branch, repo_root)
+        log(f"worktree add: {path} (branch {branch}) off {repo_root}")
+        return (
+            f"Worktree ready: {path}\nBranch: {branch} (off {repo_root.name})\n"
+            "This thread now runs isolated here. Just type to start."
+        )
+
+    def _worktree_status(self, key: str) -> str:
+        wt = (self.bindings.get(key) or {}).get("worktree")
+        if not wt:
+            return "No worktree on this thread. Create one with /worktree <repo> [branch]."
+        missing = "" if Path(wt["path"]).is_dir() else "  ⚠ directory missing"
+        return (
+            f"Worktree: {wt['path']}{missing}\n"
+            f"Branch: {wt['branch']}\nBase repo: {wt['base']}"
+        )
+
+    def _worktree_list(self) -> str:
+        rows = [
+            (k, b["worktree"])
+            for k, b in self.bindings.items()
+            if isinstance(b, dict) and b.get("worktree")
+        ]
+        if not rows:
+            return "No worktrees tracked. Create one with /worktree <repo> [branch]."
+        lines = ["Tracked worktrees (per thread):"]
+        for k, wt in rows:
+            missing = "" if Path(wt["path"]).is_dir() else " (missing)"
+            lines.append(f"• [{k}] {wt['branch']} → {wt['path']}{missing}")
+        return "\n".join(lines)
+
+    def _remove_worktree(self, key: str, force: bool) -> str:
+        wt = (self.bindings.get(key) or {}).get("worktree")
+        if not wt:
+            return "No worktree on this thread."
+        if key in self.busy:
+            return "A run is in flight here — /stop it before removing the worktree."
+        base, path, branch = Path(wt["base"]), wt["path"], wt["branch"]
+        args = ["worktree", "remove", path] + (["--force"] if force else [])
+        r = _run_git(base, *args)
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout).strip()
+            hint = ""
+            if not force and ("modified or untracked" in err or "use --force" in err
+                              or "is dirty" in err.lower()):
+                hint = ("\nThe worktree has uncommitted changes. Commit/merge them, "
+                        "or run /worktree remove force to discard.")
+            return f"git worktree remove failed:\n{err[:400]}{hint}"
+        # Safe branch delete (-d) unless forced (-D); keep the branch if unmerged.
+        br = _run_git(base, "branch", "-D" if force else "-d", branch)
+        branch_note = (
+            f"Branch {branch} deleted."
+            if br.returncode == 0
+            else f"Kept branch {branch} — {(br.stderr or '').strip()[:140]}"
+        )
+        self._set_binding(key, None, str(base))  # rebind to the base repo, fresh session
+        log(f"worktree remove: {path} (branch {branch})")
+        return f"Removed worktree {path}.\n{branch_note}\nThread rebound to {base}."
+
+    def _cmd_worktree(self, key: str, arg: str) -> str:
+        sub, _, rest = arg.partition(" ")
+        sub, rest = sub.strip().lower(), rest.strip()
+        if not sub or sub == "show":
+            return self._worktree_status(key)
+        if sub == "list":
+            return self._worktree_list()
+        if sub == "remove":
+            return self._remove_worktree(key, force=("force" in rest.split()
+                                                     or "--force" in rest.split()))
+        # Anything else is a repo path: /worktree <repo> [branch]
+        repo_arg, _, branch_arg = arg.partition(" ")
+        return self._create_worktree(key, repo_arg.strip(), branch_arg.strip())
 
     def _cmd_model(self, key: str, arg: str) -> str:
         b = self.bindings.get(key)
@@ -594,6 +819,40 @@ class Bridge:
         self._save_state()
         return f"Permission mode set to {mode} for this channel."
 
+    def _tldr_enabled(self, binding: dict) -> bool:
+        """Whether this binding should ask Claude for a TL;DR (channel override
+        wins over the bridge default)."""
+        choice = binding.get("tldr")
+        return self.tldr_default if choice is None else bool(choice)
+
+    def _cmd_tldr(self, key: str, arg: str) -> str:
+        b = self.bindings.get(key)
+        if not b:
+            return "No session bound here. Run /sessions then /use <n>."
+        default_label = "on" if self.tldr_default else "off"
+        if not arg:
+            cur = "on" if self._tldr_enabled(b) else "off"
+            return (
+                f"TL;DR summaries: {cur} (bridge default: {default_label})\n"
+                "Usage: /tldr <on | off | default>"
+            )
+        choice = arg.strip().lower()
+        if choice == "default":
+            b.pop("tldr", None)
+            self.bindings[key] = b
+            self._save_state()
+            return f"TL;DR reset to the bridge default ({default_label})."
+        if choice in ("on", "off"):
+            b["tldr"] = choice == "on"
+            self.bindings[key] = b
+            self._save_state()
+            state = "on" if b["tldr"] else "off"
+            return (
+                f"TL;DR summaries {state} for this channel. Long replies will "
+                + ("carry a toggleable short summary." if b["tldr"] else "post in full only.")
+            )
+        return "Unknown option. Usage: /tldr <on | off | default>"
+
     def _cmd_stop(self, key: str) -> str:
         proc = self.procs.get(key)
         if not proc or proc.returncode is not None:
@@ -609,8 +868,14 @@ class Bridge:
         sid = b["session_id"][:8] + "…" if b["session_id"] else "(new, not started)"
         model = b.get("model") or self.default_model or "session default"
         mode = b.get("permission_mode") or self.default_permission_mode
+        tldr = "on" if self._tldr_enabled(b) else "off"
         busy = " — a run is in flight" if key in self.busy else ""
-        return f"Session {sid} in {b['cwd']}\nModel: {model}\nPermissions: {mode}{busy}"
+        wt = b.get("worktree")
+        wt_line = f"\nWorktree: {wt['branch']} @ {wt['path']}" if wt else ""
+        return (
+            f"Session {sid} in {b['cwd']}\nModel: {model}\n"
+            f"Permissions: {mode}\nTL;DR: {tldr}{busy}{wt_line}"
+        )
 
     # ------------------------------------------------------------ claude
 
@@ -628,13 +893,50 @@ class Bridge:
         self.typing(frame, True)
         try:
             reply = await self.run_claude(key, frame, binding, text)
-            self.post(frame, reply or "(empty response)")
+            body, tldr = self._split_tldr(
+                reply, self._tldr_enabled(binding), self.tldr_min_chars)
+            self.post(frame, body or "(empty response)", tldr)
         except Exception as e:  # degrade to a chat message, never crash the loop
             log(f"claude run failed: {e!r}")
             self.post(frame, f"Claude run failed: {e}")
         finally:
             self.busy.discard(key)
             self.typing(frame, False)
+
+    @staticmethod
+    def _split_tldr(reply: str, enabled: bool, min_chars: int) -> tuple[str, str | None]:
+        """Lift a trailing ``TLDR_SENTINEL`` line out of Claude's reply.
+
+        Returns ``(body, tldr)``. When TL;DR is off, the sentinel is absent, or
+        anything looks off (empty summary/body, a reply below ``min_chars``, or
+        a summary not actually shorter than the body the hub would reject), the
+        summary is dropped (``tldr=None``) — but a valid sentinel line is always
+        stripped from the body so it never leaks into the visible message. A
+        normal reply with no sentinel is returned untouched.
+        """
+        if not enabled or not reply or TLDR_SENTINEL not in reply:
+            return reply, None
+        lines = reply.splitlines()
+        idx = next(
+            (i for i in range(len(lines) - 1, -1, -1)
+             if lines[i].lstrip().startswith(TLDR_SENTINEL)),
+            None,
+        )
+        if idx is None:
+            return reply, None
+        tldr = lines[idx].lstrip()[len(TLDR_SENTINEL):].strip()
+        body = "\n".join(lines[:idx]).rstrip()
+        if not tldr:
+            return reply, None  # bare marker, nothing to summarize with
+        if not body:
+            return tldr, None  # reply was essentially just the summary line
+        tldr = tldr[:MAX_TLDR_CHARS]
+        # Drop (but still strip) the summary when the body is short enough to
+        # read whole, or when the summary isn't strictly shorter than the body
+        # (the hub would reject that anyway).
+        if len(body) < min_chars or len(tldr) >= len(body):
+            return body, None
+        return body, tldr
 
     def _stage_attachments(self, frame: dict, text: str) -> tuple[str, list[str], str | None]:
         """Drop any inbound attachments to a temp dir and build the prompt.
@@ -668,6 +970,13 @@ class Bridge:
         perm_ids: list[str] = []
         mode = binding.get("permission_mode") or self.default_permission_mode
         model = binding.get("model") or self.default_model
+        # When TL;DR is on for this channel, ask Claude to end a long reply with
+        # a sentinel line the bridge lifts into the post's `tldr` (see
+        # _split_tldr). Only added when enabled, so the default run is unchanged.
+        tldr_args = (
+            ["--append-system-prompt", TLDR_SYSTEM_PROMPT]
+            if self._tldr_enabled(binding) else []
+        )
         try:
             # Bidirectional stream-json: the prompt rides on stdin and
             # `--permission-prompt-tool stdio` makes the CLI route permission
@@ -679,6 +988,7 @@ class Bridge:
                 "--output-format", "stream-json", "--verbose",
                 "--permission-prompt-tool", "stdio",
                 "--permission-mode", mode,
+                *tldr_args,
                 *extra_args,
                 *self.base_claude_args,
             ]
@@ -1194,6 +1504,12 @@ def main() -> None:
     ap.add_argument("--allowed-roots", default=os.environ.get("CLAUDE_ALLOWED_ROOTS", ""),
                     help="colon-separated dirs /new sessions may start under; "
                          "/new is disabled when empty")
+    ap.add_argument("--auto-worktree", action="store_true",
+                    default=os.environ.get("CLAUDE_AUTO_WORKTREE", "").lower()
+                    in ("1", "true", "yes"),
+                    help="/new into a git repo creates an isolated git worktree + "
+                         "branch per thread instead of binding the repo directly "
+                         "(also available on demand via /worktree)")
     ap.add_argument("--agent-id", default=os.environ.get("AGENT_ID", "claude-cli"))
     ap.add_argument("--agent-name", default=os.environ.get("AGENT_NAME", "Claude"))
     ap.add_argument("--claude-bin", default=os.environ.get("CLAUDE_BIN", "claude"))
@@ -1209,6 +1525,13 @@ def main() -> None:
                     in ("1", "true", "yes"),
                     help="allow /permissions to raise privilege above the bridge "
                          "default (off by default; lowering privilege is always allowed)")
+    ap.add_argument("--tldr", action="store_true",
+                    default=os.environ.get("CLAUDE_TLDR", "").lower() in ("1", "true", "yes"),
+                    help="ask Claude to add a toggleable short summary to long "
+                         "replies (off by default; channels override with /tldr)")
+    ap.add_argument("--tldr-min-chars", type=int,
+                    default=int(os.environ.get("CLAUDE_TLDR_MIN_CHARS", "1500")),
+                    help="only summarize replies at least this many chars long")
     ap.add_argument("--timeout", type=int, default=int(os.environ.get("CLAUDE_TIMEOUT", "1800")),
                     help="per-run timeout in seconds")
     ap.add_argument("--permission-timeout", type=int,

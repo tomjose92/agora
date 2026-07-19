@@ -47,15 +47,25 @@ agent, and forwards channel messages to `claude -p --resume <session>`.
 | `/new <dir>` | bind to a fresh session started in `<dir>` — **`<dir>` must be under an allowed root** (see below); disabled entirely when no roots are configured |
 | `/model <opus\|sonnet\|haiku\|fable\|…\|default>` | set the model for this channel (`default` clears the override); persists in the binding and is passed as `claude --model` on every run |
 | `/permissions <plan\|acceptEdits\|bypass\|default\|reset>` | set the permission mode for this channel (`reset` clears the override). Lowering privilege is always allowed; **raising it above the bridge default requires `CLAUDE_ALLOW_PERMISSION_ESCALATION`** |
+| `/tldr <on\|off\|default>` | add a toggleable short summary to long replies for this channel (`default` clears the override). When on, Claude is asked to end a long reply with a summary the bridge lifts into the message's `tldr`; clients show a TL;DR toggle |
 | `/stop` | cancel the run in flight on this channel (kills the `claude` child) |
-| `/status` | show the current binding, model, permission mode, and whether a run is in flight |
+| `/status` | show the current binding, model, permission mode, TL;DR state, and whether a run is in flight |
 | `/commands` | show this bridge command list |
 | anything else | forwarded to the bound session (plain text **and** Claude CLI slash commands the headless CLI supports, e.g. `/compact`, `/usage`, `/context`) |
 
-`/model` and `/permissions` are **per channel/thread** — same as session bindings —
-so one channel can plan read-only on Sonnet while another auto-applies on Opus.
-Both persist in `state.json`. Bridge `/model` is intentional (not Claude's TUI
-`/model` picker): it sticks across runs via `--model`.
+`/model`, `/permissions`, and `/tldr` are **per channel/thread** — same as session
+bindings — so one channel can plan read-only on Sonnet while another auto-applies
+on Opus. All persist in `state.json`. Bridge `/model` is intentional (not Claude's
+TUI `/model` picker): it sticks across runs via `--model`.
+
+**TL;DR summaries** are off by default. Enable them per channel with `/tldr on`,
+or bridge-wide with `CLAUDE_TLDR=1` / `--tldr` (channels still override). When on,
+each run appends a small `--append-system-prompt` asking Claude to end a long
+reply with a sentinel line; the bridge strips that line and sends its text as the
+post's `tldr` (a short summary clients render behind a toggle). Only replies at
+least `CLAUDE_TLDR_MIN_CHARS` long (default 1500) get one; if Claude omits the
+line the full reply is posted unchanged, so nothing regresses when it's off or
+the model doesn't comply.
 
 **Claude slash commands from chat.** Non-bridge messages go to `claude -p`
 (headless — no interactive terminal UI). Only commands the CLI exposes for that
@@ -114,8 +124,10 @@ Everything is env-overridable (flags take precedence): `AGORA_URL`,
 here is just the **default**, overridable per channel with `/permissions`),
 `CLAUDE_MODEL` (default model for every run, e.g. `opus`; channels override with
 `/model`), `CLAUDE_ALLOW_PERMISSION_ESCALATION` (`1` to let `/permissions` raise
-privilege above the default — off by default), `CLAUDE_TIMEOUT` (seconds,
-default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
+privilege above the default — off by default), `CLAUDE_TLDR` (`1` to add short
+summaries to long replies by default; channels override with `/tldr`),
+`CLAUDE_TLDR_MIN_CHARS` (minimum reply length to summarize, default 1500),
+`CLAUDE_TIMEOUT` (seconds, default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
 
 Security-relevant options:
 
