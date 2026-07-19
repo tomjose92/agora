@@ -614,15 +614,25 @@ a.btn { text-decoration: none; }
 .ago-form-check .box .ico { width: 13px; height: 13px; }
 .ago-form-check.on .box { border-color: rgba(72, 187, 120, .55); background: rgba(72, 187, 120, .14); }
 .ago-form-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
-.ago-form-row.done { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; }
+.ago-form.submitted { gap: 5px; }
+.ago-form-row.done {
+  display: grid; grid-template-columns: minmax(90px, 130px) 1fr;
+  gap: 12px; align-items: baseline; font-size: 12.5px; padding: 1px 0;
+}
 .ago-form-row.done .lbl { color: var(--faint); font-weight: 600; }
 .ago-form-row.done .val { color: var(--text); overflow-wrap: anywhere; }
+.ago-form-row.done .val.empty { color: var(--faint); }
 .ago-form-row.done .val .ico { width: 13px; height: 13px; color: #6ee7a0; }
 .ago-form-done {
-  display: flex; align-items: center; gap: 6px; margin-top: 4px;
-  font-size: 12px; font-weight: 600; color: #6ee7a0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+  margin-top: 6px; padding-top: 9px; border-top: 1px solid var(--border);
+  font-size: 12px;
 }
-.ago-form-done .ico { width: 13px; height: 13px; }
+.ago-form-done .what {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 600; color: #6ee7a0;
+}
+.ago-form-done .ico { width: 13px; height: 13px; flex: none; }
 .ago-form-done .dim { color: var(--faint); font-weight: 500; }
 
 .ago-mention {
