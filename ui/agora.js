@@ -20,6 +20,8 @@ let _agoThreadMsgs = [];
 let _agoChanAgents = [];        // live member agents of the channel (mention chips)
 let _agoTyping = {};            // agent_id -> {name, thread_id}
 const _agoTldrOn = new Set();   // message ids currently showing their TL;DR view
+const _agoFormDrafts = new Map(); // "mid:fieldId" -> input text typed but not yet confirmed
+const _agoFormBusy = new Set(); // message ids with a form submit in flight
 let _agoProgress = {};          // handle -> {agent_id, agent_name, text, thread_id}
 let _agoMembers = null;         // members of the selected group (panel open) or null
 let _agoWs = null;
@@ -1572,7 +1574,7 @@ function agoBubble(m, inThread) {
   const mark = (pinned ? `<span class="ago-pinned-mark" title="Pinned">${icon("pin")}</span>` : "")
     + (starred ? `<span class="ago-starred-mark" title="Starred by you">${icon("star", "fill")}</span>` : "")
     + (onTldr ? `<span class="ago-tldr-mark" title="Short version — the full message is one click away">TL;DR</span>` : "");
-  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(onTldr ? tldr : agoVisibleText(m))}${agoAttachmentsHTML(m)}${agoUnfurlsHTML(m)}${agoSourcesHTML(m)}${agoOptionsHTML(m)}${agoReactionsHTML(m)}${foot}</div>`;
+  return `<div class="bubble ${cls} ago-bubble" data-mid="${m.id}"><div class="who"><span class="who-name">${esc(agoAuthorLabel(m))}${m.author_type === "agent" ? " · agent" : ""}</span>${mark}<span class="bubble-ts">${esc(fmtTs(m.ts))}</span></div>${agoMd(onTldr ? tldr : agoVisibleText(m))}${agoAttachmentsHTML(m)}${agoUnfurlsHTML(m)}${agoSourcesHTML(m)}${agoFormHTML(m)}${agoOptionsHTML(m)}${agoReactionsHTML(m)}${foot}</div>`;
 }
 /* The text a bubble renders: when the server lifted a trailing "Sources:"
    block into meta.sources, meta.sources_start (a UTF-16 offset — exactly
@@ -1650,6 +1652,129 @@ async function agoSelectOption(messageId, optionId) {
     alert(e.message || "Could not submit choice");
   }
 }
+/* ---------- interactive forms (meta.form) ----------
+   Shared state: meta.form_state holds the live values every member sees and
+   edits; checkbox taps persist immediately, typed text stays a local draft
+   (in _agoFormDrafts, so redraws don't eat it) until its check icon — or
+   Enter — confirms it. A button press submits the server's state snapshot
+   to the authoring agent and locks the form for everyone. */
+function agoFormHTML(m) {
+  const meta = m.meta;
+  const form = meta && meta.form && typeof meta.form === "object" ? meta.form : null;
+  if (!form || !Array.isArray(form.fields) || !Array.isArray(form.buttons)) return "";
+  const state = meta.form_state && typeof meta.form_state === "object" ? meta.form_state : {};
+  const done = meta.form_submitted && typeof meta.form_submitted === "object" ? meta.form_submitted : null;
+  if (done) {
+    const values = done.values && typeof done.values === "object" ? done.values : {};
+    const rows = form.fields.map(f => {
+      const v = values[f.id];
+      const shown = f.kind === "checkbox"
+        ? (v ? icon("check") : "—")
+        : (v ? esc(String(v)) : "—");
+      return `<div class="ago-form-row done"><span class="lbl">${esc(f.label)}</span><span class="val">${shown}</span></div>`;
+    }).join("");
+    const btn = form.buttons.find(b => b.id === done.button_id) || {};
+    return `<div class="ago-form submitted">${rows}
+      <div class="ago-form-done">${icon("check")} ${esc(btn.label || done.button_id || "Submitted")}
+        <span class="dim">by ${esc(done.by || "?")}${done.ts ? ` · ${esc(fmtTs(done.ts))}` : ""}</span></div></div>`;
+  }
+  const rows = form.fields.map(f => {
+    if (f.kind === "checkbox") {
+      const on = state[f.id] === true;
+      return `<button class="ago-form-check ${on ? "on" : ""}"
+        onclick="agoFormToggle(${m.id}, '${esc(f.id)}', ${on ? "false" : "true"})">
+        <span class="box">${on ? icon("check") : ""}</span><span class="lbl">${esc(f.label)}</span></button>`;
+    }
+    const server = typeof state[f.id] === "string" ? state[f.id] : "";
+    const draft = _agoFormDrafts.get(`${m.id}:${f.id}`);
+    const dirty = draft !== undefined && draft !== server;
+    return `<div class="ago-form-field">
+      <label class="lbl">${esc(f.label)}</label>
+      <span class="ago-form-inwrap">
+        <input class="ago-form-input" type="text" data-mid="${m.id}" data-fid="${esc(f.id)}"
+          data-sv="${esc(server)}" value="${esc(dirty ? draft : server)}"
+          placeholder="${esc(f.placeholder || "")}" maxlength="2000"
+          oninput="agoFormDraft(this)"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();agoFormConfirm(${m.id},'${esc(f.id)}')}">
+        <button class="ago-form-confirm ${dirty ? "dirty" : ""}" title="Save this value for everyone"
+          onclick="agoFormConfirm(${m.id}, '${esc(f.id)}')">${icon("check")}</button>
+      </span></div>`;
+  }).join("");
+  const buttons = form.buttons.map(b =>
+    `<button class="ago-option-btn ${b.style === "primary" ? "primary" : "secondary"}"
+       onclick="agoFormSubmit(${m.id}, '${esc(b.id)}')">${esc(b.label || b.id)}</button>`).join("");
+  return `<div class="ago-form">${rows}<div class="ago-form-actions">${buttons}</div></div>`;
+}
+/* Track typing against the last server value; the confirm icon lights up only
+   while the draft differs. Direct classList work — no redraw per keystroke. */
+function agoFormDraft(el) {
+  const key = `${el.dataset.mid}:${el.dataset.fid}`;
+  const dirty = el.value !== el.dataset.sv;
+  if (dirty) _agoFormDrafts.set(key, el.value);
+  else _agoFormDrafts.delete(key);
+  const confirm = el.parentElement.querySelector(".ago-form-confirm");
+  if (confirm) confirm.classList.toggle("dirty", dirty);
+}
+async function agoFormToggle(messageId, fieldId, value) {
+  try {
+    const updated = await apiPost(`/api/messages/${messageId}/form_state`, { field_id: fieldId, value });
+    agoApplyMessageUpdate(updated);
+  } catch (e) {
+    alert(e.message || "Could not update the form");
+    agoDrawMessages(); agoDrawThread(); // revert the visual state
+  }
+}
+async function agoFormConfirm(messageId, fieldId) {
+  const key = `${messageId}:${fieldId}`;
+  if (!_agoFormDrafts.has(key)) return;
+  try {
+    const updated = await apiPost(`/api/messages/${messageId}/form_state`,
+      { field_id: fieldId, value: _agoFormDrafts.get(key) });
+    _agoFormDrafts.delete(key);
+    agoApplyMessageUpdate(updated);
+  } catch (e) {
+    alert(e.message || "Could not save the value");
+  }
+}
+/* Press a form button: unconfirmed drafts flush first (submit snapshots the
+   server's state, so anything still local would be lost), then the one-shot
+   submit — the race loser gets the server's 409 and the locked view arrives
+   with the message_update broadcast. */
+async function agoFormSubmit(messageId, buttonId) {
+  if (_agoFormBusy.has(messageId)) return;
+  _agoFormBusy.add(messageId);
+  try {
+    for (const key of [..._agoFormDrafts.keys()]) {
+      if (!key.startsWith(`${messageId}:`)) continue;
+      const fieldId = key.slice(String(messageId).length + 1);
+      await apiPost(`/api/messages/${messageId}/form_state`,
+        { field_id: fieldId, value: _agoFormDrafts.get(key) });
+      _agoFormDrafts.delete(key);
+    }
+    const updated = await apiPost(`/api/messages/${messageId}/form_submit`, { button_id: buttonId });
+    agoApplyMessageUpdate(updated);
+  } catch (e) {
+    alert(e.message || "Could not submit the form");
+  } finally {
+    _agoFormBusy.delete(messageId);
+  }
+}
+/* Keep the focused form input alive across a full innerHTML redraw: capture
+   which input has focus (and its caret) before the swap, re-find it by its
+   message/field identity after, and put the user back where they were. The
+   text itself survives via _agoFormDrafts. */
+function agoCaptureFormFocus(box) {
+  const el = document.activeElement;
+  if (!el || !el.classList || !el.classList.contains("ago-form-input") || !box.contains(el)) return null;
+  return { mid: el.dataset.mid, fid: el.dataset.fid, start: el.selectionStart, end: el.selectionEnd };
+}
+function agoRestoreFormFocus(box, cap) {
+  if (!cap) return;
+  const el = box.querySelector(`.ago-form-input[data-mid="${cap.mid}"][data-fid="${cap.fid}"]`);
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  try { el.setSelectionRange(cap.start, cap.end); } catch (e) { /* not focusable */ }
+}
 function agoMsgHTML(m, inThread) {
   const bubble = agoBubble(m, inThread);
   if (m.author_type !== "agent") return bubble;
@@ -1669,9 +1794,11 @@ function agoDrawMessages() {
     }
     html += agoMsgHTML(m, false);
   }
+  const focusCap = agoCaptureFormFocus(box);
   box.innerHTML = html
     || `<div class="empty"><div class="glyph">${icon("message-circle")}</div><div>No messages yet</div>
        <div class="hint">Say something — member agents will answer here. Use the Members button to invite an agent.</div></div>`;
+  agoRestoreFormFocus(box, focusCap);
   const divider = dividerPlaced && document.getElementById("ago-new-divider");
   if (_agoLandOnDivider && divider) {
     _agoLandOnDivider = false;
@@ -2346,6 +2473,7 @@ function agoDrawThread() {
   const channel = agoSelChannel();
   const draft = (document.getElementById("ago-thread-msg") || {}).value || "";
   box.style.display = "";
+  const focusCap = agoCaptureFormFocus(box);
   box.innerHTML = `
     <div class="ago-head">
       <button class="btn sm ago-back" title="Back to #${esc(channel ? channel.name : "channel")}"
@@ -2390,6 +2518,7 @@ function agoDrawThread() {
       <button class="btn primary" onclick="agoSend(${_agoThreadRoot.id})">Send</button>
       ${agoAddrPopHTML(_agoThreadRoot.id)}
     </div>`;
+  agoRestoreFormFocus(box, focusCap);
   const input = document.getElementById("ago-thread-msg");
   if (input && draft) { input.value = draft; autoGrow(input); }
   const log = document.getElementById("ago-thread-log");
@@ -2739,6 +2868,9 @@ function agoApplyMessageUpdate(m) {
    root's reply count when a reply went. */
 function agoApplyMessageDelete(data) {
   const mid = data.message_id;
+  for (const key of [..._agoFormDrafts.keys()]) {
+    if (key.startsWith(`${mid}:`)) _agoFormDrafts.delete(key);
+  }
   let redraw = false;
   const idx = _agoMsgs.findIndex(x => x.id === mid);
   if (idx >= 0) { _agoMsgs.splice(idx, 1); redraw = true; }

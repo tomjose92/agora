@@ -308,6 +308,51 @@ export function useSelectOption() {
   });
 }
 
+/** Persist one field of a message's shared form state (a checkbox toggle or
+    a confirmed input value). Fans out to every client as a message_update;
+    the authoring agent hears nothing until a button is pressed. */
+export function useUpdateFormState() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: {
+      messageId: number;
+      fieldId: string;
+      value: string | boolean;
+    }) =>
+      api.post<Message>(`/api/messages/${v.messageId}/form_state`, {
+        field_id: v.fieldId,
+        value: v.value,
+      }),
+    onSuccess: (message) => {
+      qc.setQueryData<MessagePages>(
+        keys.messages(message.channel_id, message.thread_id),
+        (data) => replaceMessage(data, message),
+      );
+    },
+  });
+}
+
+/** Press a form button: the server snapshots the shared state, locks the
+    form one-shot (a raced second press gets a 409), and forwards the
+    submission to the authoring agent. */
+export function useSubmitForm() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { messageId: number; buttonId: string }) =>
+      api.post<Message>(`/api/messages/${v.messageId}/form_submit`, {
+        button_id: v.buttonId,
+      }),
+    onSuccess: (message) => {
+      qc.setQueryData<MessagePages>(
+        keys.messages(message.channel_id, message.thread_id),
+        (data) => replaceMessage(data, message),
+      );
+    },
+  });
+}
+
 /** Toggle the caller's emoji reaction on a message. The server returns the
     updated message, which is patched into the cache in place; the
     message_update broadcast then merges as a no-op. */

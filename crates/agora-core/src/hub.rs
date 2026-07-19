@@ -48,6 +48,83 @@ pub const SEARCH_PAGE_MAX: i64 = 50;
 /// stands on its own.
 pub const MAX_TLDR_CHARS: usize = 2_000;
 
+/// Guardrails for agent-supplied interactive forms on a `post` frame. Caps
+/// are applied while sanitizing (extra fields/buttons dropped, long labels
+/// clipped); a form left without fields or buttons is dropped entirely — the
+/// post itself still lands as plain text, mirroring the tldr/sources rules.
+pub const MAX_FORM_FIELDS: usize = 12;
+pub const MAX_FORM_BUTTONS: usize = 2;
+pub const MAX_FORM_LABEL_CHARS: usize = 120;
+pub const MAX_FORM_VALUE_CHARS: usize = 2_000;
+
+/// Validate and normalize an agent-supplied form spec into the stored
+/// `meta.form` shape: `fields` of kind `input`/`checkbox` (each with an id
+/// safe to round-trip, a label, and a typed initial `value`) plus one or two
+/// `buttons` whose `style` is normalized to `primary`/`secondary`.
+pub fn sanitize_form(form: &Value) -> Option<Value> {
+    fn clean_id(v: &Value) -> Option<String> {
+        let id = v.as_str()?.trim();
+        let ok = !id.is_empty()
+            && id.len() <= 64
+            && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        ok.then(|| id.to_string())
+    }
+    fn clip(s: &str, max: usize) -> String {
+        s.chars().take(max).collect()
+    }
+    let mut fields = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for f in form.get("fields")?.as_array()? {
+        if fields.len() == MAX_FORM_FIELDS {
+            break;
+        }
+        let Some(id) = clean_id(&f["id"]) else { continue };
+        let kind = match f["kind"].as_str() {
+            Some(k @ ("input" | "checkbox")) => k,
+            _ => continue,
+        };
+        let label = clip(f["label"].as_str().unwrap_or("").trim(), MAX_FORM_LABEL_CHARS);
+        if label.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        let mut field = json!({"id": id, "kind": kind, "label": label});
+        if kind == "input" {
+            if let Some(p) = f["placeholder"].as_str() {
+                let p = clip(p.trim(), MAX_FORM_LABEL_CHARS);
+                if !p.is_empty() {
+                    field["placeholder"] = json!(p);
+                }
+            }
+            field["value"] =
+                json!(clip(f["value"].as_str().unwrap_or(""), MAX_FORM_VALUE_CHARS));
+        } else {
+            field["value"] = json!(f["value"].as_bool().unwrap_or(false));
+        }
+        fields.push(field);
+    }
+    let mut buttons = Vec::new();
+    let mut seen_buttons = std::collections::HashSet::new();
+    for b in form.get("buttons")?.as_array()? {
+        if buttons.len() == MAX_FORM_BUTTONS {
+            break;
+        }
+        let Some(id) = clean_id(&b["id"]) else { continue };
+        let label = clip(b["label"].as_str().unwrap_or("").trim(), MAX_FORM_LABEL_CHARS);
+        if label.is_empty() || !seen_buttons.insert(id.clone()) {
+            continue;
+        }
+        let style = match b["style"].as_str() {
+            Some("primary") => "primary",
+            _ => "secondary",
+        };
+        buttons.push(json!({"id": id, "label": label, "style": style}));
+    }
+    if fields.is_empty() || buttons.is_empty() {
+        return None;
+    }
+    Some(json!({"fields": fields, "buttons": buttons}))
+}
+
 /// Minimum gap between notifications for the same channel, so a burst of
 /// agent replies (or a bot exchange) becomes one banner, not a pile.
 const NOTIFY_THROTTLE: Duration = Duration::from_secs(5);
@@ -566,7 +643,9 @@ impl Hub {
         text: &str,
         thread_id: Option<i64>,
     ) -> Value {
-        self.post_agent_message_with_options(agent_id, agent_name, channel_id, text, thread_id, None, None, None, None)
+        self.post_agent_message_with_options(
+            agent_id, agent_name, channel_id, text, thread_id, None, None, None, None, None, None,
+        )
     }
 
     pub fn post_agent_message_with_options(
@@ -580,6 +659,8 @@ impl Hub {
         options_id: Option<&str>,
         tldr: Option<&str>,
         sources: Option<&Value>,
+        form: Option<&Value>,
+        form_id: Option<&str>,
     ) -> Value {
         let mut meta_obj = serde_json::Map::new();
         if let Some(opts) = options {
@@ -588,6 +669,22 @@ impl Hub {
                 meta_obj.insert("options_id".into(), json!(options_id.unwrap_or("")));
                 meta_obj.insert("resolved".into(), Value::Null);
             }
+        }
+        // An interactive form: the sanitized spec, its shared live state
+        // (seeded from each field's initial value; members' edits land here),
+        // and the not-yet-submitted lock. A form that fails sanitizing is
+        // dropped while the post still lands, like a bad tldr.
+        if let Some(sanitized) = form.and_then(sanitize_form) {
+            let mut state = serde_json::Map::new();
+            for f in sanitized["fields"].as_array().into_iter().flatten() {
+                if let Some(id) = f["id"].as_str() {
+                    state.insert(id.to_string(), f["value"].clone());
+                }
+            }
+            meta_obj.insert("form".into(), sanitized);
+            meta_obj.insert("form_id".into(), json!(form_id.unwrap_or("")));
+            meta_obj.insert("form_state".into(), Value::Object(state));
+            meta_obj.insert("form_submitted".into(), Value::Null);
         }
         if let Some(t) = tldr {
             meta_obj.insert("tldr".into(), json!(t));
@@ -680,6 +777,92 @@ impl Hub {
                 "message_id": message_id,
                 "channel_id": channel_id,
                 "thread_id": updated["thread_id"],
+                "user": {"id": user, "name": user},
+            });
+            let _ = handle.tx.send(frame);
+        }
+        Ok(updated)
+    }
+
+    /// Persist one member's edit to a form field — a checkbox toggle or a
+    /// confirmed input value — and fan the updated message out to every
+    /// client. Draft edits never reach the authoring agent; only
+    /// [`Hub::submit_form`] does.
+    pub fn update_form_field(
+        &self,
+        message_id: i64,
+        field_id: &str,
+        value: &Value,
+    ) -> Result<Value, &'static str> {
+        let message = self.store.message(message_id).ok_or("Message not found")?;
+        let meta = message.get("meta").cloned().unwrap_or(Value::Null);
+        let fields = meta
+            .get("form")
+            .and_then(|f| f.get("fields"))
+            .and_then(|f| f.as_array())
+            .ok_or("Message has no form")?;
+        let field = fields
+            .iter()
+            .find(|f| f["id"].as_str() == Some(field_id))
+            .ok_or("Unknown field")?;
+        let normalized = match field["kind"].as_str() {
+            Some("checkbox") => json!(value.as_bool().ok_or("Expected a boolean value")?),
+            Some("input") => {
+                let s = value.as_str().ok_or("Expected a string value")?;
+                if s.chars().count() > MAX_FORM_VALUE_CHARS {
+                    return Err("Value too long");
+                }
+                json!(s)
+            }
+            _ => return Err("Unknown field"),
+        };
+        let updated = self.store.update_form_field(message_id, field_id, &normalized)?;
+        let channel_id = updated["channel_id"].as_str().unwrap_or_default();
+        self.broadcast(
+            channel_id,
+            &json!({"type": "message_update", "message": updated}),
+        );
+        Ok(updated)
+    }
+
+    /// Press one of a form's buttons: atomically lock the form with a
+    /// snapshot of the shared state, update all UIs, and notify the
+    /// authoring agent with a ``form_submit`` frame carrying the values
+    /// (mirrors [`Hub::select_option`]; an offline agent just misses the
+    /// frame while the recorded submission stands).
+    pub fn submit_form(
+        &self,
+        message_id: i64,
+        button_id: &str,
+        user: &str,
+    ) -> Result<Value, &'static str> {
+        let message = self.store.message(message_id).ok_or("Message not found")?;
+        let meta = message.get("meta").cloned().unwrap_or(Value::Null);
+        let buttons = meta
+            .get("form")
+            .and_then(|f| f.get("buttons"))
+            .and_then(|b| b.as_array())
+            .ok_or("Message has no form")?;
+        if !buttons.iter().any(|b| b["id"].as_str() == Some(button_id)) {
+            return Err("Unknown button");
+        }
+        let updated = self.store.submit_form(message_id, button_id, user)?;
+        let channel_id = updated["channel_id"].as_str().unwrap_or_default().to_string();
+        self.broadcast(
+            &channel_id,
+            &json!({"type": "message_update", "message": updated}),
+        );
+        let agent_id = updated["author_id"].as_str().unwrap_or_default();
+        if let Some(handle) = self.agent_handle(agent_id) {
+            let frame = json!({
+                "type": "form_submit",
+                "agent_id": agent_id,
+                "form_id": updated["meta"]["form_id"],
+                "button_id": button_id,
+                "message_id": message_id,
+                "channel_id": channel_id,
+                "thread_id": updated["thread_id"],
+                "values": updated["meta"]["form_submitted"]["values"],
                 "user": {"id": user, "name": user},
             });
             let _ = handle.tx.send(frame);
@@ -1013,6 +1196,8 @@ impl Hub {
                         options_id,
                         tldr,
                         frame.get("sources"),
+                        frame.get("form"),
+                        frame["form_id"].as_str(),
                     );
                 }
             }
@@ -1312,6 +1497,169 @@ mod tests {
             }
         }
         found
+    }
+
+    fn sample_form() -> Value {
+        json!({
+            "fields": [
+                {"id": "breakfast", "kind": "input", "label": "Breakfast", "placeholder": "e.g. eggs"},
+                {"id": "ran_5k", "kind": "checkbox", "label": "Ran 5k", "value": true},
+            ],
+            "buttons": [
+                {"id": "log", "label": "Log it", "style": "primary"},
+                {"id": "skip", "label": "Skip today"},
+            ],
+        })
+    }
+
+    /// Post a form-carrying agent message into a fresh channel; returns the
+    /// hub, the authoring agent's frame receiver, and the message id.
+    fn setup_form() -> (Hub, tokio::sync::mpsc::UnboundedReceiver<Value>, i64) {
+        let h = hub();
+        let rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": "Log your day", "form_id": "daily-1", "form": sample_form(),
+        }));
+        let mid = h.store.messages(&cid, None, None, 50)[0]["id"].as_i64().unwrap();
+        (h, rx, mid)
+    }
+
+    #[test]
+    fn sanitize_form_normalizes_and_rejects() {
+        // Whole form dropped: no usable fields / no buttons / bad shape.
+        assert!(sanitize_form(&json!({})).is_none());
+        assert!(sanitize_form(&json!({"fields": [], "buttons": [{"id": "a", "label": "A"}]})).is_none());
+        assert!(sanitize_form(&json!({
+            "fields": [{"id": "x", "kind": "input", "label": "X"}], "buttons": [],
+        }))
+        .is_none());
+        assert!(sanitize_form(&json!({
+            "fields": [{"id": "bad id!", "kind": "input", "label": "X"}],
+            "buttons": [{"id": "a", "label": "A"}],
+        }))
+        .is_none());
+
+        // Bad entries dropped, dupes deduped, caps applied, styles normalized.
+        let many_fields: Vec<Value> = (0..20)
+            .map(|i| json!({"id": format!("f{i}"), "kind": "checkbox", "label": "L"}))
+            .collect();
+        let f = sanitize_form(&json!({
+            "fields": many_fields,
+            "buttons": [
+                {"id": "a", "label": "A", "style": "primary"},
+                {"id": "a", "label": "dupe"},
+                {"id": "b", "label": "B", "style": "danger"},
+                {"id": "c", "label": "over the cap"},
+            ],
+        }))
+        .unwrap();
+        assert_eq!(f["fields"].as_array().unwrap().len(), MAX_FORM_FIELDS);
+        let buttons = f["buttons"].as_array().unwrap();
+        assert_eq!(buttons.len(), 2);
+        assert_eq!(buttons[0]["style"], "primary");
+        assert_eq!(buttons[1]["id"], "b");
+        assert_eq!(buttons[1]["style"], "secondary"); // unknown style normalized
+
+        // Typed initial values: inputs stringly (clipped), checkboxes bool.
+        let f = sanitize_form(&json!({
+            "fields": [
+                {"id": "a", "kind": "input", "label": "A", "value": "x".repeat(MAX_FORM_VALUE_CHARS * 2)},
+                {"id": "b", "kind": "checkbox", "label": "B", "value": "yes"},
+                {"id": "c", "kind": "dropdown", "label": "C"},
+            ],
+            "buttons": [{"id": "ok", "label": "OK"}],
+        }))
+        .unwrap();
+        let fields = f["fields"].as_array().unwrap();
+        assert_eq!(fields.len(), 2); // unknown kind dropped
+        assert_eq!(fields[0]["value"].as_str().unwrap().len(), MAX_FORM_VALUE_CHARS);
+        assert_eq!(fields[1]["value"], false); // non-bool coerced
+    }
+
+    #[test]
+    fn form_post_seeds_state_and_bad_forms_drop() {
+        let (h, _rx, mid) = setup_form();
+        let meta = &h.store.message(mid).unwrap()["meta"];
+        assert_eq!(meta["form_id"], "daily-1");
+        assert_eq!(meta["form"]["fields"].as_array().unwrap().len(), 2);
+        assert_eq!(meta["form_state"]["breakfast"], "");
+        assert_eq!(meta["form_state"]["ran_5k"], true);
+        assert!(meta["form_submitted"].is_null());
+
+        // A malformed form is dropped while the post still lands.
+        let cid = h.store.message(mid).unwrap()["channel_id"].as_str().unwrap().to_string();
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": "no form here", "form": {"fields": "nope"},
+        }));
+        let msgs = h.store.messages(&cid, None, None, 50);
+        let last = msgs.last().unwrap();
+        assert_eq!(last["text"], "no form here");
+        assert!(last["meta"].get("form").is_none());
+    }
+
+    #[test]
+    fn form_field_updates_persist_and_validate() {
+        let (h, _rx, mid) = setup_form();
+        let updated = h.update_form_field(mid, "breakfast", &json!("eggs")).unwrap();
+        assert_eq!(updated["meta"]["form_state"]["breakfast"], "eggs");
+        let updated = h.update_form_field(mid, "ran_5k", &json!(false)).unwrap();
+        assert_eq!(updated["meta"]["form_state"]["ran_5k"], false);
+
+        assert_eq!(h.update_form_field(mid, "nope", &json!("x")), Err("Unknown field"));
+        assert_eq!(
+            h.update_form_field(mid, "breakfast", &json!(true)),
+            Err("Expected a string value")
+        );
+        assert_eq!(
+            h.update_form_field(mid, "ran_5k", &json!("yes")),
+            Err("Expected a boolean value")
+        );
+        assert_eq!(
+            h.update_form_field(mid, "breakfast", &json!("x".repeat(MAX_FORM_VALUE_CHARS + 1))),
+            Err("Value too long")
+        );
+        // A formless message takes no form writes.
+        let cid = h.store.message(mid).unwrap()["channel_id"].as_str().unwrap().to_string();
+        let plain = h.post_user_message(&cid, "plain", "tom", None, None, vec![]);
+        assert_eq!(
+            h.update_form_field(plain["id"].as_i64().unwrap(), "breakfast", &json!("x")),
+            Err("Message has no form")
+        );
+    }
+
+    #[test]
+    fn form_submit_locks_snapshots_and_notifies_agent() {
+        let (h, mut rx, mid) = setup_form();
+        h.update_form_field(mid, "breakfast", &json!("eggs")).unwrap();
+
+        assert_eq!(h.submit_form(mid, "nope", "tom"), Err("Unknown button"));
+        let updated = h.submit_form(mid, "log", "tom").unwrap();
+        let submitted = &updated["meta"]["form_submitted"];
+        assert_eq!(submitted["button_id"], "log");
+        assert_eq!(submitted["by"], "tom");
+        assert_eq!(submitted["values"]["breakfast"], "eggs");
+        assert_eq!(submitted["values"]["ran_5k"], true);
+
+        // The authoring agent hears exactly one form_submit with the values.
+        let frame = last_frame(&mut rx, "form_submit").unwrap();
+        assert_eq!(frame["form_id"], "daily-1");
+        assert_eq!(frame["button_id"], "log");
+        assert_eq!(frame["message_id"].as_i64(), Some(mid));
+        assert_eq!(frame["values"]["breakfast"], "eggs");
+        assert_eq!(frame["user"]["name"], "tom");
+
+        // One-shot: the loser of the race and later edits both bounce.
+        assert_eq!(h.submit_form(mid, "skip", "ana"), Err("Form already submitted"));
+        assert_eq!(
+            h.update_form_field(mid, "breakfast", &json!("toast")),
+            Err("Form already submitted")
+        );
+        // The recorded submission still names the winner.
+        let meta = &h.store.message(mid).unwrap()["meta"];
+        assert_eq!(meta["form_submitted"]["by"], "tom");
     }
 
     #[test]

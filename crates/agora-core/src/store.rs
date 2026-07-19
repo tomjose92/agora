@@ -1526,6 +1526,95 @@ impl Store {
         self.message(message_id)
     }
 
+    /// Load a message's meta for a form mutation, or the error the caller
+    /// should surface: rows without a form can't take form writes, and a
+    /// locked form refuses everything. Callers hold the connection lock.
+    fn load_form_meta(
+        conn: &rusqlite::Connection,
+        message_id: i64,
+    ) -> Result<Value, &'static str> {
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT meta FROM messages WHERE id = ?1",
+                params![message_id],
+                |r| r.get(0),
+            )
+            .map_err(|_| "Message not found")?;
+        let meta = raw
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .unwrap_or(Value::Null);
+        if !meta.get("form").map(|f| f.is_object()).unwrap_or(false) {
+            return Err("Message has no form");
+        }
+        if meta.get("form_submitted").map(|r| !r.is_null()).unwrap_or(false) {
+            return Err("Form already submitted");
+        }
+        Ok(meta)
+    }
+
+    /// Set one field's value in a message's shared form state and return the
+    /// updated message. The read-check-write runs under one connection lock:
+    /// two members editing different fields must not lose each other's
+    /// values, and an edit must not slip past a concurrent submit's lock.
+    pub fn update_form_field(
+        &self,
+        message_id: i64,
+        field_id: &str,
+        value: &Value,
+    ) -> Result<Value, &'static str> {
+        {
+            let conn = self.conn.lock().unwrap();
+            let mut meta = Self::load_form_meta(&conn, message_id)?;
+            let obj = meta.as_object_mut().unwrap();
+            let state = obj.entry("form_state").or_insert_with(|| json!({}));
+            if !state.is_object() {
+                *state = json!({});
+            }
+            state
+                .as_object_mut()
+                .unwrap()
+                .insert(field_id.to_string(), value.clone());
+            conn.execute(
+                "UPDATE messages SET meta = ?1 WHERE id = ?2",
+                params![meta.to_string(), message_id],
+            )
+            .map_err(|_| "Failed to update message")?;
+        }
+        self.message(message_id).ok_or("Message not found")
+    }
+
+    /// Lock a form: record the pressed button plus a snapshot of the shared
+    /// state, and return the updated message. Check-and-set runs under one
+    /// connection lock, so exactly one submitter wins — the loser (and any
+    /// later field edit) gets "Form already submitted".
+    pub fn submit_form(
+        &self,
+        message_id: i64,
+        button_id: &str,
+        by: &str,
+    ) -> Result<Value, &'static str> {
+        {
+            let conn = self.conn.lock().unwrap();
+            let mut meta = Self::load_form_meta(&conn, message_id)?;
+            let values = meta.get("form_state").cloned().unwrap_or_else(|| json!({}));
+            meta.as_object_mut().unwrap().insert(
+                "form_submitted".into(),
+                json!({
+                    "button_id": button_id,
+                    "by": by,
+                    "ts": now(),
+                    "values": values,
+                }),
+            );
+            conn.execute(
+                "UPDATE messages SET meta = ?1 WHERE id = ?2",
+                params![meta.to_string(), message_id],
+            )
+            .map_err(|_| "Failed to update message")?;
+        }
+        self.message(message_id).ok_or("Message not found")
+    }
+
     /// Delete one message. A thread root takes its replies with it (replies
     /// pointing at a deleted root would dangle — same rule as
     /// [`Store::delete_user_data`]), along with everything keyed to the

@@ -324,6 +324,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/channels/{channel_id}/read", put(mark_read))
         .route("/api/messages/{message_id}", get(get_message))
         .route("/api/messages/{message_id}/select", post(select_message_option))
+        .route(
+            "/api/messages/{message_id}/form_state",
+            post(update_message_form_state),
+        )
+        .route(
+            "/api/messages/{message_id}/form_submit",
+            post(submit_message_form),
+        )
         .route("/api/messages/{message_id}/speech", get(message_speech))
         .route("/api/search", get(search))
         .route("/api/search/ask", post(search_ask))
@@ -1618,6 +1626,55 @@ async fn select_message_option(
         Ok(message) => Ok(Json(message)),
         Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
         Err(msg) => Err(err(StatusCode::CONFLICT, msg)),
+    }
+}
+
+/// Persist one member's edit to a message's interactive form (a checkbox
+/// toggle, or an input value the member confirmed). The update fans out to
+/// every client as a `message_update`; the authoring agent hears nothing
+/// until a button is pressed.
+async fn update_message_form_state(
+    State(state): State<AppState>,
+    Path(message_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    require_message_visible(&state, &user, message_id)?;
+    let field_id = payload["field_id"].as_str().unwrap_or("").trim();
+    if field_id.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "field_id required"));
+    }
+    let value = payload.get("value").cloned().unwrap_or(Value::Null);
+    match state.hub.update_form_field(message_id, field_id, &value) {
+        Ok(message) => Ok(Json(message)),
+        Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
+        Err(msg @ "Form already submitted") => Err(err(StatusCode::CONFLICT, msg)),
+        Err(msg) => Err(err(StatusCode::BAD_REQUEST, msg)),
+    }
+}
+
+/// Press one of a form's buttons: locks the form one-shot (the race loser
+/// gets a 409) and forwards the submission to the authoring agent.
+async fn submit_message_form(
+    State(state): State<AppState>,
+    Path(message_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    require_message_visible(&state, &user, message_id)?;
+    let button_id = payload["button_id"].as_str().unwrap_or("").trim();
+    if button_id.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "button_id required"));
+    }
+    match state.hub.submit_form(message_id, button_id, &user.username) {
+        Ok(message) => Ok(Json(message)),
+        Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
+        Err(msg @ "Form already submitted") => Err(err(StatusCode::CONFLICT, msg)),
+        Err(msg) => Err(err(StatusCode::BAD_REQUEST, msg)),
     }
 }
 
@@ -3254,6 +3311,115 @@ mod tests {
         .await;
         assert!(missed.is_err());
         assert!(store.message(mid(&stray)).is_some());
+    }
+
+    #[tokio::test]
+    async fn form_endpoints_gate_membership_and_lock_one_shot() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("ana", "", None, "member").unwrap();
+        store.create_user("mal", "", None, "member").unwrap();
+        let g = store.create_group("Team", "", Some("ana"));
+        let gid = g["id"].as_str().unwrap();
+        store.add_member(gid, "user", "ana", "admin", None);
+        let c = store.create_channel(gid, "general", "");
+        let cid = c["id"].as_str().unwrap().to_string();
+        let m = state.hub.post_agent_message_with_options(
+            "bot-a",
+            "Bot A",
+            &cid,
+            "Log your day",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&json!({
+                "fields": [
+                    {"id": "breakfast", "kind": "input", "label": "Breakfast"},
+                    {"id": "ran_5k", "kind": "checkbox", "label": "Ran 5k"},
+                ],
+                "buttons": [{"id": "log", "label": "Log it", "style": "primary"}],
+            })),
+            Some("daily-1"),
+        );
+        let mid = m["id"].as_i64().unwrap();
+        let q = || Query(HashMap::new());
+
+        // Non-members can't touch the form.
+        let denied = update_message_form_state(
+            State(state.clone()),
+            Path(mid),
+            q(),
+            session_headers(&state, "mal"),
+            Json(json!({"field_id": "ran_5k", "value": true})),
+        )
+        .await;
+        assert!(denied.is_err());
+
+        // A member's edits persist; bad fields/types are 400s.
+        let ana = session_headers(&state, "ana");
+        let res = update_message_form_state(
+            State(state.clone()),
+            Path(mid),
+            q(),
+            ana.clone(),
+            Json(json!({"field_id": "breakfast", "value": "eggs"})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["meta"]["form_state"]["breakfast"], "eggs");
+        let bad = update_message_form_state(
+            State(state.clone()),
+            Path(mid),
+            q(),
+            ana.clone(),
+            Json(json!({"field_id": "nope", "value": "x"})),
+        )
+        .await;
+        assert_eq!(bad.unwrap_err().0, StatusCode::BAD_REQUEST);
+        let bad = update_message_form_state(
+            State(state.clone()),
+            Path(mid),
+            q(),
+            ana.clone(),
+            Json(json!({"field_id": "ran_5k", "value": "not-a-bool"})),
+        )
+        .await;
+        assert_eq!(bad.unwrap_err().0, StatusCode::BAD_REQUEST);
+
+        // Submit locks the form with a snapshot of the state…
+        let res = submit_message_form(
+            State(state.clone()),
+            Path(mid),
+            q(),
+            ana.clone(),
+            Json(json!({"button_id": "log"})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["meta"]["form_submitted"]["by"], "ana");
+        assert_eq!(res.0["meta"]["form_submitted"]["values"]["breakfast"], "eggs");
+
+        // …and everything after the lock is a 409.
+        let locked = submit_message_form(
+            State(state.clone()),
+            Path(mid),
+            q(),
+            ana.clone(),
+            Json(json!({"button_id": "log"})),
+        )
+        .await;
+        assert_eq!(locked.unwrap_err().0, StatusCode::CONFLICT);
+        let locked = update_message_form_state(
+            State(state.clone()),
+            Path(mid),
+            q(),
+            ana,
+            Json(json!({"field_id": "breakfast", "value": "toast"})),
+        )
+        .await;
+        assert_eq!(locked.unwrap_err().0, StatusCode::CONFLICT);
     }
 
     #[tokio::test]

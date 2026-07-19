@@ -16,6 +16,7 @@ import { AgentAvatar } from "./AgentAvatar";
 import { Attachments } from "./Attachments";
 import { Icon } from "./Icon";
 import { MdText } from "./MdText";
+import { MessageForm } from "./MessageForm";
 import { Reactions } from "./Reactions";
 import { Sources, visibleText } from "./Sources";
 import { Unfurls } from "./Unfurls";
@@ -144,6 +145,7 @@ export function MessageItem({
           <Attachments session={session} attachments={message.attachments ?? []} />
           <Unfurls message={message} />
           <Sources message={message} />
+          <MessageForm message={message} />
           <MessageOptions message={message} />
           <Reactions message={message} />
           <View style={styles.foot}>
@@ -183,6 +185,7 @@ export function MessageItem({
         <Attachments session={session} attachments={message.attachments ?? []} />
         <Unfurls message={message} />
         <Sources message={message} />
+        <MessageForm message={message} />
         <MessageOptions message={message} />
         <Reactions message={message} />
         {replies}
