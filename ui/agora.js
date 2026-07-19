@@ -1668,11 +1668,10 @@ function agoFormHTML(m) {
     const values = done.values && typeof done.values === "object" ? done.values : {};
     const rows = form.fields.map(f => {
       const v = values[f.id];
-      const empty = f.kind === "checkbox" ? !v : !(typeof v === "string" && v.trim());
       const shown = f.kind === "checkbox"
         ? (v ? icon("check") : "—")
-        : (empty ? "—" : esc(String(v)));
-      return `<div class="ago-form-row done"><span class="lbl">${esc(f.label)}</span><span class="val${empty ? " empty" : ""}">${shown}</span></div>`;
+        : (v ? esc(String(v)) : "—");
+      return `<div class="ago-form-row done"><span class="lbl">${esc(f.label)}</span><span class="val">${shown}</span></div>`;
     }).join("");
     const btn = form.buttons.find(b => b.id === done.button_id) || {};
     return `<div class="ago-form submitted">${rows}<div class="ago-form-done"><span class="what">${icon("check")}<span>${esc(btn.label || done.button_id || "Submitted")}</span></span><span class="dim">by ${esc(done.by || "?")}${done.ts ? ` · ${esc(fmtTs(done.ts))}` : ""}</span></div></div>`;
