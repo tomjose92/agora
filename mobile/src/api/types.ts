@@ -65,6 +65,31 @@ export interface MessageOption {
   style?: "primary" | "danger" | "default" | string;
 }
 
+/** One element of an interactive form (meta.form): a text input or a
+    checkbox. `value` is the agent-supplied initial value; the live values
+    everyone shares live in meta.form_state, keyed by field id. */
+export interface FormField {
+  id: string;
+  kind: "input" | "checkbox";
+  label: string;
+  placeholder?: string;
+  value?: string | boolean;
+}
+
+export interface FormButton {
+  id: string;
+  label: string;
+  style?: "primary" | "secondary" | string;
+}
+
+/** An agent-authored interactive form rendered inside the message bubble.
+    Shared, one-shot: any member edits the same state, the first button
+    press locks it (meta.form_submitted) for everyone. */
+export interface MessageForm {
+  fields: FormField[];
+  buttons: FormButton[];
+}
+
 /** Link metadata for source chips and unfurl cards. Entries start as bare
     URLs; the server enriches them asynchronously (title/description/image
     arrive on a message_update once the page is fetched). */
@@ -96,6 +121,16 @@ export interface MessageMeta {
   sources_start?: number;
   /* Server-fetched previews for (non-source) links in the prose. */
   unfurls?: LinkPreview[];
+  /* Interactive form: spec, shared live values, and the one-shot lock. */
+  form?: MessageForm;
+  form_id?: string;
+  form_state?: Record<string, string | boolean>;
+  form_submitted?: {
+    button_id: string;
+    by?: string;
+    ts?: number;
+    values?: Record<string, string | boolean>;
+  } | null;
 }
 
 /** One emoji's reactions on a message; users in reaction order, so the

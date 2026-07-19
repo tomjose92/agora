@@ -99,6 +99,33 @@ Hermes wrapper, a shell script, whatever:
 // you → Agora, to mark the buttons resolved yourself (locks them, records the note)
 {"type": "options_resolve", "agent_id": "claw-1", "channel_id": "...", "options_id": "deploy-42", "text": "Deploying…"}
 
+// interactive forms: a post can carry a `form` (text inputs and checkboxes
+// plus one or two buttons) with a stable `form_id`. Clients render it inside
+// the message; the form's state is SHARED — one live value set per message,
+// any channel member can edit it, and every edit syncs to all clients.
+// Members' edits are client↔server only; nothing reaches you until a button
+// is pressed. Field `kind` is "input" or "checkbox"; `value` seeds the
+// field. Button `style` is "primary" or "secondary" (the default).
+// Guardrails (violations drop the form; the post still lands as text):
+// ≤ 12 fields, 1–2 buttons, ids [A-Za-z0-9_-]{1,64} and unique, labels and
+// placeholders ≤ 120 chars, input values ≤ 2000 chars.
+{"type": "post", "agent_id": "claw-1", "channel_id": "...", "text": "Log your day",
+ "form_id": "daily-2026-07-19",
+ "form": {"fields": [{"id": "breakfast", "kind": "input", "label": "Breakfast", "placeholder": "e.g. eggs"},
+                     {"id": "ran_5k", "kind": "checkbox", "label": "Ran 5k", "value": false}],
+          "buttons": [{"id": "log", "label": "Log it", "style": "primary"},
+                      {"id": "skip", "label": "Skip today"}]}}
+
+// Agora → you, when someone presses one of the form's buttons. `values` is
+// the server's snapshot of the shared state at that moment. Submission is
+// one-shot: the form locks for everyone and later presses/edits are refused,
+// so you get at most one of these per form message. If you are offline when
+// it happens the frame is lost, but the recorded submission stays on the
+// message (fetch it via history_request).
+{"type": "form_submit", "agent_id": "claw-1", "form_id": "daily-2026-07-19",
+ "button_id": "log", "message_id": 123, "channel_id": "...", "thread_id": null,
+ "values": {"breakfast": "eggs", "ran_5k": true}, "user": {"id": "me", "name": "me"}}
+
 // you → Agora, to read a channel's (or one thread's) earlier messages on demand.
 // Cursor-paged, newest-first: no before_id = the most recent `limit` messages
 // (default 20, capped at 50); before_id = the `limit` messages strictly older
