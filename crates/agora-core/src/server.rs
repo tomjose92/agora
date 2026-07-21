@@ -19,9 +19,10 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
+use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 use crate::config::{Config, Connection, PairingToken};
 use crate::connections::ConnectionManager;
@@ -2804,6 +2805,30 @@ async fn apple_signin(
 
 // ------------------------------------------------------------- websockets
 
+/// Drain outbound frames onto a split websocket sink on a dedicated task.
+///
+/// Both socket handlers below keep this writer *off* their read loop. A send
+/// can block for a while — a large fan-out frame, a slow client — and the read
+/// loop is what answers the peer's keepalive pings. If a send parked the read
+/// loop, pong replies would stall long enough for a healthy peer to declare the
+/// link dead and reconnect (the timeout churn we're fixing). Returns when the
+/// outbound channel closes or a send fails; the caller then tears the socket
+/// down.
+async fn pump_ws_writer(
+    mut sink: SplitSink<WebSocket, WsMessage>,
+    mut rx: UnboundedReceiver<Value>,
+) {
+    while let Some(v) = rx.recv().await {
+        if sink
+            .send(WsMessage::Text(v.to_string().into()))
+            .await
+            .is_err()
+        {
+            break;
+        }
+    }
+}
+
 async fn ui_ws(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
@@ -2818,25 +2843,18 @@ async fn ui_ws(
 }
 
 async fn handle_ui_socket(state: AppState, user: AuthedUser, socket: WebSocket) {
-    let (mut sink, mut stream) = socket.split();
-    let (tx, mut rx) = unbounded_channel::<Value>();
+    let (sink, mut stream) = socket.split();
+    let (tx, rx) = unbounded_channel::<Value>();
     // Real identity, privileged only for the operator: the hub's per-channel
     // visibility filtering applies to everyone else.
     let socket_id = state
         .hub
         .attach_socket(&user.username, user.instance_admin, tx);
+    let mut writer = tokio::spawn(pump_ws_writer(sink, rx));
     loop {
         tokio::select! {
-            event = rx.recv() => {
-                match event {
-                    Some(v) => {
-                        if sink.send(WsMessage::Text(v.to_string().into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    None => break,
-                }
-            }
+            // Writer stopped (send failed / channel closed): tear the reader down.
+            _ = &mut writer => break,
             incoming = stream.next() => {
                 match incoming {
                     // Inbound frames are ignored (clients post via REST);
@@ -2848,6 +2866,7 @@ async fn handle_ui_socket(state: AppState, user: AuthedUser, socket: WebSocket) 
             }
         }
     }
+    writer.abort();
     state.hub.detach_socket(socket_id);
 }
 
@@ -2866,22 +2885,15 @@ async fn agent_ws(
 /// Dial-in bridge: the agent speaks first with `hello {agents: [...]}`,
 /// then the same frame protocol as an outbound connection.
 async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String) {
-    let (mut sink, mut stream) = socket.split();
-    let (tx, mut rx) = unbounded_channel::<Value>();
+    let (sink, mut stream) = socket.split();
+    let (tx, rx) = unbounded_channel::<Value>();
     let conn_id = state.hub.next_conn_id();
     let mut registered = false;
+    let mut writer = tokio::spawn(pump_ws_writer(sink, rx));
     loop {
         tokio::select! {
-            event = rx.recv() => {
-                match event {
-                    Some(v) => {
-                        if sink.send(WsMessage::Text(v.to_string().into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    None => break,
-                }
-            }
+            // Writer stopped (send failed / channel closed): tear the reader down.
+            _ = &mut writer => break,
             incoming = stream.next() => {
                 match incoming {
                     Some(Ok(WsMessage::Text(text))) => {
@@ -2914,6 +2926,7 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
             }
         }
     }
+    writer.abort();
     state.hub.unregister_connection(conn_id);
 }
 
