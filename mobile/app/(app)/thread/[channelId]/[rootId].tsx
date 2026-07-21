@@ -299,9 +299,12 @@ export default function ThreadScreen() {
           keyExtractor={(item) =>
             item.kind === "root" ? `root-${item.m.id}` : String(item.m.id)
           }
+          // Tight threshold for the same reason as the channel screen: a
+          // wider band lets an incoming reply yank an upward-scrolling
+          // viewer back to the bottom.
           maintainVisibleContentPosition={{
             startRenderingFromBottom: true,
-            autoscrollToBottomThreshold: 0.15,
+            autoscrollToBottomThreshold: 0.05,
           }}
           onStartReached={() => {
             if (replies.hasNextPage && !replies.isFetchingNextPage) void replies.fetchNextPage();
@@ -313,8 +316,9 @@ export default function ThreadScreen() {
               contentOffset.y + layoutMeasurement.height >= contentSize.height - 60;
           }}
           scrollEventThrottle={64}
+          // Mounted whenever older history exists (see the channel screen).
           ListHeaderComponent={
-            replies.isFetchingNextPage ? (
+            replies.hasNextPage ? (
               <ActivityIndicator color={colors.dim} style={{ paddingVertical: 14 }} />
             ) : null
           }
