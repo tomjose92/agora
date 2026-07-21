@@ -236,19 +236,42 @@ impl ConnectionManager {
         });
         tracing::info!("connection {name}: linked, {} agent(s)", agents.len());
 
-        // Pump: hub -> socket (inbound frames for the agents) and
-        // socket -> hub (post/typing/progress), plus keepalive pings.
-        let mut ping = tokio::time::interval(Duration::from_secs(30));
-        let result = loop {
-            tokio::select! {
-                out = rx.recv() => {
-                    match out {
-                        Some(frame) => {
-                            sink.send(Message::Text(frame.to_string().into())).await?;
+        // Writer task: owns the sink and is the *only* thing that touches it,
+        // so a slow or large send never parks the read loop below — the loop
+        // that answers the peer's keepalive pings. (It also drives our own 30s
+        // keepalive ping, which for the same reason must not wait behind a
+        // send.) A parked read loop would stall pongs long enough for the peer
+        // to declare a healthy link dead and reconnect — the churn we're fixing.
+        let mut writer = tokio::spawn(async move {
+            let mut ping = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                tokio::select! {
+                    out = rx.recv() => {
+                        match out {
+                            Some(frame) => {
+                                if sink.send(Message::Text(frame.to_string().into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            None => break,
                         }
-                        None => break Ok(()),
+                    }
+                    _ = ping.tick() => {
+                        if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                            break;
+                        }
                     }
                 }
+            }
+        });
+
+        // Pump: socket -> hub (post/typing/progress). Outbound and keepalive
+        // now live on the writer task above.
+        let result = loop {
+            tokio::select! {
+                // Writer stopped (send failed / channel closed): treat as a
+                // normal disconnect and let the outer loop reconnect.
+                _ = &mut writer => break Ok(()),
                 incoming = stream.next() => {
                     match incoming {
                         Some(Ok(Message::Text(text))) => {
@@ -278,11 +301,9 @@ impl ConnectionManager {
                         Some(Err(e)) => break Err(e.into()),
                     }
                 }
-                _ = ping.tick() => {
-                    sink.send(Message::Ping(Vec::new().into())).await?;
-                }
             }
         };
+        writer.abort();
         self.hub.unregister_connection(conn_id);
         self.set_status(name, |s| {
             s.connected = false;

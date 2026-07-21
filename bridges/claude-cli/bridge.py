@@ -1447,7 +1447,14 @@ class Bridge:
         backoff = 1.0
         while True:
             try:
-                async with websockets.connect(self.url, max_size=64 * 1024 * 1024) as ws:
+                # ping_timeout: the library's 20s default kills healthy
+                # connections whenever the hub is slow to pong (its agent
+                # socket handler can sit in a large send or blocking store
+                # work and not read pings for a while). 60s rides those
+                # stalls out; genuinely dead links still get reaped.
+                async with websockets.connect(
+                    self.url, max_size=64 * 1024 * 1024, ping_timeout=60
+                ) as ws:
                     log("connected, registering agent")
                     await ws.send(json.dumps({
                         "type": "hello",
