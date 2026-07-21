@@ -835,6 +835,9 @@ a.btn { text-decoration: none; }
 
 /* ---------- link previews (meta.unfurls) ---------- */
 .ago-unfurls { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+/* The card is an <a> inside .bubble; out-specify `.bubble a` so the card
+   reads as a card, not as underlined link text. */
+.bubble a.ago-unfurl { text-decoration: none; color: var(--text); }
 .ago-unfurl {
   display: flex; gap: 12px; align-items: flex-start; max-width: 480px;
   padding: 9px 12px; border-left: 3px solid var(--border-strong);
