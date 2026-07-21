@@ -483,11 +483,13 @@ export default function ChannelScreen() {
           renderItem={renderRow}
           keyExtractor={(item) => (item.kind === "msg" ? String(item.m.id) : "divider")}
           // Chat layout: render anchored to the bottom, stick to it while
-          // the viewer is near it, and keep the viewport stable when older
-          // pages prepend at the top.
+          // the viewer is at it, and keep the viewport stable when older
+          // pages prepend at the top. The threshold is deliberately tight:
+          // anything bigger lets an incoming message drag a viewer who has
+          // just started scrolling up back down to the bottom.
           maintainVisibleContentPosition={{
             startRenderingFromBottom: true,
-            autoscrollToBottomThreshold: 0.15,
+            autoscrollToBottomThreshold: 0.05,
           }}
           onStartReached={() => {
             if (messages.hasNextPage && !messages.isFetchingNextPage) void messages.fetchNextPage();
@@ -500,8 +502,11 @@ export default function ChannelScreen() {
             setShowJump(!near);
           }}
           scrollEventThrottle={64}
+          // Mounted whenever older history exists, not just mid-fetch:
+          // toggling it per fetch changes the content height at the top
+          // right as the user scrolls up, which reads as a jump.
           ListHeaderComponent={
-            messages.isFetchingNextPage ? (
+            messages.hasNextPage ? (
               <ActivityIndicator color={colors.dim} style={{ paddingVertical: 14 }} />
             ) : null
           }
