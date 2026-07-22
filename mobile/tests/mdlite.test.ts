@@ -1,4 +1,4 @@
-import { parseInline, parseMd } from "../src/lib/mdlite";
+import { parseInline, parseMd } from "@agora/core";
 
 describe("parseInline", () => {
   it("passes plain text through", () => {

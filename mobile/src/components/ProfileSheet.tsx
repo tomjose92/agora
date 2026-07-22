@@ -6,9 +6,9 @@
 
 import React from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { useAgents, useUsers } from "../api/queries";
-import type { Message } from "../api/types";
-import { fmtTs } from "../lib/format";
+import { useAgents, useUsers } from "@agora/core";
+import type { Message } from "@agora/core";
+import { fmtTs } from "@agora/core";
 import { colors } from "../lib/theme";
 import { AgentAvatar } from "./AgentAvatar";
 

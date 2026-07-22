@@ -26,18 +26,18 @@ import {
   useMe,
   useSearch,
   useSearchMore,
-} from "../../src/api/queries";
+} from "@agora/core";
 import type {
   Group,
   SearchChannelHit,
   SearchGroupHit,
   SearchMessageHit,
-} from "../../src/api/types";
+} from "@agora/core";
 import { Attachments } from "../../src/components/Attachments";
 import { Icon } from "../../src/components/Icon";
 import { useSession } from "../../src/state/session";
-import type { Session } from "../../src/api/client";
-import { fmtTs } from "../../src/lib/format";
+import type { Session } from "@agora/core";
+import { fmtTs } from "@agora/core";
 import { colors } from "../../src/lib/theme";
 
 /** Value that lags `value` by `ms` — keeps /api/search off the hot path

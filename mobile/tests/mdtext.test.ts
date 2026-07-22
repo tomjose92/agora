@@ -12,7 +12,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { ScrollView, StyleSheet } from "react-native";
 import { columnWidths, MdText } from "../src/components/MdText";
-import { parseInline, type Span } from "../src/lib/mdlite";
+import { parseInline, type Span } from "@agora/core";
 
 const TABLE = "| Category | Transactions | USD |\n|---|---|---|\n| PAI ATM | 3 | $159.00 |";
 

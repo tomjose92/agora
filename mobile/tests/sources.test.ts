@@ -1,7 +1,7 @@
 /* Same stub as messageitem.test.ts: lucide ships untransformed ESM. */
 jest.mock("lucide-react-native", () => new Proxy({}, { get: () => () => null }));
 
-import type { Message } from "../src/api/types";
+import type { Message } from "@agora/core";
 import { hostOf, visibleText } from "../src/components/Sources";
 
 function msg(text: string, meta?: Message["meta"]): Message {

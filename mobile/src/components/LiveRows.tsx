@@ -4,7 +4,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { Animated, StyleSheet, Text, View } from "react-native";
-import type { ProgressEvent, TypingEvent } from "../api/types";
+import type { ProgressEvent, TypingEvent } from "@agora/core";
 import { colors } from "../lib/theme";
 
 function Blink({ children }: { children: React.ReactNode }) {

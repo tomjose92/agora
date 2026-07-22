@@ -24,7 +24,8 @@ import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import { Headphones, Maximize2, Minimize2, Star, Trash2, Volume2 } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
-import { keys } from "../../../../src/api/keys";
+import { keys } from "@agora/core";
+import { useSendVoice } from "../../../../src/api/voice";
 import {
   flattenMessages,
   useChannelAgents,
@@ -35,11 +36,10 @@ import {
   useMessage,
   useMessages,
   useSendMessage,
-  useSendVoice,
   useStarMessage,
   useStars,
-} from "../../../../src/api/queries";
-import type { Message, ThreadRow } from "../../../../src/api/types";
+} from "@agora/core";
+import type { Message, ThreadRow } from "@agora/core";
 import { Composer, type MentionCandidate } from "../../../../src/components/Composer";
 import { EmojiPicker } from "../../../../src/components/EmojiPicker";
 import { Icon } from "../../../../src/components/Icon";
@@ -57,11 +57,11 @@ import {
   stopSpeech,
 } from "../../../../src/lib/speech";
 import { colors } from "../../../../src/lib/theme";
-import { threadAddressKey } from "../../../../src/state/addressed";
-import { useChannelLive } from "../../../../src/state/live";
+import { threadAddressKey } from "@agora/core";
+import { useChannelLive } from "@agora/core";
 import { usePrefs } from "../../../../src/state/prefs";
 import { useSession } from "../../../../src/state/session";
-import { tldrOf, useTldrView } from "../../../../src/state/tldr";
+import { tldrOf, useTldrView } from "@agora/core";
 
 type Row = { kind: "root"; m: Message } | { kind: "msg"; m: Message };
 

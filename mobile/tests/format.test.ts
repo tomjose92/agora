@@ -1,4 +1,4 @@
-import { fmtSize, slugify } from "../src/lib/format";
+import { fmtSize, slugify } from "@agora/core";
 
 describe("slugify", () => {
   it("lowercases and dashes non-alphanumerics", () => {

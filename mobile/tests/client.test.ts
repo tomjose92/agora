@@ -5,7 +5,7 @@ import {
   originOf,
   wsUrl,
   fileUrl,
-} from "../src/api/client";
+} from "@agora/core";
 
 describe("normalizeBaseUrl", () => {
   it("defaults LAN/loopback hosts to http", () => {

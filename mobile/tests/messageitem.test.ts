@@ -14,8 +14,9 @@ import { ScrollView, StyleSheet } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MessageItem } from "../src/components/MessageItem";
 import { useSession } from "../src/state/session";
-import type { Message } from "../src/api/types";
-import type { Session } from "../src/api/client";
+import { ApiClient, ApiProvider } from "@agora/core";
+import type { Message } from "@agora/core";
+import type { Session } from "@agora/core";
 
 const session: Session = { baseUrl: "http://test", token: "t" };
 
@@ -37,7 +38,6 @@ function message(text: string): Message {
 }
 
 beforeAll(() => {
-  // useSelectOption (rendered by every MessageItem) needs a signed-in ApiClient.
   useSession.setState({ status: "signedIn", session });
 });
 
@@ -48,7 +48,13 @@ function render(m: Message, onLongPress?: (msg: Message) => void) {
       React.createElement(
         QueryClientProvider,
         { client: new QueryClient() },
-        React.createElement(MessageItem, { session, message: m, onLongPress }),
+        // useSelectOption/useUpdateFormState (rendered by every MessageItem)
+        // read the client from @agora/core's ApiProvider.
+        React.createElement(
+          ApiProvider,
+          { client: new ApiClient(session) },
+          React.createElement(MessageItem, { session, message: m, onLongPress }),
+        ),
       ),
     );
   });

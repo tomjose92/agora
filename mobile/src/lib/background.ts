@@ -9,7 +9,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as SecureStore from "expo-secure-store";
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundTask from "expo-background-task";
-import type { Group } from "../api/types";
+import type { Group } from "@agora/core";
 import { KEY_TOKEN, KEY_URL } from "../state/session";
 import { notifyUnreadChannel } from "./notifications";
 import {
@@ -17,7 +17,7 @@ import {
   snapshotOf,
   unreadChannels,
   type UnreadSnapshot,
-} from "./unread";
+} from "@agora/core";
 
 const TASK_NAME = "agora-unread-poll";
 const SNAPSHOT_FILE = `${FileSystem.documentDirectory ?? ""}unread-snapshot.json`;

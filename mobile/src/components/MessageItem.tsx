@@ -5,13 +5,13 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Pin, Star } from "lucide-react-native";
-import type { Session } from "../api/client";
-import { useSelectOption } from "../api/queries";
-import type { Message } from "../api/types";
-import { fmtTs } from "../lib/format";
+import type { Session } from "@agora/core";
+import { useSelectOption } from "@agora/core";
+import type { Message } from "@agora/core";
+import { fmtTs } from "@agora/core";
 import { colors } from "../lib/theme";
 import { useSession } from "../state/session";
-import { tldrOf, useTldrView } from "../state/tldr";
+import { tldrOf, useTldrView } from "@agora/core";
 import { AgentAvatar } from "./AgentAvatar";
 import { Attachments } from "./Attachments";
 import { Icon } from "./Icon";

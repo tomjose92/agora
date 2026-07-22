@@ -18,20 +18,20 @@ import {
 import * as Application from "expo-application";
 import { Stack } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { keys } from "../../src/api/keys";
+import { keys, useApi } from "@agora/core";
 import {
   useConnectionMutations,
   useConnections,
   usePairingMutations,
   usePairingTokens,
-} from "../../src/api/queries";
-import type { Me } from "../../src/api/types";
+} from "@agora/core";
+import type { Me } from "@agora/core";
 import { ArmedButton } from "../../src/components/ArmedButton";
 import { toast, toastErr } from "../../src/components/Toast";
 import { compareVersions, lookupStoreVersion } from "../../src/lib/appVersion";
-import { fmtTs } from "../../src/lib/format";
+import { fmtTs } from "@agora/core";
 import { colors, mono } from "../../src/lib/theme";
-import { useApi, useSession } from "../../src/state/session";
+import { useSession } from "../../src/state/session";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

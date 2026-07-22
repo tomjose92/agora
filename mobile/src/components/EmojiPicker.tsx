@@ -1,11 +1,11 @@
-/* Emoji picker sheet: the curated Unicode set from src/lib/emoji.ts with
+/* Emoji picker sheet: the curated Unicode set from @agora/core with
    keyword search and a persisted "recently used" row (usePrefs). Used to
    pick a reaction from the message long-press sheet; the caller decides
    whether a pick closes the sheet. */
 
 import React, { useMemo, useState } from "react";
 import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { EMOJI_CATEGORIES, EmojiEntry } from "../lib/emoji";
+import { EMOJI_CATEGORIES, EmojiEntry } from "@agora/core";
 import { colors } from "../lib/theme";
 import { usePrefs } from "../state/prefs";
 

@@ -3,7 +3,7 @@
    the live voice session. A ten-line emitter beats threading callbacks
    through the router. */
 
-import type { Message } from "../api/types";
+import type { Message } from "@agora/core";
 
 type Listener = (m: Message) => void;
 

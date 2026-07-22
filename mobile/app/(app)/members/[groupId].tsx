@@ -15,8 +15,8 @@ import {
   useMembers,
   useRemoveMember,
   useUsers,
-} from "../../../src/api/queries";
-import type { AgentInfo, Member, UserInfo } from "../../../src/api/types";
+} from "@agora/core";
+import type { AgentInfo, Member, UserInfo } from "@agora/core";
 import { AgentAvatar } from "../../../src/components/AgentAvatar";
 import { ArmedButton } from "../../../src/components/ArmedButton";
 import { Icon } from "../../../src/components/Icon";

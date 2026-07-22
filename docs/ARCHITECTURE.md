@@ -44,8 +44,7 @@ One Rust core, three clients (see the repo layout table in the
   entry copied to `ui/index.html` (both committed), so the existing static
   serving makes it the default at `/` with no server changes; the legacy
   vanilla UI stays reachable at `/vanilla/` as a fallback until it is
-  retired. `mobile/` can adopt `@agora/core` in a follow-up to end its
-  parallel reimplementation.
+  retired.
 
 ### Retiring the vanilla UI (the checklist for whoever does it)
 
@@ -84,11 +83,12 @@ entangled in non-obvious ways — work through this list:
    list above, and the "Web UI" conventions bullet in `AGENTS.md`.
 
 Prerequisite judgment call, not a hard blocker: `/` has been the default
-long enough that no one needs the fallback, and (ideally) `mobile/` has
-adopted `@agora/core` so the React web app is no longer the only consumer
-exercising the shared core.
+long enough that no one needs the fallback. (`mobile/` already runs on
+`@agora/core`, so the shared core is exercised by both clients.)
 - **`mobile/`** — React Native (Expo) iOS/Android app, a pure client of a
-  hosted `agora-server`.
+  hosted `agora-server`. Runs on `@agora/core` (a `file:` dependency plus
+  Metro `watchFolders`) for the API client, query hooks, WS reducer, stores,
+  and helpers — one client core serves web and mobile.
 - **`bridges/`** — dial-in clients for the [agent protocol](PROTOCOL.md).
 
 ## Core modules (`crates/agora-core/src`)
@@ -114,9 +114,9 @@ exercising the shared core.
   `session_version` (bumping it revokes their sessions), Google OAuth state
   encoding, and Apple JWT verification. See [AUTH.md](AUTH.md) for the flows.
 
-The mobile client keeps its own split: react-query for server data
-(`src/api/queries.ts`), zustand for the session (`src/state/session.ts`), and
-the keychain for credentials.
+The mobile client keeps its own split: react-query for server data (the
+hooks live in `@agora/core`), zustand for the session
+(`src/state/session.ts`), and the keychain for credentials.
 
 ## Desktop: embedded or remote server
 

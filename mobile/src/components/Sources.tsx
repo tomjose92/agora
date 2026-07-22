@@ -9,7 +9,7 @@ import React from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ChevronLeft, ChevronRight, ExternalLink, Link2, X } from "lucide-react-native";
 import { Image } from "expo-image";
-import type { LinkPreview, Message } from "../api/types";
+import type { LinkPreview, Message } from "@agora/core";
 import { openLink } from "../lib/openLink";
 import { colors, mono } from "../lib/theme";
 import { Icon } from "./Icon";

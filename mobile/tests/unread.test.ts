@@ -7,8 +7,8 @@ import {
   totalThreadUnread,
   totalUnread,
   unreadChannels,
-} from "../src/lib/unread";
-import type { Group, ThreadRow } from "../src/api/types";
+} from "@agora/core";
+import type { Group, ThreadRow } from "@agora/core";
 
 function groups(): Group[] {
   return [

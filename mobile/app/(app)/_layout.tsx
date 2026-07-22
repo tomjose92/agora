@@ -2,9 +2,10 @@
    whole session, registers Expo push (with unread-poll fallback), and wires
    notification-tap routing plus the unread app badge. */
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { Redirect, Stack, router, type Href } from "expo-router";
 import * as Notifications from "expo-notifications";
+import { ApiClient, ApiProvider } from "@agora/core";
 import { useSession } from "../../src/state/session";
 import { useAgoraSocket } from "../../src/ws/useAgoraSocket";
 import { emitAgentMessage } from "../../src/lib/agentBus";
@@ -19,8 +20,8 @@ import {
   saveUnreadSnapshot,
   unregisterBackgroundPolling,
 } from "../../src/lib/background";
-import { notificationTarget, totalThreadUnread, totalUnread } from "../../src/lib/unread";
-import { useGroups, useThreads } from "../../src/api/queries";
+import { notificationTarget, totalThreadUnread, totalUnread } from "@agora/core";
+import { useGroups, useThreads } from "@agora/core";
 import { headerBack } from "../../src/lib/headerItems";
 import { colors } from "../../src/lib/theme";
 
@@ -87,10 +88,10 @@ export default function AppLayout() {
   }, [status, session]);
 
   if (status === "loading") return null;
-  if (status !== "signedIn") return <Redirect href="/connect" />;
+  if (status !== "signedIn" || !session) return <Redirect href="/connect" />;
 
   return (
-    <>
+    <ApiWrapped session={session}>
       <LiveSocket />
       <UnreadSync />
       <NotificationTapRouter />
@@ -104,6 +105,19 @@ export default function AppLayout() {
           ...headerBack(),
         }}
       />
-    </>
+    </ApiWrapped>
   );
+}
+
+/* One memoized ApiClient per session, provided via @agora/core's context —
+   every query hook under the signed-in shell reads it with useApi(). */
+function ApiWrapped({ session, children }: {
+  session: { baseUrl: string; token: string };
+  children: React.ReactNode;
+}) {
+  const client = useMemo(
+    () => new ApiClient(session),
+    [session.baseUrl, session.token], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  return <ApiProvider client={client}>{children}</ApiProvider>;
 }

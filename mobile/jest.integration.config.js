@@ -3,6 +3,9 @@
 module.exports = {
   testEnvironment: "node",
   testMatch: ["**/tests/integration.test.ts"],
+  moduleNameMapper: {
+    "^@agora/core$": "<rootDir>/../packages/core/src/index.ts",
+  },
   transform: {
     "^.+\\.(t|j)sx?$": [
       "babel-jest",

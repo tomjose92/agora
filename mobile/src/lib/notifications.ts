@@ -7,9 +7,9 @@ import { AppState, Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
-import { ApiClient, type Session } from "../api/client";
-import type { Message } from "../api/types";
-import type { ChannelUnread } from "./unread";
+import { ApiClient, type Session } from "@agora/core";
+import type { Message } from "@agora/core";
+import type { ChannelUnread } from "@agora/core";
 
 const KEY_PUSH_TOKEN = "agora_push_token";
 

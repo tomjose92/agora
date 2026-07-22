@@ -4,7 +4,7 @@
    screen, and two screens must never talk over each other. */
 
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from "expo-audio";
-import { authHeaders, type Session } from "../api/client";
+import { authHeaders, type Session } from "@agora/core";
 
 let queue: { session: Session; messageId: number }[] = [];
 let player: AudioPlayer | null = null;

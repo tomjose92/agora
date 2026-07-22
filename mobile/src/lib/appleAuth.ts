@@ -5,7 +5,7 @@
    session token a Google sign-in mints. */
 
 import * as AppleAuthentication from "expo-apple-authentication";
-import { parseError } from "../api/client";
+import { parseError } from "@agora/core";
 
 /** True when this build can present the native sheet: iOS 13+ with the
     Sign in with Apple entitlement. Free Personal Team builds without that
