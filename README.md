@@ -33,7 +33,8 @@ email/invite-link admission, and Google/Apple sign-in. The `admin_key` in
 | `crates/agora-core` | The embeddable heart: SQLite store, message hub, HTTP+WS API (axum), outbound connection manager. |
 | `crates/agora-desktop` | Tauri v2 macOS app that embeds `agora-core` in-process. |
 | `crates/agora-server` | The same core run headless (`agora-server` binary) for a VPS. |
-| `ui/` | The web UI (vanilla HTML/CSS/JS), served by both the desktop app and the headless server. |
+| `ui/` | The static web root served by both the desktop app and the headless server: `/` is the React app, `/vanilla/` the legacy vanilla UI. |
+| `web/` + `packages/core` | The React web UI (full parity incl. voice) on a shared TypeScript client core, built into `ui/`. |
 | `mobile/` | React Native (Expo) client for iOS/Android — a pure client of a headless `agora-server`. See [`mobile/README.md`](mobile/README.md). |
 | `bridges/` | Dial-in bridge clients for the agent protocol. [`bridges/claude-cli`](bridges/claude-cli/README.md) drives local Claude Code sessions from a channel. |
 

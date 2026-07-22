@@ -1,0 +1,19 @@
+/* @agora/core — the shared client "brain": API client + types, TanStack
+   Query hooks, the WS event reducer, zustand stores, and pure helpers.
+   Consumed by web/ today; mobile/ adopts it in a follow-up. Single barrel
+   entry (no exports-map subpaths) to keep Metro resolution trivial later. */
+
+export * from "./api/client";
+export * from "./api/types";
+export * from "./api/keys";
+export * from "./api/context";
+export * from "./api/queries";
+export * from "./ws/reducer";
+export * from "./state/live";
+export * from "./state/tldr";
+export * from "./state/addressed";
+export * from "./lib/mdlite";
+export * from "./lib/mdliteHtml";
+export * from "./lib/format";
+export * from "./lib/unread";
+export * from "./lib/emoji";

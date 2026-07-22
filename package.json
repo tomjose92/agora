@@ -1,0 +1,13 @@
+{
+  "name": "agora-js",
+  "private": true,
+  "workspaces": [
+    "packages/core",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build -w web",
+    "test": "npm run test -w packages/core",
+    "typecheck": "npm run typecheck -w packages/core && npm run typecheck -w web"
+  }
+}
