@@ -2464,7 +2464,7 @@ function agoCloseThread() {
   // Discard a recording — and end a live session — scoped to this thread.
   if (_agoRec && _agoRec.threadId != null) agoVoiceCancel();
   if (_agoLive && _agoLive.threadId != null) agoLiveStop();
-  if (_agoEmojiOpen && _agoEmojiOpen !== "main") agoEmojiClose();
+  if (_agoReactFor != null) agoEmojiClose();
   _agoThreadRoot = null;
   _agoThreadMsgs = [];
   agoSetView("main");
