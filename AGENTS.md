@@ -53,7 +53,8 @@ npm ci
 npm test                        # @agora/core vitest (incl. mdlite/emoji parity)
 npm run typecheck
 npm run build                   # web/ -> ui/app2/ (COMMIT the result)
-node web/e2e/parity.mjs /app2/  # Playwright parity flows (AGORA_TOKEN=<key>)
+node web/e2e/parity.mjs /         # Playwright parity flows, React (AGORA_TOKEN=<key>)
+node web/e2e/parity.mjs /vanilla/ # same flows against the legacy UI
 ```
 
 The vanilla UI (served at `/vanilla/`) needs no build — edit `ui/*.js` and
@@ -97,7 +98,8 @@ starts an EAS production iOS build with TestFlight auto-submit (needs the
 **When to bump what** — the desktop binary bundles `agora-core` *and*
 `ui/`, so:
 
-- Changes under `crates/**`, `ui/**`, or `Cargo.toml`/`Cargo.lock` →
+- Changes under `crates/**`, `ui/**` (including the generated `ui/app2/`
+  from `web/`/`packages/core` changes), or `Cargo.toml`/`Cargo.lock` →
   bump **desktop** (embedded-mode installs only get the change via a new
   binary; hosted servers additionally need a redeploy).
 - Changes under `mobile/**` that should reach TestFlight → bump **mobile**.
@@ -157,10 +159,18 @@ endpoint must not break:
   sessions with `session_headers`). Never hit a real network/API in tests.
   Mirror new behavior in the matching `#[cfg(test)]` module, and in
   `mobile/tests/` for mobile logic.
-- **Web UI**: vanilla JS, global functions wired via `onclick` strings,
-  `esc()` everything interpolated into HTML. State lives in module-level
-  `_ago*` variables; redraws are innerHTML rebuilds that must preserve
-  scroll where users notice (see `agoDrawSide`).
+- **Web UI (React, `web/` — the default at `/`)**: components mirror the
+  vanilla markup/classes so `ui/style.css` applies unchanged; data flows
+  through `@agora/core` (react-query hooks + the WS reducer), UI state
+  through small zustand stores persisted to the same localStorage keys as
+  the vanilla UI. Rebuild `ui/app2/` (`npm run build`) in any PR touching
+  `web/` or `packages/core`, and keep `web/e2e/parity.mjs` green.
+- **Web UI (legacy vanilla, `ui/*.js` — served at `/vanilla/`)**: vanilla
+  JS, global functions wired via `onclick` strings, `esc()` everything
+  interpolated into HTML. State lives in module-level `_ago*` variables;
+  redraws are innerHTML rebuilds that must preserve scroll where users
+  notice (see `agoDrawSide`). Kept as a fallback — see "Retiring the
+  vanilla UI" in docs/ARCHITECTURE.md for the eventual removal checklist.
 - **Mobile**: follow the existing screen patterns — react-query hooks in
   `src/api/queries.ts`, admin-only UI gated on `instanceAdmin` from the
   session store, `toastErr` for mutation failures.
