@@ -1,5 +1,5 @@
-/* Shared audio plumbing for the voice features — ports of agoRecMime,
-   agoPlayer/agoUnlockPlayback/agoPlaySpeech, and the /voice upload path.
+/* Shared audio plumbing for the voice features: recorder mime picking, the
+   reusable TTS player with its autoplay unlock, and the /voice upload.
    Server side: POST /api/channels/{id}/voice (STT) and
    GET /api/messages/{id}/speech (TTS); both need OPENAI_API_KEY there. */
 

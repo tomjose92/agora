@@ -1,5 +1,4 @@
-/* Agent-offered choice buttons (meta.options) and their resolved state —
-   same markup as agoOptionsHTML. */
+/* Agent-offered choice buttons (meta.options) and their resolved state. */
 
 import { useSelectOption, type Message } from "@agora/core";
 

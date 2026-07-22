@@ -1,6 +1,6 @@
 /* Fixed-position reaction picker on document.body, anchored to the react
-   button (above when there's headroom, below otherwise) — same markup and
-   the same agoEmojiRecent localStorage recents as the vanilla picker. */
+   button (above when there's headroom, below otherwise), with a
+   "recently used" row persisted under the agoEmojiRecent localStorage key. */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -11,7 +11,7 @@ const RECENT_MAX = 24;
 const VALID = new Set(EMOJI_CATEGORIES.flatMap(c => c.emoji.map(p => p[0])));
 
 /* Stored recents are untrusted (any tab can write the key): keep only
-   curated emoji. Same key + shape as the vanilla UI. */
+   curated emoji. */
 function loadRecent(): string[] {
   try {
     const list = JSON.parse(localStorage.getItem("agoEmojiRecent") || "null");

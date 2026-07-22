@@ -1,4 +1,4 @@
-/* Voice-note recorder (🎙 in the composers) — port of agoVoice*: click to
+/* Voice-note recorder (🎙 in the composers): click to
    record, click again to stop-and-send; the audio is uploaded to /voice,
    transcribed server-side, and posted as a normal text message. Nothing is
    stored as audio. One recording at a time across all composers. */

@@ -1,5 +1,4 @@
-/* Pure cache transforms for incoming /ws events, mirroring what the desktop
-   UI's handlers do imperatively in the retired vanilla agora.js. The driver (applyWsEvent)
+/* Pure cache transforms for incoming /ws events. The driver (applyWsEvent)
    feeds them into the TanStack Query cache; the transforms themselves are
    plain functions so they can be unit-tested against recorded frames. */
 

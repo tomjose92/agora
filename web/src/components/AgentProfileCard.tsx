@@ -1,5 +1,5 @@
 /* Agent profile overlay: avatar + everything /api/agents knows about the
-   agent (port of agoShowAgentProfile). */
+   agent. */
 
 import { useAgents } from "@agora/core";
 import { Icon } from "../lib/icons";

@@ -1,6 +1,5 @@
 /* Root: session → ApiProvider → authed layout (topbar + agora panes).
-   The auth gate shows when there is no token or /api/me rejects it, exactly
-   like the vanilla boot() path. */
+   The auth gate shows when there is no token or /api/me rejects it. */
 
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";

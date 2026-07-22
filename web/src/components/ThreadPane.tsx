@@ -1,8 +1,7 @@
 /* Thread side pane (.agora-thread) — the React port of agoDrawThread.
    <ThreadLog key={rootId}> remounts per thread: the mount effect snaps to
    the bottom (fresh open), while same-thread updates preserve the reader's
-   place unless they're already at the bottom — the behavior the vanilla UI
-   implements by hand with data-root/sameThread/wasAtBottom. */
+   place unless they're already at the bottom. */
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { flashMessage, useJump } from "../state/jump";

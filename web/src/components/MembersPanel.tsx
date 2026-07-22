@@ -1,5 +1,4 @@
-/* Members pane (.agora-members-pane) — the React port of agoDrawMembers:
-   one row per person, agents collapsed to one row with scope tags, and the
+/* Members pane (.agora-members-pane): one row per person, agents collapsed to one row with scope tags, and the
    admin add-person / add-agent pickers. */
 
 import { useState } from "react";

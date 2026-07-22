@@ -1,7 +1,5 @@
-/* Threads inbox (.ago-inbox-list): every thread the user participates in —
-   the React port of agoDrawInbox/agoThreadRowHTML. React keeps the scroll
-   container alive across renders, so the vanilla scroll-preservation
-   workaround isn't needed. */
+/* Threads inbox (.ago-inbox-list): every thread the user participates in,
+   newest first, with rename and two-step remove on each row. */
 
 import { useQueryClient } from "@tanstack/react-query";
 import {

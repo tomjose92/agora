@@ -1,6 +1,6 @@
 /* Voice UI: the composer mic button (record → stop-and-send / discard),
    the channel-header speak-aloud and Live buttons, and the live-session
-   strip — same classes as the vanilla agoVoiceBtnHTML/agoLiveStripHTML. */
+   strip. */
 
 import { useEffect, useState } from "react";
 import { Icon } from "../lib/icons";

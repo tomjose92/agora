@@ -1,6 +1,5 @@
-/* Sign-in card — same markup/ids as the vanilla authGate() in the retired vanilla shim.js so
-   style.css and the parity flows apply unchanged. Google leads when the
-   server offers it; the admin key is always available. */
+/* Sign-in card. Google leads when the server offers it; the admin key is
+   always available. */
 
 import { useEffect, useRef, useState } from "react";
 import { AUTH_ERROR, AUTH_ERROR_TEXT, JOIN_TOKEN, setSessionToken } from "../lib/auth";

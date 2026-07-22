@@ -1,4 +1,4 @@
-/* Group overview page — the React port of agoDrawGroupPage: channel cards
+/* Group overview page: channel cards
    with unread badges and eye toggles, hide/show group, admin delete. */
 
 import {

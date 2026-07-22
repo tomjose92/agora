@@ -52,7 +52,7 @@ export function iconSvg(name: string, cls?: string): string {
   return `<svg class="ico${cls ? " " + cls : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
 
-/** React wrapper emitting the same markup as vanilla icon(). */
+/** React wrapper for one named icon. */
 export function Icon({ name, cls }: { name: string; cls?: string }) {
   const body = ICONS[name];
   if (!body) return null;

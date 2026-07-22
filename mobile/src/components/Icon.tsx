@@ -1,5 +1,5 @@
 /* Themed wrapper around lucide-react-native, matching the web UI's icon
-   style (the retired vanilla icons.js): stroke 1.8, round caps, dim by default. Pass the
+   style: stroke 1.8, round caps, dim by default. Pass the
    Lucide component itself so the bundle only carries the icons we use:
    <Icon icon={Mic} size={20} color={colors.text} /> */
 

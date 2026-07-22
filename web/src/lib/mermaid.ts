@@ -1,6 +1,6 @@
-/* Lazy mermaid rendering — a close port of agoLoadMermaid/agoRenderMermaid
-   from the retired vanilla agora.js, sharing the vendored /mermaid.min.js (root-absolute: a
-   relative path would 404 under /app2/). Document-wide and self-recursing:
+/* Lazy mermaid rendering over the vendored /mermaid.min.js, loaded on
+   demand the first time a diagram is on screen. Document-wide and
+   self-recursing:
    render results are cached by graph source ("" = known-bad) and re-applied
    whenever a caller kicks the runner, so late mounts and re-renders always
    converge. */

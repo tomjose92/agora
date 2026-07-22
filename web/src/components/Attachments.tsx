@@ -1,4 +1,4 @@
-/* Attachment strip under a bubble — same markup as agoAttachmentsHTML. */
+/* Attachment strip under a bubble: inline images and download chips. */
 
 import type { Message } from "@agora/core";
 import { fileUrl, humanSize, BROWSER_IMAGE } from "../lib/files";

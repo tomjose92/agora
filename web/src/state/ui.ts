@@ -1,9 +1,7 @@
 /* Which pane the main column shows, and which overlay panel is open.
-   Selection persists to the SAME localStorage keys as the vanilla UI with
-   byte-compatible shapes (agora_sel = {g,c}; agora_open = array of expanded
-   group ids, or null meaning "just the selected group"; agora_thread =
-   "expanded"/"open"; agora_unreads_only = "1"/"0"), so a session carries
-   across the two UIs without clobbering either. */
+   Selection persists to localStorage: agora_sel = {g,c}; agora_open = an
+   array of expanded group ids, or null meaning "just the selected group";
+   agora_thread = "expanded"/"open"; agora_unreads_only = "1"/"0". */
 
 import { create } from "zustand";
 import { voiceCancel } from "./voiceRec";
@@ -79,7 +77,7 @@ export const useUiState = create<UiState>((set, get) => ({
   selectChannel: (g, c) => set((s) => {
     if (s.sel.c !== c || s.sel.g !== g) {
       // A recording is tied to the channel it started in; so are a live
-      // session and the speak queue (mirrors agoSelectChannel).
+      // session and the speak queue.
       voiceCancel();
       liveStop();
       speakStop();

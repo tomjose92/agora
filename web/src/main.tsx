@@ -5,8 +5,7 @@ import { initToken } from "./lib/auth";
 import { App } from "./App";
 import "./styles.css";
 
-// Same intake order as the vanilla UI: consume ?token= / auth fragments
-// before anything renders or fetches.
+// Consume ?token= and the auth fragments before anything renders or fetches.
 initToken();
 
 const queryClient = new QueryClient({

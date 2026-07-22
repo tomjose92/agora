@@ -39,7 +39,7 @@ export function AgoraLayout() {
   });
   const toggleReaction = useToggleReactionById();
 
-  // Default selection once groups load (mirrors agoLoadGroups).
+  // Default selection once groups load: first visible group + channel.
   useEffect(() => {
     if (!groups || !groups.length) return;
     const selGroup = groups.find(g => g.id === ui.sel.g);

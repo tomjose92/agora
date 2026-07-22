@@ -1,5 +1,5 @@
-/* Live voice mode (hands-free two-way conversation) — port of the agoLive*
-   family. A browser-side cascade: WebAudio VAD endpoints each utterance
+/* Live voice mode (hands-free two-way conversation). A browser-side
+   cascade: WebAudio VAD endpoints each utterance
    (speech starts above an RMS threshold, ends after a silence gap), the
    clip goes to /voice?live=true, and agent replies come back as normal
    messages that get auto-spoken via /speech. Sustained speech during
@@ -82,8 +82,8 @@ export function liveScopeActive(channelId: string | undefined, threadId: number 
   return !!s && s.channelId === channelId && s.threadId === (threadId ?? null);
 }
 
-// Turning 🔊 off mid-sentence also mutes a live session's playback (the
-// vanilla agoSpeakToggle behavior), wired here to avoid a circular import.
+// Turning 🔊 off mid-sentence also mutes a live session's playback;
+// wired here to avoid a circular import.
 useSpeak.subscribe((s, prev) => {
   if (prev.on && !s.on) stopPlayback();
 });

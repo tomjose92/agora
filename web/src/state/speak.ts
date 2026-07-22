@@ -1,7 +1,7 @@
 /* Speak-aloud (🔊): a personal page-level preference (localStorage
    "agora_speak", synced across tabs) — when on, agent replies are read
    aloud via /speech. The live session has its own playback; while one runs
-   this stays out of the way. Port of the agoSpeak* family. */
+   this stays out of the way. */
 
 import { create } from "zustand";
 import { fetchSpeechUrl, playSpeech, stopAudio, unlockPlayback } from "../lib/voice";

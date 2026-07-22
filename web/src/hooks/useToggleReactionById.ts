@@ -1,6 +1,5 @@
 /* Toggle a reaction knowing only the message id (the emoji picker's case):
-   find the message in the query caches, then flip my membership — the
-   React counterpart of agoToggleReaction/agoFindMessage. */
+   find the message in the query caches, then flip my membership. */
 
 import { useQueryClient } from "@tanstack/react-query";
 import {
