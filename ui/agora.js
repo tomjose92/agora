@@ -755,6 +755,10 @@ function agoThreadRowHTML(t) {
 }
 
 function agoDrawInbox(box) {
+  // Preserve scroll across full redraws (arming a delete, confirming it, or a
+  // live reply rebuilds the list via innerHTML, which would otherwise jump
+  // back to the top).
+  const prevTop = box.querySelector(".ago-inbox-list")?.scrollTop || 0;
   const rows = _agoThreads.map(agoThreadRowHTML).join("");
   box.innerHTML = `
     <div class="ago-head">
@@ -772,6 +776,8 @@ function agoDrawInbox(box) {
       || `<div class="empty"><div class="glyph">${icon("messages-square")}</div><div>No threads yet</div>
           <div class="hint">Threads you start or reply in show up here, with unread counts as replies land.</div></div>`}
     </div>`;
+  const list = box.querySelector(".ago-inbox-list");
+  if (list) list.scrollTop = prevTop;
 }
 
 /* ---------- sidebar (groups + channels) ---------- */
@@ -1146,6 +1152,9 @@ async function agoRenameThread(rootId) {
 function agoDrawGroupPage(box) {
   const g = agoSelGroup();
   if (!g) { _agoGroupPage = false; agoDrawMain(); return; }
+  // Preserve scroll across full redraws (eye toggles and delete confirms
+  // rebuild the page via innerHTML, which would otherwise jump to the top).
+  const prevTop = box.querySelector(".ago-inbox-list")?.scrollTop || 0;
   const admin = g.role === "admin" || isOwner();
   const armed = agoArmed("group:" + g.id);
   const desc = (g.description || "").trim();
@@ -1195,6 +1204,8 @@ function agoDrawGroupPage(box) {
             <div>No channels yet</div>
             <div class="hint">Add a channel from the sidebar to start chatting in ${esc(g.name)}.</div></div>`}
     </div>`;
+  const list = box.querySelector(".ago-inbox-list");
+  if (list) list.scrollTop = prevTop;
 }
 
 /* ---------- main column (messages + composer) ---------- */
@@ -2471,6 +2482,13 @@ function agoDrawThread() {
   const channel = agoSelChannel();
   const draft = (document.getElementById("ago-thread-msg") || {}).value || "";
   box.style.display = "";
+  // Redraws of an already-open thread (pin, react, delete) keep the reader's
+  // place; only opening a thread or being at the bottom snaps to the bottom.
+  const oldLog = document.getElementById("ago-thread-log");
+  const sameThread = oldLog && oldLog.dataset.root === String(_agoThreadRoot.id);
+  const wasAtBottom = oldLog
+    && oldLog.scrollTop + oldLog.clientHeight >= oldLog.scrollHeight - 40;
+  const prevTop = oldLog ? oldLog.scrollTop : 0;
   const focusCap = agoCaptureFormFocus(box);
   box.innerHTML = `
     <div class="ago-head">
@@ -2496,7 +2514,7 @@ function agoDrawThread() {
         <button class="btn sm ago-thread-close" onclick="agoCloseThread()">${icon("x")}</button>
       </div>
     </div>
-    <div class="ago-log ago-thread-log" id="ago-thread-log" onscroll="agoOnThreadScroll()">
+    <div class="ago-log ago-thread-log" id="ago-thread-log" data-root="${_agoThreadRoot.id}" onscroll="agoOnThreadScroll()">
       ${agoMsgHTML(_agoThreadRoot, true)}
       <div class="ago-thread-sep">${_agoThreadMsgs.length} repl${_agoThreadMsgs.length === 1 ? "y" : "ies"}</div>
       ${_agoThreadMsgs.map(m => agoMsgHTML(m, true)).join("")}
@@ -2520,7 +2538,7 @@ function agoDrawThread() {
   const input = document.getElementById("ago-thread-msg");
   if (input && draft) { input.value = draft; autoGrow(input); }
   const log = document.getElementById("ago-thread-log");
-  if (log) log.scrollTop = log.scrollHeight;
+  if (log) log.scrollTop = sameThread && !wasAtBottom ? prevTop : log.scrollHeight;
   agoDrawStatus();
   agoRenderMermaid();
 }
