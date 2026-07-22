@@ -39,7 +39,9 @@ cargo check --workspace
 # headless server
 cargo run -p agora-server -- --data-dir /tmp/agora-dev --ui-dir ui
 
-# mobile (from mobile/)
+# mobile (from mobile/) — run the ROOT `npm ci` first: mobile consumes
+# @agora/core as raw TS source, whose react types + babel helpers resolve
+# from the repo root's node_modules
 npm ci
 npx tsc --noEmit                # typecheck
 npx jest                        # unit tests

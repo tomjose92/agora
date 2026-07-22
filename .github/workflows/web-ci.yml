@@ -78,7 +78,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+      # Root install first: mobile consumes @agora/core as shipped TS source
+      # through a file: dep, and the package's react types + babel helpers
+      # resolve from the repo root's node_modules.
+      - run: npm ci
       - run: npm ci
         working-directory: mobile
       - run: npx tsc --noEmit
