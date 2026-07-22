@@ -1619,11 +1619,20 @@ async fn select_message_option(
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     require_message_visible(&state, &user, message_id)?;
-    let option_id = payload["option_id"].as_str().unwrap_or("").trim();
+    let option_id = payload["option_id"].as_str().unwrap_or("").trim().to_string();
     if option_id.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "option_id required"));
     }
-    match state.hub.select_option(message_id, option_id, &user.username) {
+    // SQLite write + fan-out: run on the blocking pool so a stalled commit
+    // (slow volume fsync) can't tie up the runtime workers and wedge every
+    // other request — this exact path froze production once.
+    let hub = Arc::clone(&state.hub);
+    let username = user.username.clone();
+    let result =
+        tokio::task::spawn_blocking(move || hub.select_option(message_id, &option_id, &username))
+            .await
+            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "select task failed"))?;
+    match result {
         Ok(message) => Ok(Json(message)),
         Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
         Err(msg) => Err(err(StatusCode::CONFLICT, msg)),
@@ -1643,12 +1652,19 @@ async fn update_message_form_state(
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     require_message_visible(&state, &user, message_id)?;
-    let field_id = payload["field_id"].as_str().unwrap_or("").trim();
+    let field_id = payload["field_id"].as_str().unwrap_or("").trim().to_string();
     if field_id.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "field_id required"));
     }
     let value = payload.get("value").cloned().unwrap_or(Value::Null);
-    match state.hub.update_form_field(message_id, field_id, &value) {
+    // See select_message_option: keep the store write off the runtime threads.
+    let hub = Arc::clone(&state.hub);
+    let result = tokio::task::spawn_blocking(move || {
+        hub.update_form_field(message_id, &field_id, &value)
+    })
+    .await
+    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "form task failed"))?;
+    match result {
         Ok(message) => Ok(Json(message)),
         Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
         Err(msg @ "Form already submitted") => Err(err(StatusCode::CONFLICT, msg)),
@@ -1667,11 +1683,18 @@ async fn submit_message_form(
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     require_message_visible(&state, &user, message_id)?;
-    let button_id = payload["button_id"].as_str().unwrap_or("").trim();
+    let button_id = payload["button_id"].as_str().unwrap_or("").trim().to_string();
     if button_id.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "button_id required"));
     }
-    match state.hub.submit_form(message_id, button_id, &user.username) {
+    // See select_message_option: keep the store write off the runtime threads.
+    let hub = Arc::clone(&state.hub);
+    let username = user.username.clone();
+    let result =
+        tokio::task::spawn_blocking(move || hub.submit_form(message_id, &button_id, &username))
+            .await
+            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "submit task failed"))?;
+    match result {
         Ok(message) => Ok(Json(message)),
         Err("Message not found") => Err(err(StatusCode::NOT_FOUND, "Unknown message")),
         Err(msg @ "Form already submitted") => Err(err(StatusCode::CONFLICT, msg)),
