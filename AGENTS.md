@@ -107,6 +107,12 @@ starts an EAS production iOS build with TestFlight auto-submit (needs the
   both; each workflow fires independently on merge.
 - Docs, `bridges/`, `scripts/`, CI-only changes → no bump.
 
+Separate from releases,
+[.github/workflows/web-ci.yml](.github/workflows/web-ci.yml) runs on every
+PR touching the JS stack: typecheck + `@agora/core` tests, a drift check
+that regenerates `ui/app2/`/`ui/index.html`/the emoji datasets and fails on
+any diff, and the Playwright parity suite against both `/` and `/vanilla/`.
+
 Convention: keep the bump in its own `chore(release): bump desktop to X.Y.Z
 and mobile to A.B.C` commit at the tip of the feature PR.
 
