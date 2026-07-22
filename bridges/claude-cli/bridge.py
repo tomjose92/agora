@@ -1498,9 +1498,73 @@ class Bridge:
             send_task.cancel()
 
 
+def load_env_file(path: Path, *, override: bool = False) -> int:
+    """Populate ``os.environ`` from a simple ``KEY=VALUE`` .env file.
+
+    A tiny, dependency-free parser (the bridge stays `pip install websockets`
+    only): blank lines and ``#`` comments are skipped, an optional leading
+    ``export `` is stripped, and matching single/double quotes around a value
+    are removed. By default a value already present in the real environment
+    wins — so ``AGORA_PAIRING_TOKEN=… python3 bridge.py`` still overrides the
+    file — and CLI flags win over both (argparse reads ``os.environ`` for its
+    defaults only after this runs). Returns how many keys were applied.
+    """
+    try:
+        raw = path.read_text()
+    except OSError:
+        return 0
+    applied = 0
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if override or key not in os.environ:
+            os.environ[key] = value
+            applied += 1
+    return applied
+
+
+def _env_file_from_argv(argv: list[str], default: Path) -> Path:
+    """Resolve which .env file to load before argparse runs.
+
+    Honors ``--env-file <path>`` / ``--env-file=<path>`` on the command line,
+    then ``AGORA_BRIDGE_ENV_FILE``, else falls back to ``default`` (.env next
+    to this script).
+    """
+    for i, tok in enumerate(argv):
+        if tok == "--env-file" and i + 1 < len(argv):
+            return Path(argv[i + 1]).expanduser()
+        if tok.startswith("--env-file="):
+            return Path(tok.split("=", 1)[1]).expanduser()
+    override = os.environ.get("AGORA_BRIDGE_ENV_FILE")
+    return Path(override).expanduser() if override else default
+
+
 def main() -> None:
-    default_state = Path(__file__).resolve().parent / "state.json"
+    script_dir = Path(__file__).resolve().parent
+    default_state = script_dir / "state.json"
+    # Load a .env before building the parser so every arg's os.environ-derived
+    # default can come from the file (real env vars and CLI flags still win).
+    env_file = _env_file_from_argv(sys.argv[1:], script_dir / ".env")
+    loaded = load_env_file(env_file)
+    if loaded:
+        log(f"loaded {loaded} setting(s) from {env_file}")
     ap = argparse.ArgumentParser(description="Claude CLI bridge for Agora")
+    ap.add_argument("--env-file", default=str(env_file),
+                    help="path to a KEY=VALUE .env file of bridge settings "
+                         "(default: .env beside this script; AGORA_BRIDGE_ENV_FILE "
+                         "overrides the path; real env vars and CLI flags win)")
     ap.add_argument("--url", default=os.environ.get("AGORA_URL", "ws://127.0.0.1:4470"),
                     help="Agora base URL (http(s)/ws(s); /agent/ws appended if missing)")
     ap.add_argument("--token", default=None,

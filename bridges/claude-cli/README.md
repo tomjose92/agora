@@ -25,6 +25,14 @@ agent, and forwards channel messages to `claude -p --resume <session>`.
      python3 bridges/claude-cli/bridge.py
    ```
 
+   Or, to avoid passing settings on the command line every time, copy
+   [`.env.example`](.env.example) to `.env` in this directory, fill it in, and
+   just run `python3 bridges/claude-cli/bridge.py` — the bridge loads `.env`
+   automatically (real env vars and CLI flags still take precedence, so you can
+   override any single value inline). Point it elsewhere with `--env-file <path>`
+   or `AGORA_BRIDGE_ENV_FILE`. `.env` is gitignored; `.env.example` is the
+   committed template.
+
    For a local hub the default `--url ws://127.0.0.1:4470` works as-is; for a
    LAN hub set `"bind": "0.0.0.0"` in the Agora `config.json` first.
 
@@ -128,6 +136,11 @@ privilege above the default — off by default), `CLAUDE_TLDR` (`1` to add short
 summaries to long replies by default; channels override with `/tldr`),
 `CLAUDE_TLDR_MIN_CHARS` (minimum reply length to summarize, default 1500),
 `CLAUDE_TIMEOUT` (seconds, default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
+
+Any of these can live in a `.env` file (see [`.env.example`](.env.example))
+loaded from this directory at startup, so you don't have to pass them on the
+command line. Precedence: CLI flag > real environment variable > `.env` file.
+Use `--env-file <path>` / `AGORA_BRIDGE_ENV_FILE` to load a file elsewhere.
 
 Security-relevant options:
 
