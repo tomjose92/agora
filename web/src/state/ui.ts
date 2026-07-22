@@ -6,6 +6,9 @@
    across the two UIs without clobbering either. */
 
 import { create } from "zustand";
+import { voiceCancel } from "./voiceRec";
+import { liveStop, useLiveVoice } from "./liveVoice";
+import { speakStop } from "./speak";
 
 export type MainView =
   | { kind: "channel" }
@@ -73,7 +76,14 @@ export const useUiState = create<UiState>((set, get) => ({
   membersOpen: false,
   searchOpen: false,
 
-  selectChannel: (g, c) => set(() => {
+  selectChannel: (g, c) => set((s) => {
+    if (s.sel.c !== c || s.sel.g !== g) {
+      // A recording is tied to the channel it started in; so are a live
+      // session and the speak queue (mirrors agoSelectChannel).
+      voiceCancel();
+      liveStop();
+      speakStop();
+    }
     localStorage.setItem("agora_sel", JSON.stringify({ g, c }));
     return { sel: { g, c }, view: { kind: "channel" }, threadRoot: null, mobileView: "main" as const };
   }),
@@ -107,8 +117,17 @@ export const useUiState = create<UiState>((set, get) => ({
     localStorage.setItem("agora_side", next ? "collapsed" : "open");
     return { sideCollapsed: next };
   }),
-  openThread: (rootId) => set({ threadRoot: rootId, mobileView: "thread" }),
-  closeThread: () => set({ threadRoot: null, mobileView: "main" }),
+  openThread: (rootId) => set(() => {
+    // Switching threads ends a recording/live session scoped to another one.
+    const scope = useLiveVoice.getState().scope;
+    if (scope && scope.threadId != null && scope.threadId !== rootId) liveStop();
+    return { threadRoot: rootId, mobileView: "thread" as const };
+  }),
+  closeThread: () => set(() => {
+    const scope = useLiveVoice.getState().scope;
+    if (scope && scope.threadId != null) liveStop();
+    return { threadRoot: null, mobileView: "main" as const };
+  }),
   toggleThreadSize: () => set((s) => {
     const next = !s.threadExpanded;
     localStorage.setItem("agora_thread", next ? "expanded" : "open");

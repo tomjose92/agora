@@ -21,12 +21,22 @@ import { SourcesViewer } from "./SourcesViewer";
 import { AgentProfileCard } from "./AgentProfileCard";
 import { EmojiPickerHost } from "./EmojiPicker";
 import { useToggleReactionById } from "../hooks/useToggleReactionById";
+import { liveOnAgentMessage, useLiveVoice } from "../state/liveVoice";
+import { speakEnqueue, useSpeak } from "../state/speak";
 
 export function AgoraLayout() {
   const me = useMe().data;
   const groups = useGroups().data;
   const ui = useUiState();
-  useAgoraSocket(me?.username || "");
+  useAgoraSocket(me?.username || "", (m) => {
+    // Live voice: an agent reply in the session's scope closes the turn and
+    // gets spoken; the 🔊 toggle reads out other agent replies unless a live
+    // session already speaks for the selected channel (agoIngestMessage).
+    liveOnAgentMessage(m);
+    const scope = useLiveVoice.getState().scope;
+    const liveHere = !!scope && scope.channelId === useUiState.getState().sel.c;
+    if (useSpeak.getState().on && !liveHere) speakEnqueue(m.id);
+  });
   const toggleReaction = useToggleReactionById();
 
   // Default selection once groups load (mirrors agoLoadGroups).

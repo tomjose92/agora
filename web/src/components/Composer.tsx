@@ -11,6 +11,7 @@ import { autoGrow } from "../lib/autoGrow";
 import { humanSize, withToken } from "../lib/files";
 import { slugify } from "../lib/mentions";
 import { toast } from "../lib/toast";
+import { MicButton } from "./VoiceControls";
 
 const MAX_FILES = 5;
 
@@ -62,7 +63,7 @@ function AgentAv({ a, cls }: { a: { id: string; avatar?: string }; cls: string }
     : <span className={`ago-av ${cls}`}><Icon name="bot" /></span>;
 }
 
-export function Composer({ channelId, channelName, threadId, agents = [], candidates = [], replyInThread, onToggleReplyInThread }: {
+export function Composer({ channelId, channelName, threadId, agents = [], candidates = [], voiceOK, replyInThread, onToggleReplyInThread }: {
   channelId: string;
   channelName: string;
   threadId: number | null;
@@ -70,6 +71,8 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   agents?: ChannelAgent[];
   /** Everything @-mentionable (agents + group members). */
   candidates?: MentionCandidate[];
+  /** Server has STT/TTS (me.voice): show the mic. */
+  voiceOK?: boolean;
   replyInThread?: boolean;
   onToggleReplyInThread?: () => void;
 }) {
@@ -268,6 +271,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           onClick={() => fileRef.current?.click()}>
           <Icon name="paperclip" />
         </button>
+        {voiceOK && <MicButton channelId={channelId} threadId={threadId} />}
         {!inThread && onToggleReplyInThread && (
           <button className={`btn ago-thread-ask ${replyInThread ? "active" : ""}`} id="ago-thread-ask"
             title="Agents answer this message in a thread under it"

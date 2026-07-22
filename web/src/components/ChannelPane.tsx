@@ -18,6 +18,7 @@ import { useUiState } from "../state/ui";
 import { buildMentionIndex } from "../lib/mentions";
 import { MessageLog } from "./MessageLog";
 import { Composer } from "./Composer";
+import { LiveButton, LiveStrip, SpeakButton } from "./VoiceControls";
 
 function pinSnippet(m: { alias?: string | null; text?: string }): string {
   const alias = (m.alias || "").trim();
@@ -227,6 +228,8 @@ export function ChannelPane() {
           </div>
         )}
         <div className="ago-head-actions">
+          {me?.voice && <SpeakButton />}
+          {me?.voice && <LiveButton channelId={channel.id} threadId={null} />}
           <button className={`btn sm ago-star-toggle ${starsOpen ? "active" : ""}`}
             title={`Starred messages in #${channel.name}`}
             onClick={() => setStarsOpen(!starsOpen)}>
@@ -247,8 +250,9 @@ export function ChannelPane() {
       <MessageLog channelId={channel.id} isAdmin={isAdmin} mentions={mentions}
         onOpenThread={rootId => ui.openThread(rootId)} />
       <LiveRows channelId={channel.id} threadId={null} />
+      <LiveStrip channelId={channel.id} threadId={null} />
       <Composer channelId={channel.id} channelName={channel.name} threadId={null}
-        agents={agents} candidates={candidates}
+        agents={agents} candidates={candidates} voiceOK={!!me?.voice}
         replyInThread={replyInThread}
         onToggleReplyInThread={() => setReplyInThread(!replyInThread)} />
     </div>

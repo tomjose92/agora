@@ -297,7 +297,9 @@ function agoLoadMermaid() {
   if (_agoMermaidLoad) return;
   _agoMermaidLoad = new Promise(res => {
     const s = document.createElement("script");
-    s.src = "mermaid.min.js";
+    // Root-absolute: the vanilla UI is served at /vanilla/ (and /), but the
+    // vendored library stays at the ui/ root.
+    s.src = "/mermaid.min.js";
     s.onload = res;
     s.onerror = () => { _agoMermaidLoad = null; res(); };
     document.head.appendChild(s);

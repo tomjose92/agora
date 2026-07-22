@@ -11,7 +11,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && cp ../ui/app2/index.html ../ui/index.html",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

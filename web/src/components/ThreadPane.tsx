@@ -18,6 +18,7 @@ import { buildMentionIndex, type MentionIndex } from "../lib/mentions";
 import { MessageItem } from "./MessageItem";
 import { Composer } from "./Composer";
 import { LiveRows } from "./ChannelPane";
+import { LiveButton, LiveStrip } from "./VoiceControls";
 
 const AT_BOTTOM_PX = 40;
 
@@ -132,6 +133,7 @@ export function ThreadPane() {
           </span>
         </div>
         <div className="ago-head-actions">
+          {me?.voice && <LiveButton channelId={channel.id} threadId={rootId} />}
           <button className={`btn sm ${pinned ? "active" : ""}`}
             title={pinned ? "Unpin this thread" : "Pin this thread for quick access"}
             onClick={() => pinMut.mutate({ messageId: rootId, pinned: !pinned })}>
@@ -149,8 +151,9 @@ export function ThreadPane() {
       </div>
       <ThreadLog key={rootId} root={root} replies={replies} isAdmin={isAdmin} mentions={mentions} />
       <LiveRows channelId={channel.id} threadId={rootId} />
+      <LiveStrip channelId={channel.id} threadId={rootId} />
       <Composer channelId={channel.id} channelName={channel.name} threadId={rootId}
-        agents={agents} candidates={candidates} />
+        agents={agents} candidates={candidates} voiceOK={!!me?.voice} />
     </div>
   );
 }
