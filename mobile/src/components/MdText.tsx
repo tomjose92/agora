@@ -1,6 +1,6 @@
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
-import { parseMd, type Span } from "../lib/mdlite";
+import { parseMd, type Span } from "@agora/core";
 import { openLink } from "../lib/openLink";
 import { colors, mono } from "../lib/theme";
 import { MermaidBlock } from "./Mermaid";

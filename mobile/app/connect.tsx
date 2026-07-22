@@ -19,7 +19,7 @@ import { Redirect } from "expo-router";
 import { Image as ExpoImage } from "expo-image";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as WebBrowser from "expo-web-browser";
-import { normalizeBaseUrl, originOf } from "../src/api/client";
+import { normalizeBaseUrl, originOf } from "@agora/core";
 import { appleAvailable, runAppleFlow } from "../src/lib/appleAuth";
 import { probeAuth } from "../src/lib/authConfig";
 import { runGoogleFlow } from "../src/lib/googleAuth";

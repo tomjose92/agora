@@ -6,7 +6,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
-import type { Message } from "../api/types";
+import type { Message } from "@agora/core";
 import { openLink } from "../lib/openLink";
 import { colors } from "../lib/theme";
 import { hostOf } from "./Sources";

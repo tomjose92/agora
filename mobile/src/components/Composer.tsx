@@ -41,11 +41,12 @@ import {
   X,
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { OutgoingFile } from "../api/queries";
-import { slugify } from "../lib/format";
+import type { OutgoingFile } from "@agora/core";
+import { slugify } from "@agora/core";
+import { toOutgoing, type LocalFile } from "../api/voice";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
-import { useAddressed } from "../state/addressed";
+import { useAddressed } from "@agora/core";
 import { AgentAvatar } from "./AgentAvatar";
 import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
@@ -64,7 +65,7 @@ const WEB_SAFE_IMAGE = /^image\/(jpe?g|png|gif|webp)$/i;
 /** Longest edge for uploads; keeps photos comfortably under server caps. */
 const MAX_IMAGE_EDGE = 2048;
 
-async function toWebSafeImage(a: ImagePicker.ImagePickerAsset): Promise<OutgoingFile> {
+async function toWebSafeImage(a: ImagePicker.ImagePickerAsset): Promise<LocalFile> {
   const type = a.mimeType ?? "image/jpeg";
   const name = a.fileName ?? `photo-${Date.now()}.jpg`;
   const oversize = Math.max(a.width ?? 0, a.height ?? 0) > MAX_IMAGE_EDGE;
@@ -117,10 +118,10 @@ export function Composer({
       the file here for the transcribe-and-post upload. `mentions` carries the
       "talk to" prefix ("@a, @b") so the transcript addresses the same agents
       a typed message would. */
-  onSendVoice?: (file: OutgoingFile, mentions?: string) => Promise<void>;
+  onSendVoice?: (file: LocalFile, mentions?: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
-  const [files, setFiles] = useState<OutgoingFile[]>([]);
+  const [files, setFiles] = useState<LocalFile[]>([]);
   const [focused, setFocused] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
   /* "Reply in thread": one message's ask, so it resets after each send. */
@@ -267,7 +268,7 @@ export function Composer({
     inputRef.current?.focus();
   };
 
-  const addFiles = (picked: OutgoingFile[]) => {
+  const addFiles = (picked: LocalFile[]) => {
     const merged = [...files, ...picked].slice(0, MAX_FILES);
     if (files.length + picked.length > MAX_FILES) toast(`Max ${MAX_FILES} files per message`, "warn");
     setFiles(merged);
@@ -358,7 +359,7 @@ export function Composer({
     try {
       await onSend({
         text: prefix ? (body ? `${prefix}, ${body}` : prefix) : body,
-        files,
+        files: files.map(toOutgoing),
         replyInThread: threadToggle ? replyInThread : undefined,
       });
       setText("");

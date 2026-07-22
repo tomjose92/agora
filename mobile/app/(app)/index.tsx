@@ -35,12 +35,12 @@ import {
   useSetGroupHidden,
   useThreads,
   useUpdateChannel,
-} from "../../src/api/queries";
-import type { Channel, Group } from "../../src/api/types";
+} from "@agora/core";
+import type { Channel, Group } from "@agora/core";
 import { Icon } from "../../src/components/Icon";
 import { toastErr } from "../../src/components/Toast";
 import { headerActions } from "../../src/lib/headerItems";
-import { totalThreadUnread } from "../../src/lib/unread";
+import { totalThreadUnread } from "@agora/core";
 import { colors } from "../../src/lib/theme";
 import { usePrefs } from "../../src/state/prefs";
 

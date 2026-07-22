@@ -2,7 +2,7 @@
    GET /api/auth/config that the connect screen runs before rendering
    sign-in buttons. */
 
-import { originOf } from "../api/client";
+import { originOf } from "@agora/core";
 
 export interface AuthMethods {
   google: boolean;

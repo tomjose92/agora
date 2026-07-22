@@ -6,8 +6,8 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Smile } from "lucide-react-native";
-import type { Message } from "../api/types";
-import { useToggleReaction } from "../api/queries";
+import type { Message } from "@agora/core";
+import { useToggleReaction } from "@agora/core";
 import { colors } from "../lib/theme";
 import { useSession } from "../state/session";
 import { Icon } from "./Icon";

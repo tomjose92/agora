@@ -17,8 +17,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ApiClient, ApiError, wsUrl, type Session } from "../src/api/client";
-import type { Group, Me, Message, PinnedMessage, StarredMessage } from "../src/api/types";
+import { ApiClient, ApiError, wsUrl, type Session } from "@agora/core";
+import type { Group, Me, Message, PinnedMessage, StarredMessage } from "@agora/core";
 
 const RUN = process.env.AGORA_INTEGRATION === "1";
 const d = RUN ? describe : describe.skip;

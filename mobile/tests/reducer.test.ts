@@ -2,15 +2,15 @@
    (crates/agora-core/src/hub.rs) and from store.rs payloads. */
 
 import { QueryClient } from "@tanstack/react-query";
-import { keys } from "../src/api/keys";
+import { keys } from "@agora/core";
 import type {
   Group,
   Message,
   ProgressEvent,
   ThreadRow,
   TypingEvent,
-} from "../src/api/types";
-import { useLive } from "../src/state/live";
+} from "@agora/core";
+import { useLive } from "@agora/core";
 import {
   appendMessage,
   applyMessageToGroups,
@@ -24,7 +24,7 @@ import {
   removeMessage,
   replaceMessage,
   type MessagePages,
-} from "../src/ws/reducer";
+} from "@agora/core";
 
 function msg(over: Partial<Message> = {}): Message {
   return {

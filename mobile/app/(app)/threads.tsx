@@ -22,11 +22,11 @@ import {
   useHideThread,
   useRenameThread,
   useThreads,
-} from "../../src/api/queries";
-import type { ThreadRow } from "../../src/api/types";
+} from "@agora/core";
+import type { ThreadRow } from "@agora/core";
 import { Icon } from "../../src/components/Icon";
 import { toastErr } from "../../src/components/Toast";
-import { fmtTs } from "../../src/lib/format";
+import { fmtTs } from "@agora/core";
 import { colors } from "../../src/lib/theme";
 
 function snippet(t: ThreadRow): string {

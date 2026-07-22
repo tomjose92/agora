@@ -23,11 +23,12 @@ import {
 import { useKeepAwake } from "expo-keep-awake";
 import { Headphones } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useChannelAgents, useSendVoice } from "../../../src/api/queries";
+import { useChannelAgents } from "@agora/core";
+import { useSendVoice } from "../../../src/api/voice";
 import { Icon } from "../../../src/components/Icon";
 import { toast } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
-import { slugify } from "../../../src/lib/format";
+import { slugify } from "@agora/core";
 import {
   enqueueSpeech,
   onSpeechIdle,
@@ -36,7 +37,7 @@ import {
 } from "../../../src/lib/speech";
 import { colors } from "../../../src/lib/theme";
 import { initialVadState, vadStep } from "../../../src/lib/vad";
-import { threadAddressKey, useAddressed } from "../../../src/state/addressed";
+import { threadAddressKey, useAddressed } from "@agora/core";
 import { useSession } from "../../../src/state/session";
 
 type LiveStatus = "starting" | "listening" | "recording" | "thinking" | "speaking" | "error";

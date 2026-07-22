@@ -21,7 +21,7 @@ One Rust core, three clients:
 | `ui/app2/` + `ui/index.html` | **Generated** build of `web/` (never hand-edit — run `npm run build`, which also copies the entry to `ui/index.html`). |
 | `packages/core` | `@agora/core` — shared TypeScript client core: API client + types, TanStack Query hooks, the WS event reducer, zustand stores, mdlite/format/unread/emoji helpers. Consumed by `web/`; `mobile/` can adopt it in a follow-up. |
 | `web/` | React (Vite + TS) web UI at full parity incl. voice notes, speak-aloud, and live voice. Builds into `ui/app2/`; reuses `ui/style.css` and the same class names. |
-| `mobile/` | React Native (Expo) iOS/Android app — a pure client of a hosted `agora-server`. NOT an npm-workspace member (its `npm ci` stays standalone). |
+| `mobile/` | React Native (Expo) iOS/Android app — a pure client of a hosted `agora-server`. Consumes `@agora/core` via a `file:../packages/core` dependency but is NOT an npm-workspace member (its `npm ci` stays standalone; `metro.config.js` pins React/query/zustand to mobile's copies to avoid the dual-instance hazard). |
 | `bridges/` | Dial-in bridge clients for the agent WebSocket protocol. |
 
 Agora is **multi-user**: real accounts (`users` table) with instance roles
@@ -39,7 +39,9 @@ cargo check --workspace
 # headless server
 cargo run -p agora-server -- --data-dir /tmp/agora-dev --ui-dir ui
 
-# mobile (from mobile/)
+# mobile (from mobile/) — run the ROOT `npm ci` first: mobile consumes
+# @agora/core as raw TS source, whose react types + babel helpers resolve
+# from the repo root's node_modules
 npm ci
 npx tsc --noEmit                # typecheck
 npx jest                        # unit tests
@@ -177,9 +179,12 @@ endpoint must not break:
   redraws are innerHTML rebuilds that must preserve scroll where users
   notice (see `agoDrawSide`). Kept as a fallback — see "Retiring the
   vanilla UI" in docs/ARCHITECTURE.md for the eventual removal checklist.
-- **Mobile**: follow the existing screen patterns — react-query hooks in
-  `src/api/queries.ts`, admin-only UI gated on `instanceAdmin` from the
-  session store, `toastErr` for mutation failures.
+- **Mobile**: follow the existing screen patterns — react-query hooks and
+  the WS reducer come from `@agora/core` (the client is provided by
+  `ApiProvider` in `app/(app)/_layout.tsx`); mobile-only pieces (voice
+  upload, notifications, session/secure-store) stay under `mobile/src`.
+  Admin-only UI gates on `instanceAdmin` from the session store, `toastErr`
+  for mutation failures.
 - **No new heavy deps** without good reason, in any of the three stacks.
 - **Secrets** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, OAuth client secret)
   live in the process env or `config.json` — never hardcode, never log.

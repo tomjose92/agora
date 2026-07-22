@@ -11,8 +11,9 @@
 #                 flow against a real agora-server, on both the React app at
 #                 "/" and the legacy vanilla UI at "/vanilla/".
 #
-# mobile/ is intentionally not covered: it is not an npm-workspace member
-# and has its own pipeline (publish-mobile.yml).
+#   4. mobile  — mobile/ consumes @agora/core via a file: dependency, so a
+#                core change can break it: standalone npm ci + tsc + jest.
+#                (Publishing stays in publish-mobile.yml.)
 
 name: Web CI
 
@@ -22,6 +23,7 @@ on:
       - "web/**"
       - "packages/**"
       - "ui/**"
+      - "mobile/**"
       - "package.json"
       - "package-lock.json"
       - "scripts/gen-emoji.js"
@@ -32,6 +34,7 @@ on:
       - "web/**"
       - "packages/**"
       - "ui/**"
+      - "mobile/**"
       - "package.json"
       - "package-lock.json"
       - "scripts/gen-emoji.js"
@@ -64,8 +67,30 @@ jobs:
           # a diff here means a PR changed sources without rebuilding, or
           # hand-edited a generated file.
           git diff --exit-code -- ui/app2 ui/index.html ui/emoji.js \
-            mobile/src/lib/emoji.ts packages/core/src/lib/emoji.ts \
+            packages/core/src/lib/emoji.ts \
             || { echo "::error::Generated files are stale — run 'npm run build' and 'node scripts/gen-emoji.js' and commit the result."; exit 1; }
+
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+      # Root install first: mobile consumes @agora/core as shipped TS source
+      # through a file: dep, and the package's react types + babel helpers
+      # resolve from the repo root's node_modules.
+      - run: npm ci
+      - run: npm ci
+        working-directory: mobile
+      - run: npx tsc --noEmit
+        working-directory: mobile
+      - run: npx jest --silent
+        working-directory: mobile
 
   parity:
     runs-on: ubuntu-latest

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Stack } from "expo-router";
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiError } from "../src/api/client";
+import { ApiError } from "@agora/core";
 import { onUnauthorized, useSession } from "../src/state/session";
 import { ToastHost } from "../src/components/Toast";
 import { colors } from "../src/lib/theme";

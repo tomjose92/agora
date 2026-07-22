@@ -10,8 +10,8 @@ import {
   originOf,
   parseError,
   type Session,
-} from "../api/client";
-import type { Me } from "../api/types";
+} from "@agora/core";
+import type { Me } from "@agora/core";
 import { unregisterPushToken } from "../lib/notifications";
 import { rememberServer } from "./servers";
 
@@ -173,12 +173,8 @@ export const useSession = create<SessionState>((set) => ({
   },
 }));
 
-/** The signed-in ApiClient. Screens under (app)/ may assume a session. */
-export function useApi(): ApiClient {
-  const session = useSession((s) => s.session);
-  if (!session) throw new Error("useApi called while signed out");
-  return new ApiClient(session);
-}
+/* useApi now comes from @agora/core's ApiProvider context — the provider is
+   mounted in app/(app)/_layout.tsx with a client memoized on the session. */
 
 export function onUnauthorized() {
   void useSession.getState().signOut();

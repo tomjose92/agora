@@ -39,12 +39,12 @@ import {
   usePinMessage,
   usePins,
   useSendMessage,
-  useSendVoice,
   useSeedActivity,
   useStarMessage,
   useStars,
-} from "../../../src/api/queries";
-import type { Message, PinnedMessage, StarredMessage } from "../../../src/api/types";
+} from "@agora/core";
+import { useSendVoice } from "../../../src/api/voice";
+import type { Message, PinnedMessage, StarredMessage } from "@agora/core";
 import { Composer, type MentionCandidate } from "../../../src/components/Composer";
 import { EmojiPicker } from "../../../src/components/EmojiPicker";
 import { Icon } from "../../../src/components/Icon";
@@ -54,15 +54,15 @@ import { ProfileSheet } from "../../../src/components/ProfileSheet";
 import { QuickReactions, useReactWith } from "../../../src/components/Reactions";
 import { toastErr } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
-import { fmtTs } from "../../../src/lib/format";
+import { fmtTs } from "@agora/core";
 import { headerActions } from "../../../src/lib/headerItems";
 import { useHeaderKeyboardOffset } from "../../../src/lib/keyboard";
 import { enqueueSpeech, prepareSpeechAudio, stopSpeech } from "../../../src/lib/speech";
 import { colors } from "../../../src/lib/theme";
-import { useChannelLive } from "../../../src/state/live";
+import { useChannelLive } from "@agora/core";
 import { usePrefs } from "../../../src/state/prefs";
 import { useSession } from "../../../src/state/session";
-import { tldrOf, useTldrView } from "../../../src/state/tldr";
+import { tldrOf, useTldrView } from "@agora/core";
 
 type Row = { kind: "msg"; m: Message } | { kind: "divider" };
 

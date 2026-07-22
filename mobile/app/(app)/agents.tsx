@@ -4,11 +4,11 @@
 import React from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Stack } from "expo-router";
-import { useAgents, useForgetAgent } from "../../src/api/queries";
+import { useAgents, useForgetAgent } from "@agora/core";
 import { AgentAvatar } from "../../src/components/AgentAvatar";
 import { ArmedButton } from "../../src/components/ArmedButton";
 import { toastErr } from "../../src/components/Toast";
-import { fmtTs } from "../../src/lib/format";
+import { fmtTs } from "@agora/core";
 import { colors } from "../../src/lib/theme";
 
 export default function AgentsScreen() {

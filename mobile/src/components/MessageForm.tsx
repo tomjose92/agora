@@ -9,9 +9,9 @@
 import React, { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Check } from "lucide-react-native";
-import { useSubmitForm, useUpdateFormState } from "../api/queries";
-import type { Message } from "../api/types";
-import { fmtTs } from "../lib/format";
+import { useSubmitForm, useUpdateFormState } from "@agora/core";
+import type { Message } from "@agora/core";
+import { fmtTs } from "@agora/core";
 import { colors } from "../lib/theme";
 import { Icon } from "./Icon";
 

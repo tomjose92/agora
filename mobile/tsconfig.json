@@ -2,6 +2,11 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    "paths": {
+      "@agora/core": ["../packages/core/src/index.ts"],
+      "zustand": ["./node_modules/zustand"],
+      "@tanstack/react-query": ["./node_modules/@tanstack/react-query"]
+    }
   }
 }

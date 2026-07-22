@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { EMOJI_CATEGORIES } from "../src/lib/emoji";
+import { EMOJI_CATEGORIES } from "@agora/core";
 
 describe("emoji dataset", () => {
   it("has non-empty categories with lowercase keywords", () => {

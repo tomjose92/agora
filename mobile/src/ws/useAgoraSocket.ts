@@ -6,9 +6,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
-import { wsUrl, type Session } from "../api/client";
-import type { Message, WsEvent } from "../api/types";
-import { applyWsEvent } from "./reducer";
+import { wsUrl, type Session } from "@agora/core";
+import type { Message, WsEvent } from "@agora/core";
+import { applyWsEvent } from "@agora/core";
 
 const BACKOFF_START = 1000;
 const BACKOFF_CAP = 30_000;
