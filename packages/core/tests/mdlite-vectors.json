@@ -1,0 +1,42 @@
+[
+ [
+  "plain text",
+  "plain text"
+ ],
+ [
+  "has **bold** and *ital* words",
+  "has <b>bold</b> and <i>ital</i> words"
+ ],
+ [
+  "inline `code %s` here",
+  "inline <code>code %s</code> here"
+ ],
+ [
+  "```js\nconst a = 1;\n```",
+  "<pre class=\"md-pre\" data-lang=\"js\">const a = 1;</pre>"
+ ],
+ [
+  "```mermaid\ngraph TD; A-->B;\n```",
+  "<div class=\"md-mermaid\"><pre class=\"md-pre\">graph TD; A--&gt;B;</pre></div>"
+ ],
+ [
+  "[label](https://example.com/x) and bare https://foo.bar/baz?q=1",
+  "<a href=\"https://example.com/x\" target=\"_blank\" rel=\"noopener\">label</a> and bare <a href=\"https://foo.bar/baz?q=1\" target=\"_blank\" rel=\"noopener\">https://foo.bar/baz?q=1</a>"
+ ],
+ [
+  "# Heading line",
+  "<b>Heading line</b>"
+ ],
+ [
+  "| a | b |\n| --- | ---: |\n| 1 | 2 |",
+  "<div class=\"md-table-wrap\"><table class=\"md-table\"><thead><tr><th>a</th><th style=\"text-align:right\">b</th></tr></thead><tbody><tr><td>1</td><td style=\"text-align:right\">2</td></tr></tbody></table></div>"
+ ],
+ [
+  "<script>alert(1)</script> & \"quotes\"",
+  "&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quotes&quot;"
+ ],
+ [
+  "digits 1 2 3 stay intact with `x` stash",
+  "digits 1 2 3 stay intact with <code>x</code> stash"
+ ]
+]
