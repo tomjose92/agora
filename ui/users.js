@@ -30,6 +30,9 @@ async function usersLoad() {
 function usersDraw() {
   const panel = document.getElementById("users-panel");
   if (!panel || !_usersOpen) return;
+  // Preserve scroll across redraws (revoking an invite rebuilds the panel via
+  // innerHTML, which would otherwise jump back to the top).
+  const prevTop = panel.querySelector(".conn-body")?.scrollTop || 0;
   const me = CURRENT_USER ? CURRENT_USER.username : "";
   const rows = _usersData.map(u => {
     const self = u.username === me;
@@ -116,6 +119,8 @@ function usersDraw() {
       <p class="conn-hint">Anyone who opens the link and signs in with Google/Apple
         joins with the chosen role — hand it out over any channel you trust.</p>
     </div>`;
+  const body = panel.querySelector(".conn-body");
+  if (body) body.scrollTop = prevTop;
 }
 
 async function inviteLinkCreate() {

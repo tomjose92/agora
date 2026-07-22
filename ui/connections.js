@@ -69,6 +69,9 @@ function connDraw() {
   // The 4s status poll redraws the panel; don't clobber in-progress typing.
   const active = document.activeElement;
   if (active && panel.contains(active) && active.tagName === "INPUT") return;
+  // Preserve scroll across redraws (the poll and every row action rebuild the
+  // panel via innerHTML, which would otherwise jump back to the top).
+  const prevTop = panel.querySelector(".conn-body")?.scrollTop || 0;
   const rows = _connData.map(c => {
     const st = c.status || {};
     const agents = (st.agents || []).map(a => esc(a.name || a.id)).join(", ");
@@ -138,6 +141,8 @@ function connDraw() {
       <p class="conn-hint">A bridge connects to <code>ws://this-host:port/agent/ws?token=…</code>
         and speaks the Agora agent protocol (see docs/protocol.md in the repo).</p>
     </div>`;
+  const body = panel.querySelector(".conn-body");
+  if (body) body.scrollTop = prevTop;
 }
 
 async function instRename() {
