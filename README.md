@@ -34,6 +34,7 @@ email/invite-link admission, and Google/Apple sign-in. The `admin_key` in
 | `crates/agora-desktop` | Tauri v2 macOS app that embeds `agora-core` in-process. |
 | `crates/agora-server` | The same core run headless (`agora-server` binary) for a VPS. |
 | `ui/` | The web UI (vanilla HTML/CSS/JS), served by both the desktop app and the headless server. |
+| `web/` + `packages/core` | Experimental React port of the web UI (served at `/app2/`; vanilla stays the default) on a shared TypeScript client core. |
 | `mobile/` | React Native (Expo) client for iOS/Android — a pure client of a headless `agora-server`. See [`mobile/README.md`](mobile/README.md). |
 | `bridges/` | Dial-in bridge clients for the agent protocol. [`bridges/claude-cli`](bridges/claude-cli/README.md) drives local Claude Code sessions from a channel. |
 

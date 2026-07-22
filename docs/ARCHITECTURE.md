@@ -33,6 +33,14 @@ One Rust core, three clients (see the repo layout table in the
 - **`crates/agora-server`** — the same core, headless, for a VPS / Railway.
 - **`ui/`** — vanilla HTML/CSS/JS with no framework and no build step, served
   by both the desktop bundle and the headless server.
+- **`web/` + `packages/core`** — a React (Vite + TS) port of the web UI on a
+  shared client core (`@agora/core`: API client/types, query hooks, WS
+  reducer, stores, helpers). It builds into `ui/app2/` (committed), so the
+  existing static serving exposes it at `/app2/` with no server changes;
+  the vanilla UI remains the default at `/` until the port reaches full
+  parity (voice/live/TTS pending), after which a swap PR moves it to `/`.
+  `mobile/` can adopt `@agora/core` in a follow-up to end its parallel
+  reimplementation.
 - **`mobile/`** — React Native (Expo) iOS/Android app, a pure client of a
   hosted `agora-server`.
 - **`bridges/`** — dial-in clients for the [agent protocol](PROTOCOL.md).
