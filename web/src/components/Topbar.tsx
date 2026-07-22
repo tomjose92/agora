@@ -3,9 +3,33 @@
    ui/index.html + shim.js renderServerBadge()/boot(). */
 
 import { useEffect } from "react";
-import { useMe, useApi } from "@agora/core";
+import { useConnectionsInfo, useMe, useApi } from "@agora/core";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
+
+/* Topbar dot (connRefreshBadge): green when every enabled connection is
+   live, amber when some are down, grey when none are configured. The query
+   key is shared with the Connections pane, so its 4s poll refreshes this
+   too while the pane is open. */
+function StatusBadge({ isAdmin }: { isAdmin: boolean }) {
+  const info = useConnectionsInfo(false, isAdmin).data;
+  if (!isAdmin || !info) return <div className="topbar-status" id="topbar-status"></div>;
+  const enabled = (info.connections || []).filter(c => c.enabled);
+  const up = enabled.filter(c => c.status && c.status.connected);
+  const agents = enabled.reduce((n, c) => n + ((c.status && c.status.agents) || []).length, 0);
+  return (
+    <div className="topbar-status" id="topbar-status">
+      {!enabled.length ? (
+        <><span className="conn-dot off"></span> no connections</>
+      ) : (
+        <>
+          <span className={`conn-dot ${up.length === enabled.length ? "on" : up.length ? "part" : "err"}`}></span>
+          {" "}{up.length}/{enabled.length} linked · {agents} agent{agents === 1 ? "" : "s"}
+        </>
+      )}
+    </div>
+  );
+}
 
 function ServerBadge() {
   const host = location.hostname;
@@ -49,7 +73,7 @@ export function Topbar() {
     <div className="topbar">
       <div className="brand"><span className="brand-mark"><img src="/icon.png" alt="" /></span> Agora</div>
       <ServerBadge />
-      <div className="topbar-status" id="topbar-status"></div>
+      <StatusBadge isAdmin={isAdmin} />
       <button className="topbar-me" id="topbar-me" title="Change how your name appears"
         onClick={() => void rename()}>
         {me ? (me.display_name || me.username) : ""}

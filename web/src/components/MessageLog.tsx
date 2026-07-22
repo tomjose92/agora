@@ -9,6 +9,7 @@ import {
 } from "@agora/core";
 import { Icon } from "../lib/icons";
 import { type MentionIndex } from "../lib/mentions";
+import { flashMessage, useJump } from "../state/jump";
 import { MessageItem } from "./MessageItem";
 
 const AT_BOTTOM_PX = 48;
@@ -76,6 +77,22 @@ export function MessageLog({ channelId, isAdmin, mentions, onOpenThread }: {
   }, [messages.length, channelId]);
 
   useEffect(() => { maybeMarkRead(); });
+
+  /* Jump-to-message (search/stars): flash it when rendered; page older
+     history in until it appears (newest-first pages, so "next" = older). */
+  const jumpTarget = useJump(s => s.target);
+  const jumpClear = useJump(s => s.clear);
+  useEffect(() => {
+    if (!jumpTarget || jumpTarget.container !== "log" || !boxRef.current) return;
+    if (flashMessage(boxRef.current, jumpTarget.mid)) {
+      stickRef.current = false;
+      jumpClear();
+    } else if (q.hasNextPage && !q.isFetchingNextPage) {
+      void q.fetchNextPage();
+    } else if (!q.hasNextPage) {
+      jumpClear(); // scrolled the whole history without finding it
+    }
+  }, [jumpTarget, messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === "visible") maybeMarkRead(); };

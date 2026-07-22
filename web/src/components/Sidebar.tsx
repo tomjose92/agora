@@ -3,16 +3,19 @@
    section, unreads-only filter, collapse rail, and inline create rows —
    the React port of agoDrawSide. */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   useCreateChannel, useCreateGroup, useDeleteChannel, useGroups, useHideThread,
-  useMe, useRenameThread, useSetGroupHidden, useThreads, useUpdateChannel,
+  useMe, useRenameThread, useReorderChannels, useReorderGroups, useSetGroupHidden,
+  useThreads, useUpdateChannel,
   type Channel, type Group, type ThreadRow,
 } from "@agora/core";
 import { Icon } from "../lib/icons";
 import { toast } from "../lib/toast";
 import { useConfirm } from "../state/confirm";
 import { useUiState } from "../state/ui";
+
+const SEARCH_KEY = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl+K";
 
 function Badge({ n, mentions }: { n: number; mentions: number }) {
   if (mentions > 0) {
@@ -97,6 +100,49 @@ export function Sidebar() {
   const setGroupHidden = useSetGroupHidden();
   const [creating, setCreating] = useState<{ kind: "group" } | { kind: "channel"; g: string } | null>(null);
   const [createName, setCreateName] = useState("");
+  const reorderGroups = useReorderGroups();
+  const reorderChannels = useReorderChannels();
+  /* Drag-to-reorder, mirroring agoDragStart/agoDragOverRow/agoDropRow:
+     groups reorder among groups, channels among their own group's channels;
+     the dropped-on row shifts down. */
+  const dragRef = useRef<{ type: "group" | "chan"; id: string; gid: string | null } | null>(null);
+  const dragStart = (type: "group" | "chan", id: string, gid?: string) =>
+    (ev: React.DragEvent) => {
+      dragRef.current = { type, id, gid: gid || null };
+      ev.dataTransfer.effectAllowed = "move";
+      try { ev.dataTransfer.setData("text/plain", id); } catch { /* older engines */ }
+    };
+  const dragOver = (type: "group" | "chan", gid?: string) =>
+    (ev: React.DragEvent) => {
+      const drag = dragRef.current;
+      if (!drag || drag.type !== type) return;
+      if (type === "chan" && drag.gid !== (gid || null)) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "move";
+    };
+  const dropOn = (type: "group" | "chan", id: string, gid?: string) =>
+    (ev: React.DragEvent) => {
+      ev.preventDefault();
+      const drag = dragRef.current;
+      dragRef.current = null;
+      if (!drag || drag.type !== type || drag.id === id) return;
+      const err = (e: unknown) =>
+        toast("Couldn't reorder: " + ((e as Error).message || e), { variant: "warn" });
+      if (type === "chan") {
+        if (drag.gid !== (gid || null) || !gid) return;
+        const g = groups.find(x => x.id === gid);
+        if (!g) return;
+        const ids = (g.channels || []).map(c => c.id).filter(x => x !== drag.id);
+        const at = ids.indexOf(id);
+        ids.splice(at < 0 ? ids.length : at, 0, drag.id);
+        reorderChannels.mutate({ groupId: gid, ids }, { onError: err });
+      } else {
+        const ids = groups.map(x => x.id).filter(x => x !== drag.id);
+        const at = ids.indexOf(id);
+        ids.splice(at < 0 ? ids.length : at, 0, drag.id);
+        reorderGroups.mutate(ids, { onError: err });
+      }
+    };
 
   const isOwner = !!me?.instance_admin;
   const unreadOf = (c: Channel) => c.unread || 0;
@@ -149,7 +195,7 @@ export function Sidebar() {
       <div className="side-title">
         <span>Groups</span>
         <span className="side-title-actions">
-          <button className="ago-side-toggle search" title="Search (⌘K)"
+          <button className="ago-side-toggle search" title={`Search (${SEARCH_KEY})`}
             onClick={() => ui.setSearchOpen(true)}><Icon name="search" /></button>
           <button className={`ago-side-toggle filter ${ui.unreadsOnly ? "on" : ""}`}
             title={ui.unreadsOnly ? "Show all channels" : "Show unreads only"}
@@ -175,6 +221,10 @@ export function Sidebar() {
             <div key={g.id} className={`ago-group ${open ? "open" : ""} ${sel ? "sel" : ""}`}>
               <div className={`ago-group-head ${groupUnread(g) || groupMentions(g) ? "unread" : ""}`}
                 title={`Open ${g.name}`}
+                draggable
+                onDragStart={dragStart("group", g.id)}
+                onDragOver={dragOver("group")}
+                onDrop={dropOn("group", g.id)}
                 onClick={() => ui.openGroupPage(g.id)}>
                 <span className={`ago-caret ${open ? "open" : ""}`}
                   title={`${open ? "Collapse" : "Expand"} ${g.name}`}
@@ -195,6 +245,10 @@ export function Sidebar() {
                 return (
                   <div key={c.id}>
                     <div className={`ago-chan ${active ? "active" : ""} ${unread || mentions ? "unread" : ""}`}
+                      draggable
+                      onDragStart={dragStart("chan", c.id, g.id)}
+                      onDragOver={dragOver("chan", g.id)}
+                      onDrop={dropOn("chan", c.id, g.id)}
                       onClick={() => ui.selectChannel(g.id, c.id)}>
                       <span className="hash">#</span><span className="nm">{c.name}</span>
                       <Badge n={unread} mentions={mentions} />

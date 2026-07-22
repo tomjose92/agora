@@ -48,7 +48,7 @@ export function AgoraLayout() {
     }
   }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const viewClass = ui.threadRoot != null ? "view-thread" : (ui.sel.c ? "view-main" : "view-side");
+  const viewClass = `view-${ui.mobileView}`;
 
   return (
     <div id="content">

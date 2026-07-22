@@ -278,6 +278,56 @@ async function main() {
     await page.locator("#conn-panel .conn-head button").last().click();
   });
 
+  await check("stars: star a message, jump-flash from the dropdown", async () => {
+    await page.locator(".ago-chan", { hasText: "general" }).first().click();
+    const bubble = page.locator("#ago-log .bubble", { hasText: "seed plain message one" }).first();
+    await bubble.hover();
+    await bubble.locator(".ago-star-btn").click();
+    await page.locator(".ago-head-actions .ago-star-toggle", { hasText: "1" }).waitFor({ timeout: 8000 });
+    // scroll away so the jump is observable
+    await page.$eval("#ago-log", el => { el.scrollTop = el.scrollHeight; });
+    await page.locator(".ago-head-actions .ago-star-toggle").click();
+    await page.locator(".ago-pin-pop .ago-pin-row", { hasText: "seed plain message one" }).click();
+    await page.waitForSelector("#ago-log .bubble.ago-flash", { timeout: 8000 });
+    // clean up: unstar
+    const b2 = page.locator("#ago-log .bubble", { hasText: "seed plain message one" }).first();
+    await b2.hover();
+    await b2.locator(".ago-star-btn").click();
+  });
+
+  await check("search: message hit jump-flashes the exact message", async () => {
+    await page.locator(".ago-side-toggle.search").click();
+    await page.fill("#ago-search-input", "xyzzy-needle");
+    await page.locator(".ago-search-row.msg", { hasText: "xyzzy-needle" }).first()
+      .waitFor({ timeout: 8000 });
+    await page.locator(".ago-search-row.msg", { hasText: "xyzzy-needle" }).first().click();
+    await page.waitForSelector("#ago-log .bubble.ago-flash", { timeout: 8000 });
+  });
+
+  await check("sidebar: drag-reorder of channels persists", async () => {
+    // ensure both channel rows are visible in the sidebar
+    await page.waitForSelector(".ago-chan", { timeout: 5000 });
+    const before = (await api("/api/groups")).groups
+      .find(g => g.name === "Parity").channels.map(c => c.name);
+    await page.dragAndDrop(
+      '.ago-chan:has-text("second")',
+      '.ago-chan:has-text("general")',
+    );
+    await page.waitForTimeout(800);
+    const after = (await api("/api/groups")).groups
+      .find(g => g.name === "Parity").channels.map(c => c.name);
+    if (JSON.stringify(after) === JSON.stringify(before)) {
+      throw new Error(`order unchanged: ${after.join(",")}`);
+    }
+    if (after[0] !== "second") throw new Error(`expected second first, got ${after.join(",")}`);
+  });
+
+  await check("topbar: connection status dot renders for admins", async () => {
+    await page.locator("#topbar-status .conn-dot").waitFor({ timeout: 8000 });
+    const text = await page.$eval("#topbar-status", el => el.textContent.trim());
+    if (!/no connections|linked/.test(text)) throw new Error(`unexpected status: ${text}`);
+  });
+
   await check("no unexpected page errors during the run", async () => {
     if (errors.length) throw new Error(errors.join(" | "));
   });

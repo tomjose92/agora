@@ -6,8 +6,10 @@
 import { useMemo, useState } from "react";
 import {
   fmtTs, useChannelAgents, useChannelLive, useGroups, useMe, useMembers,
-  usePinMessage, usePins, useSeedActivity, useUpdateChannel, type Message,
+  usePinMessage, usePins, useSeedActivity, useStarMessage, useStars,
+  useUpdateChannel, type Message,
 } from "@agora/core";
+import { useJump } from "../state/jump";
 import { slugify } from "../lib/mentions";
 import type { MentionCandidate } from "./Composer";
 import { Icon } from "../lib/icons";
@@ -63,6 +65,48 @@ function PinBar({ channelId }: { channelId: string }) {
   );
 }
 
+/* Starred-messages dropdown (agoStarPopHTML): rows jump to the message —
+   into its thread when it's a reply, flashing it either way. */
+function StarPop({ channelId, onClose }: { channelId: string; onClose: () => void }) {
+  const stars = useStars(channelId).data || [];
+  const starMut = useStarMessage(channelId);
+  const ui = useUiState();
+  const jump = useJump(s => s.request);
+  return (
+    <div className="ago-pin-wrap">
+      <div className="ago-pin-pop">
+        {stars.length ? stars.map(s => (
+          <div key={s.id} className="ago-pin-row"
+            title={s.thread_id != null ? "Open in its thread" : "Jump to message"}
+            onClick={() => {
+              onClose();
+              if (s.thread_id != null) {
+                ui.openThread(s.thread_id);
+                jump({ mid: s.id, container: "thread" });
+              } else {
+                jump({ mid: s.id, container: "log" });
+              }
+            }}>
+            <div className="ago-pin-row-main">
+              <span className="ago-pin-author">{s.author_name || s.author_id}</span>
+              <span className="ago-pin-text">{pinSnippet(s)}</span>
+            </div>
+            <span className="ago-pin-meta">{s.thread_id != null ? "in thread · " : ""}{fmtTs(s.ts)}</span>
+            <button className="ago-x" title="Unstar"
+              onClick={e => { e.stopPropagation(); starMut.mutate({ messageId: s.id, starred: false }); }}>
+              <Icon name="x" />
+            </button>
+          </div>
+        )) : (
+          <div className="dim" style={{ padding: "10px 12px", fontSize: 12 }}>
+            Nothing starred in this channel yet — hover a message and hit <Icon name="star" /> star.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function LiveRows({ channelId, threadId }: { channelId: string; threadId: number | null }) {
   const { typing, progress } = useChannelLive(channelId, threadId);
   if (!typing.length && !progress.length) {
@@ -97,6 +141,8 @@ export function ChannelPane() {
   const [editName, setEditName] = useState("");
   const [editTopic, setEditTopic] = useState("");
   const [replyInThread, setReplyInThread] = useState(false);
+  const [starsOpen, setStarsOpen] = useState(false);
+  const stars = useStars(channel?.id || "").data || [];
 
   const members = useMembers(group?.id || "").data || [];
   const isAdmin = !!(group && (group.role === "admin" || me?.instance_admin));
@@ -181,11 +227,17 @@ export function ChannelPane() {
           </div>
         )}
         <div className="ago-head-actions">
+          <button className={`btn sm ago-star-toggle ${starsOpen ? "active" : ""}`}
+            title={`Starred messages in #${channel.name}`}
+            onClick={() => setStarsOpen(!starsOpen)}>
+            {stars.length ? <><Icon name="star" cls="fill" /> {stars.length}</> : <Icon name="star" />}
+          </button>
           <button className={`btn sm ${ui.membersOpen ? "active" : ""}`}
             onClick={() => ui.setMembersOpen(!ui.membersOpen)}>Members</button>
         </div>
       </div>
       <PinBar channelId={channel.id} />
+      {starsOpen && <StarPop channelId={channel.id} onClose={() => setStarsOpen(false)} />}
       {!agents.length && (
         <div className="ago-hint-banner">
           No agents are listening in this channel yet.

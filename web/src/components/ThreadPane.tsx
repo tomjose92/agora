@@ -4,7 +4,8 @@
    place unless they're already at the bottom — the behavior the vanilla UI
    implements by hand with data-root/sameThread/wasAtBottom. */
 
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { flashMessage, useJump } from "../state/jump";
 import {
   flattenMessages, useChannelAgents, useGroups, useMarkThreadRead, useMe,
   useMessage, useMessages, usePinMessage, usePins, useThreads, type Message,
@@ -40,6 +41,17 @@ function ThreadLog({ root, replies, isAdmin, mentions }: {
     const box = boxRef.current;
     if (box && stickRef.current) box.scrollTop = box.scrollHeight;
   }, [replies.length]);
+
+  // Jump-to-message (search/stars landing in this thread): flash it.
+  const jumpTarget = useJump(s => s.target);
+  const jumpClear = useJump(s => s.clear);
+  useEffect(() => {
+    if (!jumpTarget || jumpTarget.container !== "thread" || !boxRef.current) return;
+    if (flashMessage(boxRef.current, jumpTarget.mid)) {
+      stickRef.current = false;
+      jumpClear();
+    }
+  }, [jumpTarget, replies.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="ago-log ago-thread-log" id="ago-thread-log" ref={boxRef}

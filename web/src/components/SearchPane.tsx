@@ -11,6 +11,7 @@ import {
 import { Icon, iconSvg } from "../lib/icons";
 import { fileUrl, humanSize } from "../lib/files";
 import { toast } from "../lib/toast";
+import { useJump } from "../state/jump";
 import { useUiState } from "../state/ui";
 
 type Item =
@@ -116,10 +117,16 @@ export function SearchPane() {
     }
   }, [ui.searchOpen]);
 
+  const requestJump = useJump(s => s.request);
   const jumpTo = (m: SearchMessageHit) => {
     ui.setSearchOpen(false);
     ui.selectChannel(m.group_id, m.channel_id);
-    if (m.thread_id != null) ui.openThread(m.thread_id);
+    if (m.thread_id != null) {
+      ui.openThread(m.thread_id);
+      requestJump({ mid: m.id, container: "thread" });
+    } else {
+      requestJump({ mid: m.id, container: "log" });
+    }
   };
 
   const runAsk = () => {

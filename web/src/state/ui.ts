@@ -28,6 +28,8 @@ function loadJSON<T>(key: string, fallback: T): T {
 interface UiState {
   sel: Selection;
   view: MainView;
+  /** Slack-style phone drill-down: which column a narrow viewport shows. */
+  mobileView: "side" | "main" | "thread";
   panel: Panel;
   /** Expanded group ids; null = "the selected group counts as expanded". */
   expanded: string[] | null;
@@ -59,6 +61,8 @@ interface UiState {
 export const useUiState = create<UiState>((set, get) => ({
   sel: loadJSON<Selection>("agora_sel", {}),
   view: { kind: "channel" },
+  // Phones land on the channel when one is remembered, else the group list.
+  mobileView: loadJSON<Selection>("agora_sel", {}).c ? "main" : "side",
   panel: null,
   expanded: loadJSON<string[] | null>("agora_open", null),
   unreadsOnly: localStorage.getItem("agora_unreads_only") === "1",
@@ -71,15 +75,15 @@ export const useUiState = create<UiState>((set, get) => ({
 
   selectChannel: (g, c) => set(() => {
     localStorage.setItem("agora_sel", JSON.stringify({ g, c }));
-    return { sel: { g, c }, view: { kind: "channel" }, threadRoot: null };
+    return { sel: { g, c }, view: { kind: "channel" }, threadRoot: null, mobileView: "main" as const };
   }),
-  openInbox: () => set({ view: { kind: "inbox" }, threadRoot: null }),
+  openInbox: () => set({ view: { kind: "inbox" }, threadRoot: null, mobileView: "main" }),
   openGroupPage: (g) => set((s) => {
     const sel = { ...s.sel, g };
     localStorage.setItem("agora_sel", JSON.stringify(sel));
-    return { sel, view: { kind: "group" } };
+    return { sel, view: { kind: "group" }, mobileView: "main" as const };
   }),
-  backToGroups: () => set({ view: { kind: "channel" } }),
+  backToGroups: () => set({ mobileView: "side" }),
 
   isExpanded: (g) => {
     const s = get();
@@ -103,8 +107,8 @@ export const useUiState = create<UiState>((set, get) => ({
     localStorage.setItem("agora_side", next ? "collapsed" : "open");
     return { sideCollapsed: next };
   }),
-  openThread: (rootId) => set({ threadRoot: rootId }),
-  closeThread: () => set({ threadRoot: null }),
+  openThread: (rootId) => set({ threadRoot: rootId, mobileView: "thread" }),
+  closeThread: () => set({ threadRoot: null, mobileView: "main" }),
   toggleThreadSize: () => set((s) => {
     const next = !s.threadExpanded;
     localStorage.setItem("agora_thread", next ? "expanded" : "open");

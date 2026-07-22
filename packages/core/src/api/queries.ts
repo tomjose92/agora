@@ -128,6 +128,27 @@ export function useUpdateChannel() {
   });
 }
 
+/** Persist a drag-reorder of the home group list. */
+export function useReorderGroups() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => api.put("/api/groups/order", { ids }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.groups }),
+  });
+}
+
+/** Persist a drag-reorder of one group's channel list. */
+export function useReorderChannels() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { groupId: string; ids: string[] }) =>
+      api.put(`/api/groups/${encodeURIComponent(v.groupId)}/channels/order`, { ids: v.ids }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.groups }),
+  });
+}
+
 export function useDeleteChannel() {
   const api = useApi();
   const qc = useQueryClient();
