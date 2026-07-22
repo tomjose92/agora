@@ -217,15 +217,16 @@ async fn ensure_embedded(handle: &AppHandle) -> anyhow::Result<&'static Embedded
     EMBEDDED
         .get_or_try_init(|| async move {
             let data_dir = handle.path().app_data_dir()?;
-            // Bundled UI: <bundle>/Resources/ui in a build; the repo's ui/ in dev.
+            // Bundled UI: <bundle>/Resources/ui in a build (tauri copies
+            // web/dist there); the repo's web/dist in dev (`npm run build`).
             let ui_dir = handle
                 .path()
                 .resolve("ui", BaseDirectory::Resource)
                 .ok()
                 .filter(|p| p.join("index.html").exists())
                 .or_else(|| {
-                    let dev =
-                        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui");
+                    let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../web/dist");
                     dev.join("index.html").exists().then_some(dev)
                 });
             let core = agora_core::run(data_dir, ui_dir).await?;

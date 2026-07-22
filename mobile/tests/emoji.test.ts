@@ -1,5 +1,3 @@
-import * as fs from "fs";
-import * as path from "path";
 import { EMOJI_CATEGORIES } from "@agora/core";
 
 describe("emoji dataset", () => {
@@ -25,11 +23,4 @@ describe("emoji dataset", () => {
     }
   });
 
-  it("matches the web UI dataset (ui/emoji.js)", () => {
-    const src = fs.readFileSync(path.join(__dirname, "../../ui/emoji.js"), "utf8");
-    // ui/emoji.js is a plain script that declares AGO_EMOJI; evaluate it and
-    // compare — the two clients must ship identical emoji data.
-    const web = new Function(`${src}; return AGO_EMOJI;`)();
-    expect(web).toEqual(EMOJI_CATEGORIES.map((c) => ({ name: c.name, emoji: c.emoji })));
-  });
 });

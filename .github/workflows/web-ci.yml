@@ -1,19 +1,16 @@
-# CI for the JS stack (packages/core + web) and the committed UI build.
+# CI for the JS stack (packages/core + web).
 #
-# Three guarantees on every PR that touches the web code:
-#   1. checks   — typecheck + @agora/core unit tests (incl. mdlite byte-parity
-#                 with the vanilla UI and the three-way emoji sync).
-#   2. drift    — `npm run build` and `node scripts/gen-emoji.js` reproduce
-#                 the committed ui/app2/, ui/index.html, and emoji datasets
-#                 byte-for-byte. Editing web/ or packages/core without
-#                 rebuilding (or hand-editing generated files) fails here.
-#   3. parity   — the Playwright suite (web/e2e/parity.mjs) drives every core
-#                 flow against a real agora-server, on both the React app at
-#                 "/" and the legacy vanilla UI at "/vanilla/".
-#
-#   4. mobile  — mobile/ consumes @agora/core via a file: dependency, so a
+# Guarantees on every PR that touches the web code:
+#   1. checks  — typecheck + @agora/core unit tests, a web build (web/dist is
+#                gitignored — nothing generated is committed), and a drift
+#                check that scripts/gen-emoji.js reproduces the committed
+#                packages/core emoji dataset.
+#   2. mobile  — mobile/ consumes @agora/core via a file: dependency, so a
 #                core change can break it: standalone npm ci + tsc + jest.
 #                (Publishing stays in publish-mobile.yml.)
+#   3. parity  — the Playwright suite (web/e2e/parity.mjs) drives every core
+#                flow against a real agora-server serving the fresh web/dist
+#                build.
 
 name: Web CI
 
@@ -22,7 +19,6 @@ on:
     paths:
       - "web/**"
       - "packages/**"
-      - "ui/**"
       - "mobile/**"
       - "package.json"
       - "package-lock.json"
@@ -33,7 +29,6 @@ on:
     paths:
       - "web/**"
       - "packages/**"
-      - "ui/**"
       - "mobile/**"
       - "package.json"
       - "package-lock.json"
@@ -59,16 +54,13 @@ jobs:
         run: npm run typecheck
       - name: Unit tests (@agora/core)
         run: npm test
-      - name: Rebuild generated files and check for drift
+      - name: Web build succeeds (web/dist is gitignored, never committed)
+        run: npm run build
+      - name: Emoji dataset drift check
         run: |
-          npm run build
           node scripts/gen-emoji.js
-          # ui/app2, ui/index.html, and the emoji datasets are generated —
-          # a diff here means a PR changed sources without rebuilding, or
-          # hand-edited a generated file.
-          git diff --exit-code -- ui/app2 ui/index.html ui/emoji.js \
-            packages/core/src/lib/emoji.ts \
-            || { echo "::error::Generated files are stale — run 'npm run build' and 'node scripts/gen-emoji.js' and commit the result."; exit 1; }
+          git diff --exit-code -- packages/core/src/lib/emoji.ts \
+            || { echo "::error::packages/core/src/lib/emoji.ts is stale — run 'node scripts/gen-emoji.js' and commit the result."; exit 1; }
 
   mobile:
     runs-on: ubuntu-latest
@@ -109,23 +101,16 @@ jobs:
       - run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+      - name: Build web UI
+        run: npm run build
       - name: Build agora-server
         run: cargo build -p agora-server
-      - name: Parity suite — React app at /
+      - name: Parity suite
         run: |
           rm -rf /tmp/agora-parity
-          ./target/debug/agora-server --data-dir /tmp/agora-parity --ui-dir ui &
+          ./target/debug/agora-server --data-dir /tmp/agora-parity --ui-dir web/dist &
           SERVER_PID=$!
           for i in $(seq 1 50); do [ -f /tmp/agora-parity/config.json ] && break; sleep 0.2; done
           export AGORA_TOKEN=$(node -e "console.log(require('/tmp/agora-parity/config.json').admin_key)")
           node web/e2e/parity.mjs /
-          kill $SERVER_PID
-      - name: Parity suite — legacy vanilla UI at /vanilla/
-        run: |
-          rm -rf /tmp/agora-parity
-          ./target/debug/agora-server --data-dir /tmp/agora-parity --ui-dir ui &
-          SERVER_PID=$!
-          for i in $(seq 1 50); do [ -f /tmp/agora-parity/config.json ] && break; sleep 0.2; done
-          export AGORA_TOKEN=$(node -e "console.log(require('/tmp/agora-parity/config.json').admin_key)")
-          node web/e2e/parity.mjs /vanilla/
           kill $SERVER_PID

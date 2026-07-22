@@ -24,3 +24,6 @@ __pycache__/
 
 # OS noise
 .DS_Store
+
+# Vite build output (served via --ui-dir; never committed)
+web/dist/

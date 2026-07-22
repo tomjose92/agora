@@ -1,6 +1,6 @@
-/* Inline SVG icon set (Lucide outlines) — copied from ui/icons.js, which
-   stays the source of truth; keep the two maps in sync when adding icons.
-   Markup is byte-identical to the vanilla icon() helper for CSS parity. */
+/* Inline SVG icon set (Lucide outlines, https://lucide.dev — ISC license),
+   vendored so the UI works offline. This map is the source of truth for
+   the web UI's icons. */
 
 export const ICONS: Record<string, string> = {
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',

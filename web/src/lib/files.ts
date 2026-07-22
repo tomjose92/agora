@@ -1,6 +1,6 @@
 /* File/avatar URLs with the session token in the query — <img> and download
    links can't send the Authorization header (mirrors agoFileUrl and the
-   avatar src logic in ui/agora.js). */
+   avatar src logic in the retired vanilla agora.js). */
 
 import { sessionToken } from "./auth";
 

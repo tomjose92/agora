@@ -1,4 +1,4 @@
-/* Palette distilled from ui/style.css so the app matches the desktop UI. */
+/* Palette distilled from web/src/styles.css so the app matches the web UI. */
 export const colors = {
   bg: "#07090f",
   panel: "rgba(255,255,255,0.028)",

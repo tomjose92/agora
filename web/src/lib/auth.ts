@@ -1,4 +1,4 @@
-/* Token/fragment intake — a port of ui/shim.js initToken(), honoring the
+/* Token/fragment intake — a port of the retired vanilla shim.js initToken(), honoring the
    exact same contracts: ?token= from the desktop shell, #agora_session= /
    #auth_error= from the Google round-trip, #join= from /join/{token}. The
    same localStorage key as the vanilla UI, so a sign-in carries across. */

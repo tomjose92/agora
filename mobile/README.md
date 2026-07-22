@@ -64,5 +64,5 @@ Release builds go through EAS (`eas.json`): `eas build --profile preview`.
   reducer that patches the query cache (`message`, `read`, `typing`,
   `progress`, `pin` frames).
 - `src/state/` — session (keychain-backed) and transient live activity.
-- `src/lib/` — mdlite parser, theme (ported from `ui/style.css`), helpers.
+- `src/lib/` — mdlite parser, theme (matched to `web/src/styles.css`), helpers.
 - `src/components/` — message list pieces, composer, toasts, etc.

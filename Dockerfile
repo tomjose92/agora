@@ -10,12 +10,20 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 RUN cargo build --release -p agora-server
 
+# The web UI is built from source (web/ + packages/core), never committed.
+FROM node:22-bookworm-slim AS web-build
+WORKDIR /src
+COPY package.json package-lock.json ./
+COPY packages ./packages
+COPY web ./web
+RUN npm ci --no-audit --no-fund && npm run build
+
 FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/agora-server /usr/local/bin/agora-server
-COPY ui /app/ui
+COPY --from=web-build /src/web/dist /app/ui
 
 # Accept connections from the platform's proxy; Railway injects PORT itself.
 ENV AGORA_BIND=0.0.0.0

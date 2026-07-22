@@ -1,4 +1,4 @@
-/* Sign-in card — same markup/ids as the vanilla authGate() in ui/shim.js so
+/* Sign-in card — same markup/ids as the vanilla authGate() in the retired vanilla shim.js so
    style.css and the parity flows apply unchanged. Google leads when the
    server offers it; the admin key is always available. */
 

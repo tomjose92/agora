@@ -1,5 +1,5 @@
 /* Two-step destructive actions: first click arms ("Sure?"), second within
-   5s executes — the same scheme as agoArm/agoArmed in ui/agora.js. */
+   5s executes — the same scheme as agoArm/agoArmed in the retired vanilla agora.js. */
 
 import { create } from "zustand";
 

@@ -1,5 +1,5 @@
 /* @mention decoration in rendered message HTML — port of agoMd()'s second
-   pass in ui/agora.js: known @tokens become .ago-mention name chips, but
+   pass in the retired vanilla agora.js: known @tokens become .ago-mention name chips, but
    never inside <pre>/<code>/<a> segments. */
 
 import { esc } from "@agora/core";

@@ -1,4 +1,4 @@
-/* Live event socket. Same reconnect scheme as ui/agora.js: 1s backoff
+/* Live event socket. Same reconnect scheme as the retired vanilla agora.js: 1s backoff
    doubling to a 30s cap, reset on a successful open. On every (re)open we
    refetch active queries to heal any gap, and the OS AppState listener
    forces a fresh connect when the app returns to the foreground. */
