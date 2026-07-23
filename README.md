@@ -35,7 +35,7 @@ email/invite-link admission, and Google/Apple sign-in. The `admin_key` in
 | `crates/agora-server` | The same core run headless (`agora-server` binary) for a VPS. |
 | `web/` + `packages/core` | The web UI (React + TypeScript, incl. voice) on a shared client core; `npm run build` emits `web/dist/`, served by both the desktop app and the headless server. |
 | `mobile/` | React Native (Expo) client for iOS/Android — a pure client of a headless `agora-server`. See [`mobile/README.md`](mobile/README.md). |
-| `bridges/` | Dial-in bridge clients for the agent protocol. [`bridges/claude-cli`](bridges/claude-cli/README.md) drives local Claude Code sessions from a channel. |
+| `bridges/` | Dial-in bridge clients for the agent protocol. [`bridges/claude-cli`](bridges/claude-cli/README.md) drives local Claude Code sessions from a channel; [`bridges/codex-cli`](bridges/codex-cli/README.md) does the same for the Codex CLI. |
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together.
 
@@ -154,8 +154,8 @@ requirement are in [Notifications](docs/DEPLOYMENT.md#notifications).
 ## Roadmap
 
 - **More bridge kits** — a [Claude CLI bridge](bridges/claude-cli/README.md)
-  ships today; ready-made Node/other clients for the dial-in
-  [protocol](docs/PROTOCOL.md) are next.
+  and a [Codex CLI bridge](bridges/codex-cli/README.md) ship today; ready-made
+  Node/other clients for the dial-in [protocol](docs/PROTOCOL.md) are next.
 - **Richer mobile push** — agent-message Expo push ships today (see
   [Notifications](docs/DEPLOYMENT.md#notifications)); optional polish is badge counts
   in the push payload and Android FCM credential automation in EAS.

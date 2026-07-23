@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Claude CLI bridge for Agora.
+"""Codex CLI bridge for Agora.
 
-Runs on the machine where you use Claude Code, dials into an Agora hub as a
-dial-in agent (pairing token), and forwards channel messages to local Claude
-CLI sessions via `claude -p --resume`. Lets you follow up on finished Claude
-sessions from your phone while the laptop sits at home.
+Runs on the machine where you use the Codex CLI, dials into an Agora hub as a
+dial-in agent (pairing token), and forwards channel messages to local Codex
+sessions via `codex exec` / `codex exec resume`. Lets you follow up on
+finished Codex sessions from your phone while the laptop sits at home.
 
 Protocol (see docs/PROTOCOL.md, "Third-party agents"):
   -> {"type": "hello", "agents": [{"id", "name", "requires_mention",
@@ -13,18 +13,12 @@ Protocol (see docs/PROTOCOL.md, "Third-party agents"):
        "mentioned", "any_mention", ...}
   -> {"type": "post", "agent_id", "channel_id", "thread_id", "text"}
   -> {"type": "typing" | "progress", ...}   (optional niceties)
-  -> {"type": "post", ..., "options_id", "options"}   (permission buttons)
-  <- {"type": "option_select", "options_id", "option_id", "user", ...}
-  -> {"type": "options_resolve", "options_id", "text"}
 
-Tool permissions: runs use `--permission-prompt-tool stdio`, so when the CLI
-needs approval it emits a `control_request` (subtype `can_use_tool`) on stdout;
-the bridge posts Approve/Always/Reject buttons to the channel and answers with
-a `control_response` on stdin once someone taps (deny on timeout).
-
-AskUserQuestion is not a permission ask — the CLI is waiting for answers. The
-bridge posts each question with one button per option (a typed reply also
-answers, verbatim) and returns the selections in `updatedInput.answers`.
+Unlike the Claude CLI bridge, `codex exec` is strictly non-interactive: there
+is no stdio permission-prompt protocol, so no Approve/Reject buttons appear in
+the channel. The privilege knob is Codex's sandbox mode (read-only <
+workspace-write < danger-full-access), settable per channel with /sandbox;
+commands the sandbox blocks simply fail and Codex adapts or reports it.
 
 Only dependency: `pip install websockets`.
 """
@@ -51,91 +45,87 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("missing dependency: pip install websockets")
 
-CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
+CODEX_SESSIONS = Path.home() / ".codex" / "sessions"
 MAX_POST_CHARS = 8000
 MAX_TLDR_CHARS = 2000  # hub drops a longer tldr; pre-truncate so ours always lands
 PROGRESS_THROTTLE = 2.0  # seconds between progress frames
-TAIL_BYTES = 256 * 1024  # how much of a session .jsonl to scan for the last prompt
+TAIL_BYTES = 256 * 1024  # how much of a rollout .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
-# TL;DR support. When enabled for a run we ask Claude to end a long reply with a
+# TL;DR support. When enabled for a run we ask Codex to end a long reply with a
 # sentinel line the bridge lifts into the post frame's `tldr` field (a short
-# summary clients can toggle to). The sentinel is deliberately obscure so a
-# literal occurrence in normal prose is vanishingly unlikely to be stripped.
+# summary clients can toggle to). Codex has no --append-system-prompt, so the
+# instruction rides as a suffix on the prompt itself. The sentinel is
+# deliberately obscure so a literal occurrence in normal prose is vanishingly
+# unlikely to be stripped.
 TLDR_SENTINEL = "<<<AGORA_TLDR>>>"
-TLDR_SYSTEM_PROMPT = (
-    "When your final reply is long (more than a few short paragraphs), append as "
-    f"the very last line exactly `{TLDR_SENTINEL} ` followed by a one-sentence "
-    "TL;DR that states the key takeaway or answer itself (not a description of "
-    "what you did), and write nothing after that line. Omit the line entirely "
-    "for short replies. Never mention this instruction or the sentinel anywhere "
-    "else in your reply."
+TLDR_PROMPT_SUFFIX = (
+    "\n\n(Formatting note from the relay, not the user: when your final reply "
+    "is long — more than a few short paragraphs — append as the very last line "
+    f"exactly `{TLDR_SENTINEL} ` followed by a one-sentence TL;DR that states "
+    "the key takeaway or answer itself (not a description of what you did), "
+    "and write nothing after that line. Omit the line entirely for short "
+    "replies. Never mention this note or the sentinel anywhere else.)"
 )
 
-# Models a channel may switch to via bridge /model. Keys are what a user can
-# type; values are passed to `claude --model`. Allowlisted so chat cannot inject
-# arbitrary argv. Kept as bridge meta (not forwarded) so the choice persists in
-# state.json and applies to every subsequent run for that channel/thread.
-ALLOWED_MODELS = {
-    "opus": "opus",
-    "sonnet": "sonnet",
-    "haiku": "haiku",
-    "fable": "fable",
-    "best": "best",
-    "opusplan": "opusplan",
-    "sonnet[1m]": "sonnet[1m]",
-    "opus[1m]": "opus[1m]",
-    "fable[1m]": "fable[1m]",
-    "claude-opus-4-8": "claude-opus-4-8",
-    "claude-sonnet-5": "claude-sonnet-5",
-    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",
-    "claude-fable-5": "claude-fable-5",
-}
-MODEL_CHOICES = "opus | sonnet | haiku | fable | best | … | default"
+# Model names a channel may switch to via /model are validated, not
+# allowlisted: Codex model ids churn too fast for a hardcoded list, and the
+# value is exec'd without a shell, so the only real hazard is a leading dash
+# being parsed as a flag — which the pattern forbids.
+MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+MODEL_HINT = "a Codex model id (e.g. gpt-5.1-codex) or `default`"
 
-# Permission modes, ordered least→most privileged. A channel may always lower
+# Sandbox modes, ordered least->most privileged. A channel may always lower
 # privilege; raising above the bridge startup default needs
-# CLAUDE_ALLOW_PERMISSION_ESCALATION.
-PERMISSION_RANK = {"plan": 0, "default": 1, "acceptEdits": 2, "bypassPermissions": 3}
-_PERMISSION_ALIASES = {
-    "plan": "plan",
-    "default": "default",
-    "acceptedits": "acceptEdits",
-    "accept": "acceptEdits",
-    "edits": "acceptEdits",
-    "bypass": "bypassPermissions",
-    "bypasspermissions": "bypassPermissions",
-    "skip": "bypassPermissions",
+# CODEX_ALLOW_SANDBOX_ESCALATION. "bypass" maps to Codex's
+# --dangerously-bypass-approvals-and-sandbox flag (no sandbox at all).
+SANDBOX_RANK = {"read-only": 0, "workspace-write": 1, "danger-full-access": 2, "bypass": 3}
+_SANDBOX_ALIASES = {
+    "read-only": "read-only",
+    "readonly": "read-only",
+    "read": "read-only",
+    "ro": "read-only",
+    "workspace-write": "workspace-write",
+    "workspace": "workspace-write",
+    "write": "workspace-write",
+    "ww": "workspace-write",
+    "danger-full-access": "danger-full-access",
+    "full-access": "danger-full-access",
+    "full": "danger-full-access",
+    "danger": "danger-full-access",
+    "bypass": "bypass",
+    "skip": "bypass",
 }
+SANDBOX_CHOICES = "read-only | workspace-write | danger-full-access | bypass | reset"
 
 
-def normalize_permission_mode(raw: str) -> str | None:
-    """Map a user/CLI spelling to a canonical --permission-mode value (or None)."""
-    return _PERMISSION_ALIASES.get((raw or "").strip().lower())
+def normalize_sandbox_mode(raw: str) -> str | None:
+    """Map a user/CLI spelling to a canonical sandbox mode (or None)."""
+    return _SANDBOX_ALIASES.get((raw or "").strip().lower())
 
 
-def split_permission_args(tokens: list[str]) -> tuple[str, list[str]]:
-    """Pull the default permission mode out of the base claude args.
+def split_sandbox_args(tokens: list[str]) -> tuple[str | None, list[str]]:
+    """Pull a sandbox mode out of the base codex args.
 
-    Returns (default_mode, remaining_tokens). Strips --permission-mode /
-    --dangerously-skip-permissions so the per-binding mode passed in
-    run_claude cannot collide with a duplicate in CLAUDE_PERMISSION_ARGS.
+    Returns (mode_or_None, remaining_tokens). Strips -s/--sandbox and
+    --dangerously-bypass-approvals-and-sandbox so the per-binding mode passed
+    in run_codex cannot collide with a duplicate in CODEX_ARGS.
     """
-    mode = "default"
+    mode: str | None = None
     out: list[str] = []
     i = 0
     while i < len(tokens):
         t = tokens[i]
-        if t == "--permission-mode" and i + 1 < len(tokens):
-            mode = normalize_permission_mode(tokens[i + 1]) or mode
+        if t in ("-s", "--sandbox") and i + 1 < len(tokens):
+            mode = normalize_sandbox_mode(tokens[i + 1]) or mode
             i += 2
             continue
-        if t.startswith("--permission-mode="):
-            mode = normalize_permission_mode(t.split("=", 1)[1]) or mode
+        if t.startswith("--sandbox="):
+            mode = normalize_sandbox_mode(t.split("=", 1)[1]) or mode
             i += 1
             continue
-        if t == "--dangerously-skip-permissions":
-            mode = "bypassPermissions"
+        if t == "--dangerously-bypass-approvals-and-sandbox":
+            mode = "bypass"
             i += 1
             continue
         out.append(t)
@@ -143,19 +133,18 @@ def split_permission_args(tokens: list[str]) -> tuple[str, list[str]]:
     return mode, out
 
 
-# Bridge meta commands. Everything else is forwarded to the bound session via
-# `claude -p` (including headless-capable Claude slash cmds like /compact).
-# Prefer bridge names that don't collide with Claude Code's interactive-only
-# commands (/help, /resume): https://code.claude.com/docs/en/commands
-HELP = """Bridge commands (plain text + other Claude slash cmds are forwarded):
-/sessions [n] - list recent Claude CLI sessions
+# Bridge meta commands. Everything else is forwarded to the bound session as
+# the prompt for a `codex exec` run. (Codex's own slash commands are TUI-only
+# and don't exist headlessly, so there is nothing to forward them to.)
+HELP = """Bridge commands (anything else is sent to the bound Codex session):
+/sessions [n] - list recent Codex CLI sessions
 /use <n | session-id> - bind this channel/thread to a session
 /new <dir> - bind to a fresh session in a directory (must be under an allowed root)
 /worktree <repo> [branch] - isolate this thread in a fresh git worktree + branch
 /worktree [show] - show this thread's worktree; /worktree remove [force] - delete it
 /worktrees - list every tracked worktree
-/model <opus|sonnet|haiku|fable|…|default> - set the model for this channel
-/permissions <plan|acceptEdits|bypass|default|reset> - set the permission mode
+/model <model-id|default> - set the model for this channel (codex -m)
+/sandbox <read-only|workspace-write|full|bypass|reset> - set the sandbox mode
 /tldr <on|off|default> - add a toggleable short summary to long replies
 /stop - cancel the run in flight on this channel
 /status - show the current binding
@@ -176,7 +165,7 @@ def _reject_insecure_ws(url: str) -> None:
 
 
 def parse_allowed_roots(raw: str) -> list[Path]:
-    """Parse a colon-separated CLAUDE_ALLOWED_ROOTS into resolved directories."""
+    """Parse a colon-separated CODEX_ALLOWED_ROOTS into resolved directories."""
     roots: list[Path] = []
     for part in (raw or "").split(":"):
         part = part.strip()
@@ -238,48 +227,52 @@ def _ensure_git_excluded(repo_root: Path, pattern: str) -> None:
 # --------------------------------------------------------------- session scan
 
 
-def _extract_user_text(content) -> str | None:
-    """Pull displayable text out of a user message's `content` field."""
-    if isinstance(content, list):
-        content = " ".join(
-            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
-        )
-    if not isinstance(content, str):
-        return None
-    text = content.strip()
-    # Skip meta/command noise (local-command caveats, /slash command records).
-    if not text or text.startswith("<"):
-        return None
-    return text
-
-
 def _scan_session_file(path: Path) -> dict | None:
-    """Return {session_id, cwd, last_prompt, mtime} for one session .jsonl."""
+    """Return {session_id, cwd, last_prompt, mtime} for one rollout .jsonl.
+
+    The first line is a `session_meta` record carrying the id and cwd; the
+    last user turn is an `event_msg` record with payload type `user_message`
+    somewhere near the tail.
+    """
     try:
         size = path.stat().st_size
         with path.open("rb") as f:
+            first = f.readline().decode("utf-8", errors="replace")
             if size > TAIL_BYTES:
                 f.seek(size - TAIL_BYTES)
                 f.readline()  # drop the partial line
             lines = f.read().decode("utf-8", errors="replace").splitlines()
     except OSError:
         return None
-    cwd, last_prompt = None, None
+    session_id, cwd = None, None
+    try:
+        meta = json.loads(first)
+        if meta.get("type") == "session_meta":
+            payload = meta.get("payload") or {}
+            session_id = payload.get("id") or payload.get("session_id")
+            cwd = payload.get("cwd")
+    except json.JSONDecodeError:
+        pass
+    if not session_id:
+        return None
+    last_prompt = None
     for line in reversed(lines):
         try:
             rec = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if cwd is None and rec.get("cwd"):
-            cwd = rec["cwd"]
-        if last_prompt is None and rec.get("type") == "user" and not rec.get("isMeta"):
-            last_prompt = _extract_user_text(rec.get("message", {}).get("content"))
-        if cwd and last_prompt:
-            break
+        if rec.get("type") != "event_msg":
+            continue
+        payload = rec.get("payload") or {}
+        if payload.get("type") == "user_message":
+            text = str(payload.get("message") or "").strip()
+            if text:
+                last_prompt = text
+                break
     if last_prompt is None:
         return None  # no real user turn in the tail; not worth listing
     return {
-        "session_id": path.stem,
+        "session_id": session_id,
         "cwd": cwd or "?",
         "last_prompt": last_prompt,
         "mtime": path.stat().st_mtime,
@@ -288,7 +281,7 @@ def _scan_session_file(path: Path) -> dict | None:
 
 def recent_sessions(limit: int) -> list[dict]:
     files = sorted(
-        CLAUDE_PROJECTS.glob("*/*.jsonl"),
+        CODEX_SESSIONS.glob("*/*/*/rollout-*.jsonl"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -303,7 +296,7 @@ def recent_sessions(limit: int) -> list[dict]:
 
 
 def find_session(session_id: str) -> dict | None:
-    for path in CLAUDE_PROJECTS.glob(f"*/{session_id}.jsonl"):
+    for path in CODEX_SESSIONS.glob(f"*/*/*/rollout-*{session_id}.jsonl"):
         return _scan_session_file(path)
     return None
 
@@ -319,7 +312,7 @@ def _age(ts: float) -> str:
 
 def format_sessions(sessions: list[dict]) -> str:
     if not sessions:
-        return "No Claude CLI sessions found."
+        return "No Codex CLI sessions found."
     lines = []
     for i, s in enumerate(sessions, 1):
         prompt = s["last_prompt"].replace("\n", " ")
@@ -360,15 +353,17 @@ def _unique_path(dest: Path, name: str) -> Path:
         i += 1
 
 
-def materialize_attachments(attachments: list, dest_dir: Path) -> tuple[list[Path], list[str]]:
-    """Write inlined attachment bytes into ``dest_dir`` for Claude to read.
+def materialize_attachments(attachments: list, dest_dir: Path) -> tuple[list[Path], list[Path], list[str]]:
+    """Write inlined attachment bytes into ``dest_dir`` for Codex to read.
 
-    The hub inlines files up to a size cap as base64 (``data_b64``); larger ones
-    arrive as name-only refs with no bytes. Returns the saved paths plus a list
-    of human/agent-readable note lines describing every attachment (saved,
-    oversized, or undecodable) to append to the prompt.
+    The hub inlines files up to a size cap as base64 (``data_b64``); larger
+    ones arrive as name-only refs with no bytes. Returns ``(saved, images,
+    notes)``: the saved paths, the subset that are images (attached to the run
+    via ``codex -i`` so the model actually sees them), and human/agent-readable
+    note lines describing every attachment to append to the prompt.
     """
     saved: list[Path] = []
+    images: list[Path] = []
     notes: list[str] = []
     for att in attachments:
         if not isinstance(att, dict):
@@ -394,8 +389,10 @@ def materialize_attachments(attachments: list, dest_dir: Path) -> tuple[list[Pat
             notes.append(f"- {filename} ({mime}) — could not be written ({e}), skipped")
             continue
         saved.append(path)
+        if mime.startswith("image/"):
+            images.append(path)
         notes.append(f"- {path} ({mime}, {len(data)} bytes)")
-    return saved, notes
+    return saved, images, notes
 
 
 # --------------------------------------------------------------------- bridge
@@ -406,18 +403,19 @@ class Bridge:
         self.url = self._normalize_url(args.url, args.token)
         self.agent_id = args.agent_id
         self.agent_name = args.agent_name
-        self.claude_bin = args.claude_bin
-        # Separate default permission mode from other base args so a per-binding
-        # /permissions choice can override it without a duplicate flag.
-        self.default_permission_mode, self.base_claude_args = split_permission_args(
-            shlex.split(args.claude_args)
+        self.codex_bin = args.codex_bin
+        # Separate a sandbox mode embedded in CODEX_ARGS from the other base
+        # args so the per-binding /sandbox choice can't collide with a
+        # duplicate flag; an explicit --sandbox / CODEX_SANDBOX wins.
+        args_mode, self.base_codex_args = split_sandbox_args(shlex.split(args.codex_args))
+        self.default_sandbox = (
+            normalize_sandbox_mode(args.sandbox) or args_mode or "workspace-write"
         )
         self.default_model = (args.model or "").strip() or None
         self.tldr_default = args.tldr
         self.tldr_min_chars = max(0, args.tldr_min_chars)
-        self.allow_escalation = args.allow_permission_escalation
+        self.allow_escalation = args.allow_sandbox_escalation
         self.timeout = args.timeout
-        self.permission_timeout = args.permission_timeout
         self.sessions_limit = args.sessions
         self.allowed_roots = parse_allowed_roots(args.allowed_roots)
         self.auto_worktree = args.auto_worktree
@@ -428,20 +426,9 @@ class Bridge:
         # In-flight lifecycle reaction per inbound message id, so a new stage
         # (👀 → ✅) replaces the previous emoji instead of stacking.
         self._reactions: dict[int, str] = {}
-        self.procs: dict[str, asyncio.subprocess.Process] = {}  # key -> running claude
+        self.procs: dict[str, asyncio.subprocess.Process] = {}  # key -> running codex
         self.stop_requested: set[str] = set()  # keys cancelled via /stop
         self.outbox: asyncio.Queue = asyncio.Queue()
-        # In-flight asks awaiting a channel response: options_id ->
-        # (future, channel_id, thread_id). Futures resolve to
-        # ("option", option_id, user) on a button tap, or ("text", reply, user)
-        # when a typed message answers a pending question.
-        self.pending_perms: dict[str, tuple[asyncio.Future, str, int | None]] = {}
-        # Unanswered AskUserQuestion entries per binding key, oldest first, so
-        # a plain channel message can answer one as free text while a run is busy.
-        self.pending_questions: dict[str, list[dict]] = {}
-        # "Always allow" tool names granted per binding key; memory-only so a
-        # bridge restart re-asks rather than silently trusting old grants.
-        self.session_allows: dict[str, set[str]] = {}
         # Per-binding backlog of messages we saw but stayed silent on (someone
         # else was @mentioned). Flushed into the prompt as context the next time
         # we're actually addressed, so a late @mention arrives already caught up.
@@ -512,7 +499,7 @@ class Bridge:
             "agent_id": self.agent_id,
             "channel_id": frame["channel_id"],
             "thread_id": frame.get("thread_id"),
-            "handle": f"claude:{frame['channel_id']}:{frame.get('thread_id') or 0}",
+            "handle": f"codex:{frame['channel_id']}:{frame.get('thread_id') or 0}",
             "text": text,
         })
 
@@ -607,7 +594,7 @@ class Bridge:
 
     async def handle_inbound(self, frame: dict) -> None:
         key = self.binding_key(frame)
-        # Only humans may drive Claude. Non-user authors (other agents/bots) are
+        # Only humans may drive Codex. Non-user authors (other agents/bots) are
         # never acted on even when they @mention us: a prompt-injected agent in
         # the same channel must never be able to run code on this machine. We do
         # keep their text as context for a later @mention.
@@ -617,9 +604,9 @@ class Bridge:
         self.set_reaction(frame, "👀")
         # Respond only when addressed: we're @mentioned, or no agent was tagged
         # at all (open floor). Otherwise someone else was tagged — stay silent
-        # but remember the turn. A reply to a question we asked here is for us.
+        # but remember the turn so a later @mention lands with the context.
         addressed = bool(frame.get("mentioned")) or not frame.get("any_mention")
-        if not addressed and not self.pending_questions.get(key):
+        if not addressed:
             self.clear_reaction(frame)
             self._buffer_context(key, frame)
             return
@@ -648,8 +635,8 @@ class Bridge:
             self.post(frame, await asyncio.to_thread(self._worktree_list))
         elif cmd == "/model":
             self.post(frame, self._cmd_model(key, rest))
-        elif cmd == "/permissions":
-            self.post(frame, self._cmd_permissions(key, rest))
+        elif cmd == "/sandbox":
+            self.post(frame, self._cmd_sandbox(key, rest))
         elif cmd == "/tldr":
             self.post(frame, self._cmd_tldr(key, rest))
         elif cmd == "/stop":
@@ -657,17 +644,16 @@ class Bridge:
         elif cmd == "/status":
             self.post(frame, self._cmd_status(key))
         else:
-            # Plain text and Claude CLI slash commands (/compact, /usage, …).
-            await self.forward_to_claude(key, frame, text)
+            await self.forward_to_codex(key, frame, text)
         self.set_reaction(frame, "✅", remember=False)
 
     # ---------------------------------------------------------- commands
 
     def _set_binding(self, key: str, session_id: str | None, cwd: str) -> None:
-        """Write session/cwd for a channel, keeping any model/permission overrides."""
+        """Write session/cwd for a channel, keeping any model/sandbox overrides."""
         prev = self.bindings.get(key) or {}
         binding: dict = {"session_id": session_id, "cwd": cwd}
-        for k in ("model", "permission_mode", "tldr"):
+        for k in ("model", "sandbox", "tldr"):
             if k in prev:
                 binding[k] = prev[k]
         self.bindings[key] = binding
@@ -685,7 +671,7 @@ class Bridge:
         else:
             info = find_session(arg)
             if not info:
-                return f"Session {arg} not found under {CLAUDE_PROJECTS}."
+                return f"Session {arg} not found under {CODEX_SESSIONS}."
         self._set_binding(key, info["session_id"], info["cwd"])
         prompt = info["last_prompt"][:120]
         return (
@@ -702,7 +688,7 @@ class Bridge:
         if not self.allowed_roots:
             return (
                 "/new is disabled: no allowed roots configured. Set "
-                "CLAUDE_ALLOWED_ROOTS (colon-separated dirs) or --allowed-roots "
+                "CODEX_ALLOWED_ROOTS (colon-separated dirs) or --allowed-roots "
                 "on the bridge, then restart it."
             )
         try:
@@ -719,7 +705,7 @@ class Bridge:
         if self.auto_worktree and _git_repo_root(cwd):
             return self._create_worktree(key, str(cwd), "")
         self._set_binding(key, None, str(cwd))
-        return f"Will start a fresh Claude session in {cwd} on your next message."
+        return f"Will start a fresh Codex session in {cwd} on your next message."
 
     # --------------------------------------------------- git worktrees
 
@@ -743,7 +729,7 @@ class Bridge:
         if not self.allowed_roots:
             return (
                 "/worktree is disabled: no allowed roots configured. Set "
-                "CLAUDE_ALLOWED_ROOTS or --allowed-roots, then restart the bridge."
+                "CODEX_ALLOWED_ROOTS or --allowed-roots, then restart the bridge."
             )
         if not repo_arg:
             return "Usage: /worktree <repo> [branch]"
@@ -767,7 +753,7 @@ class Bridge:
             allowed = ", ".join(str(r) for r in self.allowed_roots)
             return (
                 f"Can't place a worktree for {repo_root.name} under any allowed root "
-                f"({allowed}). Add its parent dir to CLAUDE_ALLOWED_ROOTS."
+                f"({allowed}). Add its parent dir to CODEX_ALLOWED_ROOTS."
             )
         if path.exists():
             # Idempotent: a thread re-running /worktree just rebinds to its own dir.
@@ -866,56 +852,55 @@ class Bridge:
             return "No session bound here. Run /sessions then /use <n>."
         if not arg:
             cur = b.get("model") or self.default_model or "session default"
-            return f"Model: {cur}\nUsage: /model <{MODEL_CHOICES}>"
-        choice = arg.strip().lower()
-        if choice == "default":
+            return f"Model: {cur}\nUsage: /model <{MODEL_HINT}>"
+        choice = arg.strip()
+        if choice.lower() == "default":
             b.pop("model", None)
             self.bindings[key] = b
             self._save_state()
             fell_back = self.default_model or "session default"
             return f"Model reset to the bridge default ({fell_back})."
-        model = ALLOWED_MODELS.get(choice)
-        if not model:
-            return f"Unknown model {arg!r}. Options: {MODEL_CHOICES}"
-        b["model"] = model
+        if not MODEL_RE.fullmatch(choice):
+            return f"That doesn't look like a model id. Use {MODEL_HINT}."
+        b["model"] = choice
         self.bindings[key] = b
         self._save_state()
-        return f"Model set to {model} for this channel. Next messages use `claude --model {model}`."
+        return f"Model set to {choice} for this channel. Next messages use `codex -m {choice}`."
 
-    def _cmd_permissions(self, key: str, arg: str) -> str:
+    def _cmd_sandbox(self, key: str, arg: str) -> str:
         b = self.bindings.get(key)
         if not b:
             return "No session bound here. Run /sessions then /use <n>."
-        default = self.default_permission_mode
+        default = self.default_sandbox
         if not arg:
-            cur = b.get("permission_mode") or default
+            cur = b.get("sandbox") or default
             return (
-                f"Permission mode: {cur} (bridge default: {default})\n"
-                "Usage: /permissions <plan | acceptEdits | bypass | default | reset>"
+                f"Sandbox mode: {cur} (bridge default: {default})\n"
+                f"Usage: /sandbox <{SANDBOX_CHOICES}>"
             )
         choice = arg.strip().lower()
         if choice == "reset":
-            b.pop("permission_mode", None)
+            b.pop("sandbox", None)
             self.bindings[key] = b
             self._save_state()
-            return f"Permission mode reset to the bridge default ({default})."
-        mode = normalize_permission_mode(choice)
+            return f"Sandbox mode reset to the bridge default ({default})."
+        mode = normalize_sandbox_mode(choice)
         if not mode:
-            return "Unknown mode. Options: plan, acceptEdits, bypass, default, reset."
-        if PERMISSION_RANK[mode] > PERMISSION_RANK[default] and not self.allow_escalation:
+            return f"Unknown mode. Options: {SANDBOX_CHOICES}."
+        if SANDBOX_RANK[mode] > SANDBOX_RANK[default] and not self.allow_escalation:
             return (
                 f"Refusing to escalate from {default} to {mode}: privilege escalation "
                 "is disabled. Restart the bridge with "
-                "CLAUDE_ALLOW_PERMISSION_ESCALATION=1 to allow it. You can always "
-                "lower privilege (e.g. /permissions plan)."
+                "CODEX_ALLOW_SANDBOX_ESCALATION=1 to allow it. You can always "
+                "lower privilege (e.g. /sandbox read-only)."
             )
-        b["permission_mode"] = mode
+        b["sandbox"] = mode
         self.bindings[key] = b
         self._save_state()
-        return f"Permission mode set to {mode} for this channel."
+        return f"Sandbox mode set to {mode} for this channel."
 
     def _tldr_enabled(self, binding: dict) -> bool:
-        """Whether this binding should ask Claude for a TL;DR (channel override
+        """Whether this binding should ask Codex for a TL;DR (channel override
         wins over the bridge default)."""
         choice = binding.get("tldr")
         return self.tldr_default if choice is None else bool(choice)
@@ -962,21 +947,19 @@ class Bridge:
             return "No session bound here. Run /sessions then /use <n>."
         sid = b["session_id"][:8] + "…" if b["session_id"] else "(new, not started)"
         model = b.get("model") or self.default_model or "session default"
-        mode = b.get("permission_mode") or self.default_permission_mode
+        mode = b.get("sandbox") or self.default_sandbox
         tldr = "on" if self._tldr_enabled(b) else "off"
         busy = " — a run is in flight" if key in self.busy else ""
         wt = b.get("worktree")
         wt_line = f"\nWorktree: {wt['branch']} @ {wt['path']}" if wt else ""
         return (
             f"Session {sid} in {b['cwd']}\nModel: {model}\n"
-            f"Permissions: {mode}\nTL;DR: {tldr}{busy}{wt_line}"
+            f"Sandbox: {mode}\nTL;DR: {tldr}{busy}{wt_line}"
         )
 
-    # ------------------------------------------------------------ claude
+    # ------------------------------------------------------------- codex
 
-    async def forward_to_claude(self, key: str, frame: dict, text: str) -> None:
-        if self._answer_pending_question(key, frame, text):
-            return
+    async def forward_to_codex(self, key: str, frame: dict, text: str) -> None:
         binding = self.bindings.get(key)
         if not binding:
             self.post(frame, "No session bound here yet. Run /sessions then /use <n>.")
@@ -987,25 +970,25 @@ class Bridge:
         self.busy.add(key)
         self.typing(frame, True)
         try:
-            # Catch Claude up on anything we heard but stayed silent on — but
-            # never prepend context onto a bare slash-command turn (/compact …),
-            # which must reach Claude verbatim.
+            # Catch Codex up on anything we heard but stayed silent on — but
+            # never prepend context onto a bare slash-command turn, which must
+            # reach Codex verbatim.
             if not text.lstrip().startswith("/"):
                 text = self._flush_context(key, text)
-            reply = await self.run_claude(key, frame, binding, text)
+            reply = await self.run_codex(key, frame, binding, text)
             body, tldr = self._split_tldr(
                 reply, self._tldr_enabled(binding), self.tldr_min_chars)
             self.post(frame, body or "(empty response)", tldr)
         except Exception as e:  # degrade to a chat message, never crash the loop
-            log(f"claude run failed: {e!r}")
-            self.post(frame, f"Claude run failed: {e}")
+            log(f"codex run failed: {e!r}")
+            self.post(frame, f"Codex run failed: {e}")
         finally:
             self.busy.discard(key)
             self.typing(frame, False)
 
     @staticmethod
     def _split_tldr(reply: str, enabled: bool, min_chars: int) -> tuple[str, str | None]:
-        """Lift a trailing ``TLDR_SENTINEL`` line out of Claude's reply.
+        """Lift a trailing ``TLDR_SENTINEL`` line out of Codex's reply.
 
         Returns ``(body, tldr)``. When TL;DR is off, the sentinel is absent, or
         anything looks off (empty summary/body, a reply below ``min_chars``, or
@@ -1042,63 +1025,63 @@ class Bridge:
         """Drop any inbound attachments to a temp dir and build the prompt.
 
         Returns ``(prompt, extra_args, tmpdir)``. Bytes are written to a fresh
-        temp dir which is exposed to Claude via ``--add-dir`` (so its Read tool
-        can open them without prompting), and every saved path is named in the
-        prompt so the model knows to look at them. ``tmpdir`` is ``None`` when
-        there's nothing to stage; the caller removes it after the run.
+        temp dir; every saved path is named in the prompt so the model knows to
+        look at them (Codex's sandbox restricts *writes*, not reads, so no
+        extra flag is needed for it to open them). Images are additionally
+        attached via ``codex -i`` so the model actually sees the pixels.
+        ``tmpdir`` is ``None`` when there's nothing to stage; the caller
+        removes it after the run.
         """
         attachments = frame.get("attachments") or []
         if not attachments:
             return text, [], None
         tmpdir = tempfile.mkdtemp(prefix="agora-att-")
-        saved, notes = materialize_attachments(attachments, Path(tmpdir))
+        saved, images, notes = materialize_attachments(attachments, Path(tmpdir))
         prompt = text
         if notes:
             block = "The Agora message included these attachments:\n" + "\n".join(notes)
             prompt = f"{text}\n\n{block}".strip() if text else block
-        extra_args = ["--add-dir", tmpdir] if saved else []
+        extra_args: list[str] = []
+        for img in images:
+            extra_args += ["-i", str(img)]
         if not saved:
             # Nothing landed on disk (all oversized/undecodable) — no point
-            # keeping an empty dir around or widening Claude's read scope.
+            # keeping an empty dir around.
             shutil.rmtree(tmpdir, ignore_errors=True)
             tmpdir = None
         return prompt, extra_args, tmpdir
 
-    async def run_claude(self, key: str, frame: dict, binding: dict, text: str) -> str:
+    def _sandbox_args(self, mode: str) -> list[str]:
+        # -c works on both `exec` and `exec resume` (plain -s exists only on
+        # `exec`), so the config override is the uniform spelling. "bypass" is
+        # the no-sandbox flag instead.
+        if mode == "bypass":
+            return ["--dangerously-bypass-approvals-and-sandbox"]
+        return ["-c", f"sandbox_mode={mode}"]
+
+    async def run_codex(self, key: str, frame: dict, binding: dict, text: str) -> str:
         prompt, extra_args, tmpdir = self._stage_attachments(frame, text)
-        perm_tasks: list[asyncio.Task] = []
-        perm_ids: list[str] = []
-        mode = binding.get("permission_mode") or self.default_permission_mode
+        mode = binding.get("sandbox") or self.default_sandbox
         model = binding.get("model") or self.default_model
-        # When TL;DR is on for this channel, ask Claude to end a long reply with
-        # a sentinel line the bridge lifts into the post's `tldr` (see
-        # _split_tldr). Only added when enabled, so the default run is unchanged.
-        tldr_args = (
-            ["--append-system-prompt", TLDR_SYSTEM_PROMPT]
-            if self._tldr_enabled(binding) else []
-        )
+        if self._tldr_enabled(binding):
+            prompt += TLDR_PROMPT_SUFFIX
         try:
-            # Bidirectional stream-json: the prompt rides on stdin and
-            # `--permission-prompt-tool stdio` makes the CLI route permission
-            # asks to us as `control_request` events instead of silently
-            # denying them (its headless default).
-            cmd = [
-                self.claude_bin, "-p",
-                "--input-format", "stream-json",
-                "--output-format", "stream-json", "--verbose",
-                "--permission-prompt-tool", "stdio",
-                "--permission-mode", mode,
-                *tldr_args,
+            cmd = [self.codex_bin, "exec"]
+            if binding.get("session_id"):
+                cmd += ["resume", binding["session_id"]]
+            cmd += [
+                "--json",
+                "--skip-git-repo-check",
+                *self._sandbox_args(mode),
                 *extra_args,
-                *self.base_claude_args,
+                *self.base_codex_args,
             ]
             if model:
-                cmd += ["--model", model]
-            if binding.get("session_id"):
-                cmd += ["--resume", binding["session_id"]]
+                cmd += ["-m", model]
+            cmd += ["-"]  # read the prompt from stdin (keeps it out of ps/argv)
             log(
                 f"run: session={binding.get('session_id')} cwd={binding['cwd']} "
-                f"model={model or 'default'} mode={mode}"
+                f"model={model or 'default'} sandbox={mode}"
                 + (f" attachments@{tmpdir}" if tmpdir else "")
             )
             proc = await asyncio.create_subprocess_exec(
@@ -1107,19 +1090,19 @@ class Bridge:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.PIPE,
-                # stream-json events are single lines that can carry whole file
-                # contents; the default 64 KB readline limit is far too small.
+                # JSONL events are single lines that can carry whole command
+                # outputs; the default 64 KB readline limit is far too small.
                 limit=64 * 1024 * 1024,
             )
             self.procs[key] = proc  # so /stop can find and kill this run
-            await self._send_to_claude(proc, {
-                "type": "user",
-                "message": {"role": "user", "content": [{"type": "text", "text": prompt}]},
-            })
-            result_text, last_progress = None, 0.0
-            # Headless-capable slash commands from the CLI's system/init frame
-            # (interactive-only ones like /help are omitted — see _annotate_slash_failure).
-            slash_commands: list[str] = []
+            assert proc.stdin is not None
+            proc.stdin.write(prompt.encode())
+            proc.stdin.close()
+            reply_parts: list[str] = []
+            error_parts: list[str] = []
+            new_session_id: str | None = None
+            turn_failed = False
+            last_progress = 0.0
             try:
                 async with asyncio.timeout(self.timeout):
                     assert proc.stdout is not None
@@ -1132,413 +1115,94 @@ class Bridge:
                         except json.JSONDecodeError:
                             continue
                         kind = event.get("type")
-                        if kind == "system" and event.get("subtype") == "init":
-                            raw_cmds = event.get("slash_commands") or []
-                            if isinstance(raw_cmds, list):
-                                slash_commands = [c for c in raw_cmds if isinstance(c, str)]
-                        elif kind == "assistant":
-                            snippet = self._progress_snippet(event)
-                            if snippet and time.monotonic() - last_progress > PROGRESS_THROTTLE:
-                                last_progress = time.monotonic()
-                                self.progress(frame, snippet)
-                        elif kind == "control_request":
-                            perm_tasks.append(asyncio.create_task(
-                                self._handle_control_request(key, frame, proc, event, perm_ids)
-                            ))
-                        elif kind == "control_cancel_request":
-                            self._cancel_request(event.get("request_id") or "",
-                                                 "Claude withdrew the request.")
-                        elif kind == "result":
-                            result_text = event.get("result") or ""
-                            if event.get("is_error"):
-                                result_text = f"(claude error) {result_text}"
+                        if kind == "thread.started":
+                            new_session_id = event.get("thread_id") or new_session_id
+                        elif kind in ("item.started", "item.completed"):
+                            item = event.get("item") or {}
+                            if kind == "item.completed" and item.get("type") == "agent_message":
+                                if item.get("text"):
+                                    reply_parts.append(item["text"])
+                            elif kind == "item.completed" and item.get("type") == "error":
+                                if item.get("message"):
+                                    error_parts.append(item["message"])
                             else:
-                                # Resuming with -p can fork to a new session id;
-                                # track it (successful runs only) so follow-ups
-                                # keep continuing the same conversation.
-                                new_sid = event.get("session_id")
-                                if new_sid and new_sid != binding.get("session_id"):
-                                    binding["session_id"] = new_sid
-                                    self.bindings[key] = binding
-                                    self._save_state()
-                            break  # stdin stays open, so EOF never comes — stop here
-                    if proc.stdin is not None:
-                        proc.stdin.close()
+                                snippet = self._progress_snippet(kind, item)
+                                if snippet and time.monotonic() - last_progress > PROGRESS_THROTTLE:
+                                    last_progress = time.monotonic()
+                                    self.progress(frame, snippet)
+                        elif kind == "error":
+                            if event.get("message"):
+                                error_parts.append(str(event["message"]))
+                        elif kind == "turn.failed":
+                            err = (event.get("error") or {}).get("message")
+                            if err:
+                                error_parts.append(str(err))
+                            turn_failed = True
+                            break
+                        elif kind == "turn.completed":
+                            break
                     await proc.wait()
             except TimeoutError:
                 raise RuntimeError(f"timed out after {self.timeout}s")
             finally:
-                # Never leave an orphaned claude running: any exit path (timeout,
+                # Never leave an orphaned codex running: any exit path (timeout,
                 # stream parse error, disconnect, cancellation) must kill the
-                # child, otherwise it keeps auto-applying edits after a reported
-                # failure.
+                # child, otherwise it keeps working after a reported failure.
                 if proc.returncode is None:
                     proc.kill()
                     await proc.wait()
                 self.procs.pop(key, None)
-                # Unstick any approval still waiting on a button: cancel it and
-                # lock the buttons so a later tap can't answer a dead run.
-                for oid in perm_ids:
-                    self._cancel_perm(oid, "The run ended before a decision.")
-                if perm_tasks:
-                    await asyncio.gather(*perm_tasks, return_exceptions=True)
             if key in self.stop_requested:
                 self.stop_requested.discard(key)
                 return "Stopped."
-            if result_text is None:
+            if turn_failed or (not reply_parts and error_parts):
+                detail = "\n".join(error_parts) or "unknown error"
+                return f"(codex error) {detail[:2000]}"
+            if not reply_parts:
                 stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
-                raise RuntimeError(stderr[-500:] or f"claude exited {proc.returncode} with no result")
-            return self._annotate_slash_failure(prompt, result_text, slash_commands)
+                raise RuntimeError(stderr[-500:] or f"codex exited {proc.returncode} with no result")
+            # Resume keeps the thread id, but a fresh session mints one; track
+            # it (successful runs only) so follow-ups continue the conversation.
+            if new_session_id and new_session_id != binding.get("session_id"):
+                binding["session_id"] = new_session_id
+                self.bindings[key] = binding
+                self._save_state()
+            return "\n\n".join(reply_parts)
         finally:
             if tmpdir:
                 shutil.rmtree(tmpdir, ignore_errors=True)
 
-
     @staticmethod
-    def _annotate_slash_failure(prompt: str, result: str, slash_commands: list[str]) -> str:
-        """Clarify Claude's headless slash-command rejects for chat users.
-
-        The bridge talks to `claude -p` (no TUI). Interactive-only commands
-        (/help, pickers, …) fail with "Unknown skill" or "isn't available in
-        this environment"; the init frame's slash_commands list is the truth
-        for what *does* work over this path.
-        """
-        if not prompt.lstrip().startswith("/"):
-            return result
-        lower = (result or "").lower()
-        if "unknown skill" not in lower and "isn't available in this environment" not in lower:
-            return result
-        available = sorted(
-            f"/{c}" for c in slash_commands if c and not c.startswith("_")
-        )
-        note = (
-            "\n\n_(This chat drives Claude headlessly via `claude -p` — no "
-            "interactive terminal UI. Commands that open pickers/menus only "
-            "work in the local `claude` TUI. "
-        )
-        if available:
-            # Keep the hint short; the full list can be long.
-            preview = ", ".join(available[:24])
-            more = f", … ({len(available)} total)" if len(available) > 24 else ""
-            note += f"Headless-capable examples: {preview}{more}. "
-        note += "Bridge meta-commands: `/commands`.)_"
-        return (result or "").rstrip() + note
-
-
-    # -------------------------------------------------------- permissions
-
-    @staticmethod
-    async def _send_to_claude(proc, obj: dict) -> None:
-        """Write one JSON line to the CLI's stdin (whole-line writes are safe
-        to interleave across tasks: write() appends atomically, drain flushes)."""
-        proc.stdin.write((json.dumps(obj) + "\n").encode())
-        await proc.stdin.drain()
-
-    @staticmethod
-    def _perm_response(req_id: str, allow: bool, tool_input: dict, deny_msg: str = "") -> dict:
-        inner = (
-            {"behavior": "allow", "updatedInput": tool_input}
-            if allow
-            else {"behavior": "deny", "message": deny_msg or "Denied via Agora"}
-        )
-        return {"type": "control_response", "response": {
-            "subtype": "success", "request_id": req_id, "response": inner,
-        }}
-
-    @staticmethod
-    def _clip(value, limit: int = 500) -> str:
-        text = value if isinstance(value, str) else json.dumps(value)
-        return text if len(text) <= limit else text[:limit] + "…"
-
-    @classmethod
-    def _perm_detail_lines(cls, tool: str, tool_input: dict) -> list[str]:
-        """Per-tool summary of what Claude wants to do, instead of a raw JSON
-        dump of the tool input."""
-        if tool == "Bash" and tool_input.get("command"):
-            return [f"```\n{cls._clip(tool_input['command'])}\n```"]
-        if tool in ("WebFetch", "WebSearch"):
-            lines = []
-            if tool_input.get("url"):
-                lines.append(cls._clip(tool_input["url"], 300))
-            if tool_input.get("query"):
-                lines.append(f'Search: "{cls._clip(tool_input["query"], 200)}"')
-            if tool_input.get("prompt"):
-                lines.append(f"Prompt: {cls._clip(tool_input['prompt'], 200)}")
-            if lines:
-                return lines
-        if tool in ("Grep", "Glob") and tool_input.get("pattern"):
-            line = f"`{cls._clip(tool_input['pattern'], 200)}`"
-            where = tool_input.get("path") or tool_input.get("glob")
-            if where:
-                line += f" in {cls._clip(where, 150)}"
-            return [line]
-        if tool_input.get("file_path"):
-            lines = [cls._clip(tool_input["file_path"], 300)]
-            if tool == "Write" and tool_input.get("content"):
-                lines.append(f"```\n{cls._clip(tool_input['content'], 300)}\n```")
-            elif tool == "Edit" and (tool_input.get("old_string") or tool_input.get("new_string")):
-                lines.append("```\n- {}\n+ {}\n```".format(
-                    cls._clip(tool_input.get("old_string") or "", 200),
-                    cls._clip(tool_input.get("new_string") or "", 200)))
-            return lines
-        # Fallback: one readable line per field beats a truncated JSON blob.
-        lines = [f"{k}: {cls._clip(v, 200)}" for k, v in list(tool_input.items())[:6]]
-        return lines or ["(no input)"]
-
-    @classmethod
-    def _perm_prompt_text(cls, tool: str, tool_input: dict, description: str | None) -> str:
-        if tool == "ExitPlanMode":
-            # The CLI's plan-mode exit gate: "ExitPlanMode" reads like jargon in
-            # a channel, so present it as what it is — a plan awaiting approval.
-            lines = ["Claude finished planning and wants approval to **start implementing this plan**:"]
-            plan = str(tool_input.get("plan") or "").strip()
-            if plan:
-                lines.append(cls._clip(plan, 1500))
-            return "\n".join(lines)
-        lines = [f"Claude wants to use **{tool}**:", *cls._perm_detail_lines(tool, tool_input)]
-        if description and description not in "\n".join(lines):
-            lines.append(f"_{cls._clip(description, 200)}_")
-        return "\n".join(lines)
-
-    def _resolve_perm_buttons(self, options_id: str, channel_id: str,
-                              thread_id: int | None, note: str) -> None:
-        """Lock a permission message's buttons with an outcome note. A no-op
-        hub-side when a tap already resolved them (hub marks that itself)."""
-        self.send({
-            "type": "options_resolve", "agent_id": self.agent_id,
-            "channel_id": channel_id, "thread_id": thread_id,
-            "options_id": options_id, "text": note,
-        })
-
-    def _cancel_perm(self, options_id: str, note: str) -> None:
-        entry = self.pending_perms.pop(options_id, None)
-        if not entry:
-            return
-        fut, channel_id, thread_id = entry
-        if not fut.done():
-            fut.cancel()
-        self._resolve_perm_buttons(options_id, channel_id, thread_id, note)
-
-    def _cancel_request(self, req_id: str, note: str) -> None:
-        """Cancel every pending ask tied to one CLI request id: the single
-        `perm-` prompt of a tool approval, or the per-question `ask-` posts
-        of an AskUserQuestion."""
-        for oid in list(self.pending_perms):
-            if oid == f"perm-{req_id}" or oid.startswith(f"ask-{req_id}-"):
-                self._cancel_perm(oid, note)
-
-    def handle_option_select(self, frame: dict) -> None:
-        entry = self.pending_perms.get(frame.get("options_id") or "")
-        if not entry:
-            return
-        fut, _, _ = entry
-        if not fut.done():
-            user = frame.get("user") or {}
-            who = user.get("name") or user.get("id") or "someone"
-            fut.set_result(("option", frame.get("option_id"), who))
-
-    async def _handle_control_request(self, key: str, frame: dict, proc,
-                                      event: dict, perm_ids: list[str]) -> None:
-        """Relay one CLI permission ask to the channel as approval buttons."""
-        req_id = event.get("request_id") or ""
-        req = event.get("request") or {}
-        if req.get("subtype") != "can_use_tool":
-            # Unknown control traffic must still get a reply or the CLI hangs.
-            await self._send_to_claude(proc, {"type": "control_response", "response": {
-                "subtype": "error", "request_id": req_id,
-                "error": f"bridge does not support {req.get('subtype')!r}",
-            }})
-            return
-        tool = req.get("tool_name") or "tool"
-        tool_input = req.get("input") or {}
-        if tool == "AskUserQuestion":
-            # Not a permission gate — the CLI is waiting for answers, so post
-            # the questions as choice buttons instead of Approve/Reject.
-            await self._ask_user_question(key, frame, proc, req_id, tool_input, perm_ids)
-            return
-        if tool in self.session_allows.get(key, set()):
-            await self._send_to_claude(proc, self._perm_response(req_id, True, tool_input))
-            return
-        options_id = f"perm-{req_id}"
-        fut = asyncio.get_running_loop().create_future()
-        self.pending_perms[options_id] = (fut, frame["channel_id"], frame.get("thread_id"))
-        perm_ids.append(options_id)
-        self.send({
-            "type": "post", "agent_id": self.agent_id,
-            "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
-            "text": self._perm_prompt_text(tool, tool_input, req.get("description")),
-            "options_id": options_id,
-            # Plan approval is a per-plan decision, so no "always" shortcut there.
-            "options": ([
-                {"id": "allow", "label": "Approve plan", "style": "primary"},
-                {"id": "deny", "label": "Reject"},
-            ] if tool == "ExitPlanMode" else [
-                {"id": "allow", "label": "Approve", "style": "primary"},
-                {"id": "allow_always", "label": f"Always allow {tool} (this session)"},
-                {"id": "deny", "label": "Reject"},
-            ]),
-        })
-        try:
-            _, option_id, who = await asyncio.wait_for(fut, self.permission_timeout)
-        except asyncio.CancelledError:
-            return  # run ended; _cancel_perm already resolved the buttons
-        except TimeoutError:
-            option_id, who = "deny", None
-            self._resolve_perm_buttons(options_id, frame["channel_id"], frame.get("thread_id"),
-                                       f"No decision within {self.permission_timeout}s — denied.")
-        finally:
-            self.pending_perms.pop(options_id, None)
-        if option_id == "allow_always":
-            self.session_allows.setdefault(key, set()).add(tool)
-        allow = option_id in ("allow", "allow_always")
-        deny_msg = (f"Denied by {who} via Agora" if who
-                    else f"No approval within {self.permission_timeout}s")
-        try:
-            await self._send_to_claude(proc, self._perm_response(req_id, allow, tool_input, deny_msg))
-        except (OSError, RuntimeError, ConnectionResetError):
-            pass  # claude already exited; nothing to answer
-
-    # ----------------------------------------------------------- questions
-
-    async def _ask_user_question(self, key: str, frame: dict, proc,
-                                 req_id: str, tool_input: dict,
-                                 perm_ids: list[str]) -> None:
-        """Post an AskUserQuestion's questions to the channel and collect answers.
-
-        One message per question with a button per option; a typed reply in the
-        channel answers as free text (see _answer_pending_question). Replies
-        allow with ``{"questions", "answers"}`` in updatedInput — answers keyed
-        by question text, values the chosen option label or the typed reply —
-        or deny when nobody answers within the permission timeout.
-        """
-        questions = [q for q in (tool_input.get("questions") or []) if isinstance(q, dict)]
-        if not questions:
-            await self._send_to_claude(proc, self._perm_response(req_id, True, tool_input))
-            return
-        entries: list[dict] = []
-        loop = asyncio.get_running_loop()
-        for i, q in enumerate(questions):
-            options = [o for o in (q.get("options") or []) if isinstance(o, dict)]
-            options_id = f"ask-{req_id}-{i}"
-            fut = loop.create_future()
-            self.pending_perms[options_id] = (fut, frame["channel_id"], frame.get("thread_id"))
-            perm_ids.append(options_id)
-            entry = {
-                "future": fut, "options_id": options_id, "options": options,
-                "question": str(q.get("question") or ""),
-                "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
-            }
-            entries.append(entry)
-            self.pending_questions.setdefault(key, []).append(entry)
-            self.send({
-                "type": "post", "agent_id": self.agent_id,
-                "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
-                "text": self._question_text(q, i, len(questions)),
-                "options_id": options_id,
-                "options": [
-                    {"id": f"opt-{j}", "label": str(o.get("label") or f"Option {j + 1}")}
-                    for j, o in enumerate(options)
-                ],
-            })
-        try:
-            answered = await asyncio.wait_for(
-                asyncio.gather(*(e["future"] for e in entries)),
-                self.permission_timeout,
+    def _progress_snippet(kind: str, item: dict) -> str | None:
+        itype = item.get("type")
+        if itype == "command_execution":
+            command = str(item.get("command") or "").strip()
+            if kind == "item.started" and command:
+                return f"$ {command[:200]}"
+            return None
+        if kind != "item.completed":
+            return None
+        if itype == "reasoning" and item.get("text"):
+            return str(item["text"]).replace("\n", " ")[-200:]
+        if itype == "web_search" and item.get("query"):
+            return f"searching: {str(item['query'])[:180]}"
+        if itype == "file_change":
+            changes = item.get("changes") or []
+            paths = [str(c.get("path") or "") for c in changes if isinstance(c, dict)]
+            paths = [p for p in paths if p]
+            if paths:
+                shown = ", ".join(Path(p).name for p in paths[:4])
+                more = f" (+{len(paths) - 4} more)" if len(paths) > 4 else ""
+                return f"editing {shown}{more}"
+        if itype == "todo_list":
+            items = item.get("items") or []
+            current = next(
+                (i.get("text") for i in items
+                 if isinstance(i, dict) and not i.get("completed")),
+                None,
             )
-        except asyncio.CancelledError:
-            return  # run ended; _cancel_perm already resolved the buttons
-        except TimeoutError:
-            for entry in entries:
-                if not entry["future"].done() or entry["future"].cancelled():
-                    self._resolve_perm_buttons(
-                        entry["options_id"], entry["channel_id"], entry["thread_id"],
-                        f"No answer within {self.permission_timeout}s.")
-            await self._send_to_claude(proc, self._perm_response(
-                req_id, False, tool_input,
-                f"No answer within {self.permission_timeout}s via Agora"))
-            return
-        finally:
-            for entry in entries:
-                self.pending_perms.pop(entry["options_id"], None)
-            left = [e for e in self.pending_questions.get(key, [])
-                    if all(e is not done for done in entries)]
-            if left:
-                self.pending_questions[key] = left
-            else:
-                self.pending_questions.pop(key, None)
-        answers = {
-            entry["question"]: self._answer_label(entry["options"], kind, value)
-            for entry, (kind, value, _who) in zip(entries, answered)
-        }
-        await self._send_to_claude(proc, self._perm_response(
-            req_id, True, {"questions": questions, "answers": answers}))
-
-    @staticmethod
-    def _question_text(q: dict, index: int, total: int) -> str:
-        prefix = f"Claude asks ({index + 1}/{total})" if total > 1 else "Claude asks"
-        header = str(q.get("header") or "").strip()
-        question = str(q.get("question") or "").strip()
-        lines = [f"{prefix}: **{header}** — {question}" if header else f"{prefix}: {question}"]
-        for opt in q.get("options") or []:
-            if not isinstance(opt, dict):
-                continue
-            label = str(opt.get("label") or "").strip() or "(unnamed option)"
-            desc = str(opt.get("description") or "").strip()
-            lines.append(f"- **{label}** — {desc}" if desc else f"- **{label}**")
-        hint = "Tap an option below, or reply with your own answer."
-        if q.get("multiSelect"):
-            hint = ("Tap an option below, or reply with a comma-separated "
-                    "list to pick several (or your own answer).")
-        lines.append(f"_{hint}_")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _answer_label(options: list[dict], kind: str, value) -> str:
-        """Map a resolved ask future to the answer string for the CLI: the
-        tapped option's label, or the typed reply verbatim."""
-        if kind == "option":
-            m = re.fullmatch(r"opt-(\d+)", str(value or ""))
-            if m and int(m.group(1)) < len(options):
-                return str(options[int(m.group(1))].get("label") or value)
-        return str(value or "")
-
-    def _answer_pending_question(self, key: str, frame: dict, text: str) -> bool:
-        """Treat a plain channel message as the answer to the oldest unanswered
-        AskUserQuestion, if any. Free text is a first-class answer (the CLI
-        accepts it in place of a listed option), so replies must not bounce off
-        the busy check while Claude is waiting on a question."""
-        if not text:
-            return False
-        for entry in self.pending_questions.get(key, []):
-            fut = entry["future"]
-            if fut.done():
-                continue
-            author = frame.get("author") or {}
-            who = author.get("name") or author.get("id") or "someone"
-            fut.set_result(("text", text, who))
-            # No tap will resolve this message's buttons hub-side; lock them.
-            snippet = text if len(text) <= 80 else text[:80] + "…"
-            self._resolve_perm_buttons(entry["options_id"], entry["channel_id"],
-                                       entry["thread_id"], f"“{snippet}” by {who}")
-            return True
-        return False
-
-    @staticmethod
-    def _progress_snippet(event: dict) -> str | None:
-        blocks = event.get("message", {}).get("content") or []
-        texts, tools = [], []
-        for b in blocks:
-            if not isinstance(b, dict):
-                continue
-            if b.get("type") == "text" and b.get("text"):
-                texts.append(b["text"])
-            elif b.get("type") == "tool_use":
-                tools.append(b.get("name", "tool"))
-        if texts:
-            snippet = " ".join(texts)[-200:]
-            return snippet
-        if tools:
-            return "using " + ", ".join(tools)
+            if current:
+                return f"todo: {str(current)[:180]}"
         return None
 
     # --------------------------------------------------------- main loop
@@ -1593,11 +1257,8 @@ class Bridge:
                     continue
                 if frame.get("agent_id") != self.agent_id:
                     continue
-                kind = frame.get("type")
-                if kind == "inbound":
+                if frame.get("type") == "inbound":
                     asyncio.create_task(self.handle_inbound(frame))
-                elif kind == "option_select":
-                    self.handle_option_select(frame)
         finally:
             send_task.cancel()
 
@@ -1664,7 +1325,7 @@ def main() -> None:
     loaded = load_env_file(env_file)
     if loaded:
         log(f"loaded {loaded} setting(s) from {env_file}")
-    ap = argparse.ArgumentParser(description="Claude CLI bridge for Agora")
+    ap = argparse.ArgumentParser(description="Codex CLI bridge for Agora")
     ap.add_argument("--env-file", default=str(env_file),
                     help="path to a KEY=VALUE .env file of bridge settings "
                          "(default: .env beside this script; AGORA_BRIDGE_ENV_FILE "
@@ -1676,43 +1337,42 @@ def main() -> None:
                          "prefer AGORA_PAIRING_TOKEN or --token-file")
     ap.add_argument("--token-file", default=os.environ.get("AGORA_PAIRING_TOKEN_FILE"),
                     help="read the pairing token from this file (chmod 600 it)")
-    ap.add_argument("--allowed-roots", default=os.environ.get("CLAUDE_ALLOWED_ROOTS", ""),
+    ap.add_argument("--allowed-roots", default=os.environ.get("CODEX_ALLOWED_ROOTS", ""),
                     help="colon-separated dirs /new sessions may start under; "
                          "/new is disabled when empty")
     ap.add_argument("--auto-worktree", action="store_true",
-                    default=os.environ.get("CLAUDE_AUTO_WORKTREE", "").lower()
+                    default=os.environ.get("CODEX_AUTO_WORKTREE", "").lower()
                     in ("1", "true", "yes"),
                     help="/new into a git repo creates an isolated git worktree + "
                          "branch per thread instead of binding the repo directly "
                          "(also available on demand via /worktree)")
-    ap.add_argument("--agent-id", default=os.environ.get("AGENT_ID", "claude-cli"))
-    ap.add_argument("--agent-name", default=os.environ.get("AGENT_NAME", "Claude"))
-    ap.add_argument("--claude-bin", default=os.environ.get("CLAUDE_BIN", "claude"))
-    ap.add_argument("--claude-args",
-                    default=os.environ.get("CLAUDE_PERMISSION_ARGS", "--permission-mode acceptEdits"),
-                    help="extra args for every claude run; the permission mode here "
-                         "is the default, overridable per channel with /permissions")
-    ap.add_argument("--model", default=os.environ.get("CLAUDE_MODEL", ""),
+    ap.add_argument("--agent-id", default=os.environ.get("AGENT_ID", "codex-cli"))
+    ap.add_argument("--agent-name", default=os.environ.get("AGENT_NAME", "Codex"))
+    ap.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", "codex"))
+    ap.add_argument("--codex-args", default=os.environ.get("CODEX_ARGS", ""),
+                    help="extra args for every codex run; a sandbox flag here "
+                         "becomes the default, overridable per channel with /sandbox")
+    ap.add_argument("--sandbox", default=os.environ.get("CODEX_SANDBOX", ""),
+                    help="default sandbox mode for every run (default: "
+                         "workspace-write; channels override with /sandbox); one "
+                         f"of: {SANDBOX_CHOICES.replace(' | reset', '')}")
+    ap.add_argument("--model", default=os.environ.get("CODEX_MODEL", ""),
                     help="default model for every run (channels override with "
-                         f"/model); one of: {MODEL_CHOICES}")
-    ap.add_argument("--allow-permission-escalation", action="store_true",
-                    default=os.environ.get("CLAUDE_ALLOW_PERMISSION_ESCALATION", "").lower()
+                         "/model); empty = the codex config default")
+    ap.add_argument("--allow-sandbox-escalation", action="store_true",
+                    default=os.environ.get("CODEX_ALLOW_SANDBOX_ESCALATION", "").lower()
                     in ("1", "true", "yes"),
-                    help="allow /permissions to raise privilege above the bridge "
+                    help="allow /sandbox to raise privilege above the bridge "
                          "default (off by default; lowering privilege is always allowed)")
     ap.add_argument("--tldr", action="store_true",
-                    default=os.environ.get("CLAUDE_TLDR", "").lower() in ("1", "true", "yes"),
-                    help="ask Claude to add a toggleable short summary to long "
+                    default=os.environ.get("CODEX_TLDR", "").lower() in ("1", "true", "yes"),
+                    help="ask Codex to add a toggleable short summary to long "
                          "replies (off by default; channels override with /tldr)")
     ap.add_argument("--tldr-min-chars", type=int,
-                    default=int(os.environ.get("CLAUDE_TLDR_MIN_CHARS", "1500")),
+                    default=int(os.environ.get("CODEX_TLDR_MIN_CHARS", "1500")),
                     help="only summarize replies at least this many chars long")
-    ap.add_argument("--timeout", type=int, default=int(os.environ.get("CLAUDE_TIMEOUT", "1800")),
+    ap.add_argument("--timeout", type=int, default=int(os.environ.get("CODEX_TIMEOUT", "1800")),
                     help="per-run timeout in seconds")
-    ap.add_argument("--permission-timeout", type=int,
-                    default=int(os.environ.get("CLAUDE_PERMISSION_TIMEOUT", "600")),
-                    help="seconds to wait for an Approve/Reject tap before denying "
-                         "a tool request (waits count against --timeout)")
     ap.add_argument("--sessions", type=int, default=int(os.environ.get("SESSIONS_LIMIT", "10")),
                     help="how many sessions /sessions lists")
     ap.add_argument("--state-file", default=os.environ.get("STATE_FILE", str(default_state)))
@@ -1721,6 +1381,11 @@ def main() -> None:
                     help="max messages to buffer per channel while staying silent "
                          "(replayed as context when next @mentioned; 0 disables)")
     args = ap.parse_args()
+    if args.sandbox and not normalize_sandbox_mode(args.sandbox):
+        ap.error(f"unknown --sandbox mode {args.sandbox!r}; "
+                 f"use one of: {SANDBOX_CHOICES.replace(' | reset', '')}")
+    if args.model and not MODEL_RE.fullmatch(args.model.strip()):
+        ap.error(f"--model {args.model!r} doesn't look like a model id")
     if args.token:
         log("warning: --token on the command line is visible to other local users "
             "(ps/proc). Prefer AGORA_PAIRING_TOKEN or --token-file.")
@@ -1734,7 +1399,7 @@ def main() -> None:
             args.token = os.environ.get("AGORA_PAIRING_TOKEN", "")
     if not args.token:
         ap.error("a pairing token is required (AGORA_PAIRING_TOKEN, --token-file, or --token)")
-    log(f"claude-cli bridge -> {re.sub(r'token=[^&]+', 'token=***', Bridge._normalize_url(args.url, args.token))}")
+    log(f"codex-cli bridge -> {re.sub(r'token=[^&]+', 'token=***', Bridge._normalize_url(args.url, args.token))}")
     try:
         asyncio.run(Bridge(args).run())
     except KeyboardInterrupt:

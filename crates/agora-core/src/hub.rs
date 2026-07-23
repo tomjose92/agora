@@ -43,6 +43,10 @@ pub const HISTORY_PAGE_MAX: i64 = 50;
 pub const SEARCH_PAGE_DEFAULT: i64 = 20;
 pub const SEARCH_PAGE_MAX: i64 = 50;
 
+/// Keep agent-originated reactions bounded by the same practical limit as
+/// the REST surface. This protects message payloads even for custom bridges.
+const MAX_REACTION_KINDS_PER_MESSAGE: usize = 20;
+
 /// Longest `tldr` accepted on an agent `post` frame; anything longer (or not
 /// strictly shorter than the message text) is dropped — the full text always
 /// stands on its own.
@@ -176,6 +180,13 @@ pub struct AgentHandle {
     pub agent_id: String,
     pub agent_name: String,
     pub requires_mention: bool,
+    /// Whether this connection wants a *context feed*: copies of agent-authored
+    /// messages it isn't @mentioned in, delivered so it can keep conversational
+    /// context even while staying silent. Native agents leave this off; the CLI
+    /// bridges opt in so a later @mention arrives with the backlog already seen.
+    /// These frames are context only — the bridge never drives its CLI from a
+    /// non-human author, so a context feed can't create bot loops.
+    pub wants_context_feed: bool,
     /// Whether the agent's home instance has a profile picture for it, plus
     /// a cache-busting stamp; the bytes are proxied via /api/agents/{id}/avatar.
     pub has_avatar: bool,
@@ -930,6 +941,16 @@ impl Hub {
             return;
         };
         let tokens = mention_tokens(message["text"].as_str().unwrap_or_default());
+        // Was any *member agent* @mentioned? This drives the CLI bridges' reply
+        // policy: a human message that tags no agent is open to everyone, while
+        // one that tags an agent is only for the tagged agent(s). Carried to the
+        // agent as `any_mention`; the recipient decides what to do with it.
+        let any_agent_mentioned = self.store.agents_for_channel(channel_id).iter().any(|aid| {
+            tokens.contains(&aid.to_lowercase())
+                || self
+                    .agent_handle(aid)
+                    .is_some_and(|h| tokens.contains(&slugify(&h.agent_name)))
+        });
         for agent_id in self.store.agents_for_channel(channel_id) {
             if Some(agent_id.as_str()) == exclude_agent {
                 continue;
@@ -939,13 +960,19 @@ impl Hub {
             };
             let mentioned = tokens.contains(&agent_id.to_lowercase())
                 || tokens.contains(&slugify(&handle.agent_name));
-            if mentioned_only && !mentioned {
+            // Normally an unmentioned agent is skipped when the message is
+            // agents-only (`mentioned_only`) or the agent opted into
+            // mention-gating. A context-feed agent still gets a copy so it can
+            // buffer the conversation while staying silent — bot loops are held
+            // off by the caller's bot-streak cap on agent-authored fan-out.
+            if !mentioned
+                && (mentioned_only || handle.requires_mention)
+                && !handle.wants_context_feed
+            {
                 continue;
             }
-            if handle.requires_mention && !mentioned {
-                continue;
-            }
-            let inbound = self.build_inbound(message, &channel, &handle, mentioned, from_bot, voice);
+            let inbound = self
+                .build_inbound(message, &channel, &handle, mentioned, any_agent_mentioned, from_bot, voice);
             let _ = handle.tx.send(inbound);
         }
     }
@@ -956,6 +983,7 @@ impl Hub {
         channel: &Value,
         handle: &AgentHandle,
         mentioned: bool,
+        any_mention: bool,
         from_bot: bool,
         voice: bool,
     ) -> Value {
@@ -1029,6 +1057,10 @@ impl Hub {
             "chat_name": chat_name,
             "context_note": self.context_note(channel, &group, thread_id, handle, voice),
             "mentioned": mentioned,
+            // Whether any member agent was @mentioned anywhere in this message.
+            // Bridges reply when addressed (`mentioned`) or when the floor is
+            // open (`!any_mention`); otherwise they buffer it as context.
+            "any_mention": any_mention,
             "from_bot": from_bot,
             "voice_live": voice,
             "attachments": atts,
@@ -1220,6 +1252,45 @@ impl Hub {
                         "handle": frame["handle"], "text": frame["text"],
                     }),
                 );
+            }
+            Some("reaction") => {
+                let Some(message_id) = frame["message_id"].as_i64() else {
+                    return;
+                };
+                let emoji = frame["emoji"].as_str().unwrap_or_default();
+                if emoji.is_empty()
+                    || emoji.len() > 32
+                    || emoji.chars().any(|c| c.is_ascii())
+                    || !self.store.agents_for_channel(&channel_id).iter().any(|id| id == &agent_id)
+                {
+                    return;
+                }
+                let Some(message) = self
+                    .store
+                    .message(message_id)
+                    .filter(|m| m["channel_id"] == channel_id.as_str())
+                else {
+                    return;
+                };
+                let changed = if frame["action"].as_str() == Some("remove") {
+                    self.store.remove_reaction(&agent_name, message_id, emoji)
+                } else {
+                    let groups = message["reactions"].as_array().cloned().unwrap_or_default();
+                    let already = groups.iter().any(|r| r["emoji"] == emoji);
+                    if !already && groups.len() >= MAX_REACTION_KINDS_PER_MESSAGE {
+                        return;
+                    }
+                    self.store
+                        .add_reaction(&agent_name, &channel_id, message_id, emoji)
+                };
+                if changed {
+                    if let Some(updated) = self.store.message(message_id) {
+                        self.post_transient(
+                            &channel_id,
+                            json!({"type": "message_update", "message": updated}),
+                        );
+                    }
+                }
             }
             Some("options_resolve") => {
                 let options_id = frame["options_id"].as_str().unwrap_or_default();
@@ -1459,12 +1530,23 @@ mod tests {
         name: &str,
         requires_mention: bool,
     ) -> tokio::sync::mpsc::UnboundedReceiver<Value> {
+        add_agent_full(h, id, name, requires_mention, false)
+    }
+
+    fn add_agent_full(
+        h: &Hub,
+        id: &str,
+        name: &str,
+        requires_mention: bool,
+        wants_context_feed: bool,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<Value> {
         let (tx, rx) = unbounded_channel();
         let conn_id = h.next_conn_id();
         h.register_agent(AgentHandle {
             agent_id: id.into(),
             agent_name: name.into(),
             requires_mention,
+            wants_context_feed,
             has_avatar: false,
             avatar_v: 0,
             source: "test".into(),
@@ -1875,6 +1957,47 @@ mod tests {
     }
 
     #[test]
+    fn any_mention_flag_reflects_agent_tags() {
+        let h = hub();
+        let mut rx_a = add_agent(&h, "bot-a", "Bot A", false);
+        let mut rx_b = add_agent(&h, "bot-b", "Bot B", false);
+        let cid = setup_channel(&h, &["bot-a", "bot-b"]);
+        // No agent tagged: both hear it and the floor is open.
+        h.post_user_message(&cid, "anyone around?", "tom", None, None, vec![]);
+        let fa = rx_a.try_recv().unwrap();
+        assert_eq!(fa["mentioned"], false);
+        assert_eq!(fa["any_mention"], false);
+        assert_eq!(rx_b.try_recv().unwrap()["any_mention"], false);
+        // One agent tagged: the other still receives it (so it can buffer), but
+        // `any_mention` tells it the floor is taken so it can stay silent.
+        h.post_user_message(&cid, "hey @bot-a", "tom", None, None, vec![]);
+        let fa = rx_a.try_recv().unwrap();
+        assert_eq!(fa["mentioned"], true);
+        assert_eq!(fa["any_mention"], true);
+        let fb = rx_b.try_recv().unwrap();
+        assert_eq!(fb["mentioned"], false);
+        assert_eq!(fb["any_mention"], true);
+    }
+
+    #[test]
+    fn context_feed_delivers_unmentioned_agent_messages() {
+        let h = hub();
+        let mut rx_feed = add_agent_full(&h, "claude", "Claude", false, true);
+        let mut rx_plain = add_agent(&h, "bot-b", "Bot B", false);
+        let _rx_c = add_agent(&h, "bot-c", "Bot C", false);
+        let cid = setup_channel(&h, &["claude", "bot-b", "bot-c"]);
+        // bot-c speaks without tagging anyone.
+        h.post_agent_message("bot-c", "Bot C", &cid, "thinking out loud", None);
+        // The context-feed agent gets a copy (unmentioned) so it can buffer.
+        let f = rx_feed.try_recv().unwrap();
+        assert_eq!(f["type"], "inbound");
+        assert_eq!(f["mentioned"], false);
+        assert_eq!(f["from_bot"], true);
+        // A plain agent does not — relay-only-when-mentioned is unchanged.
+        assert!(rx_plain.try_recv().is_err());
+    }
+
+    #[test]
     fn agent_relay_mention_only_and_loop_cap() {
         let h = hub();
         let _rx_a = add_agent(&h, "bot-a", "Bot A", false);
@@ -1968,6 +2091,7 @@ mod tests {
             agent_id: "bot-a".into(),
             agent_name: "Bot A".into(),
             requires_mention: false,
+            wants_context_feed: false,
             has_avatar: false,
             avatar_v: 0,
             source: "test".into(),
@@ -2023,6 +2147,41 @@ mod tests {
         h.post_agent_message("bot-a", "Bot A", &cid, "cc @nobody", None);
         let u = h.store.unread_counts("tom", &[cid.clone()]);
         assert_eq!(u[&cid]["mentions"], 1);
+    }
+
+    #[test]
+    fn agent_reactions_are_attributed_broadcast_and_membership_checked() {
+        let h = hub();
+        let _agent_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let _outsider_rx = add_agent(&h, "bot-b", "Bot B", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        let message = h.post_user_message(&cid, "please investigate", "tom", None, None, vec![]);
+        let mid = message["id"].as_i64().unwrap();
+        let (tx, mut rx) = unbounded_channel();
+        h.attach_socket("tom", false, tx);
+
+        h.handle_agent_frame(&json!({
+            "type": "reaction", "agent_id": "bot-a", "channel_id": cid,
+            "message_id": mid, "emoji": "👀", "action": "add",
+        }));
+        assert_eq!(
+            h.store.message(mid).unwrap()["reactions"],
+            json!([{"emoji": "👀", "users": ["Bot A"]}])
+        );
+        assert_eq!(rx.try_recv().unwrap()["type"], "message_update");
+
+        // A connected agent that is not a member cannot react in the room.
+        h.handle_agent_frame(&json!({
+            "type": "reaction", "agent_id": "bot-b", "channel_id": cid,
+            "message_id": mid, "emoji": "✅", "action": "add",
+        }));
+        assert_eq!(h.store.message(mid).unwrap()["reactions"].as_array().unwrap().len(), 1);
+
+        h.handle_agent_frame(&json!({
+            "type": "reaction", "agent_id": "bot-a", "channel_id": cid,
+            "message_id": mid, "emoji": "👀", "action": "remove",
+        }));
+        assert_eq!(h.store.message(mid).unwrap()["reactions"], json!([]));
     }
 
     #[test]

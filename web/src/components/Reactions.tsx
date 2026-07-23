@@ -17,9 +17,11 @@ export function Reactions({ message, onPick }: {
       {list.map(r => {
         const users = r.users || [];
         const mine = !!me && users.includes(me.username);
+        const reactors = `${users.join(", ")} reacted with ${r.emoji}`;
         return (
           <button key={r.emoji} className={`ago-react ${mine ? "mine" : ""}`}
-            title={users.join(", ")}
+            aria-label={reactors}
+            data-reactors={reactors}
             onClick={() => toggle.mutate({ message, emoji: r.emoji, on: !mine })}>
             {r.emoji}<span className="rc">{users.length}</span>
           </button>

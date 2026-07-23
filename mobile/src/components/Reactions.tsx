@@ -4,7 +4,7 @@
    long-press sheet. */
 
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { Smile } from "lucide-react-native";
 import type { Message } from "@agora/core";
 import { useToggleReaction } from "@agora/core";
@@ -80,6 +80,11 @@ export function Reactions({ message }: { message: Message }) {
             key={r.emoji}
             style={[styles.chip, mine && styles.chipMine]}
             onPress={() => toggle.mutate({ message, emoji: r.emoji, on: !mine })}
+            onLongPress={() =>
+              Alert.alert(`${r.emoji} Reactions`, r.users.join("\n"), [{ text: "Done" }])
+            }
+            accessibilityLabel={`${r.users.join(", ")} reacted with ${r.emoji}`}
+            accessibilityHint="Tap to toggle your reaction. Long press to see everyone who reacted."
             disabled={toggle.isPending}
           >
             <Text style={styles.emoji}>{r.emoji}</Text>

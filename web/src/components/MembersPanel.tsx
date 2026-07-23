@@ -7,6 +7,7 @@ import {
   useUsers, type Member,
 } from "@agora/core";
 import { Icon } from "../lib/icons";
+import { withToken } from "../lib/files";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
 
@@ -69,10 +70,22 @@ export function MembersPanel() {
               if (drawnAgents.has(m.member_id)) return null;
               drawnAgents.add(m.member_id);
               const off = liveById[m.member_id] === false;
+              const agent = agents.find(a => a.id === m.member_id) as
+                (typeof agents)[number] & { avatar?: string } | undefined;
               const scopes = agentScopes.get(m.member_id) || [m];
               return (
                 <div key={`a-${m.member_id}`} className="ago-member ago-agent">
-                  <span className="ago-av sm"><Icon name="bot" /></span>
+                  {agent?.avatar
+                    ? <span className="ago-av sm has-avatar">
+                        <img src={withToken(agent.avatar)} alt=""
+                          onError={e => {
+                            const img = e.currentTarget;
+                            img.parentElement?.classList.remove("has-avatar");
+                            img.style.display = "none";
+                          }} />
+                        <Icon name="bot" />
+                      </span>
+                    : <span className="ago-av sm"><Icon name="bot" /></span>}
                   <span className="mname">{m.name || m.member_id}</span>
                   <span className="mmeta short">
                     {m.role}{off ? <> · <span className="ago-off" title="Offline — won’t reply">offline</span></> : null}
