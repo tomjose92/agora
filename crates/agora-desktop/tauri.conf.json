@@ -4,7 +4,7 @@
   "version": "0.1.16",
   "identifier": "app.agora.desktop",
   "build": {
-    "beforeBuildCommand": "cd ../.. && npm run build",
+    "beforeBuildCommand": "cd \"$(git rev-parse --show-toplevel)\" && npm run build",
     "frontendDist": "../../web/dist"
   },
   "app": {
