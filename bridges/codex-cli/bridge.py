@@ -500,6 +500,20 @@ class Bridge:
             "text": text,
         })
 
+    def reaction(self, frame: dict, emoji: str, action: str = "add") -> None:
+        """React to the inbound message as this agent."""
+        message_id = frame.get("message_id")
+        if not message_id:
+            return
+        self.send({
+            "type": "reaction",
+            "agent_id": self.agent_id,
+            "channel_id": frame["channel_id"],
+            "message_id": message_id,
+            "emoji": emoji,
+            "action": action,
+        })
+
     # ----------------------------------------------------------- inbound
 
     @staticmethod
@@ -556,18 +570,22 @@ class Bridge:
         if frame.get("author", {}).get("type") != "user":
             self._buffer_context(key, frame)
             return
+        self.reaction(frame, "👀")
         # Respond only when addressed: we're @mentioned, or no agent was tagged
         # at all (open floor). Otherwise someone else was tagged — stay silent
         # but remember the turn so a later @mention lands with the context.
         addressed = bool(frame.get("mentioned")) or not frame.get("any_mention")
         if not addressed:
+            self.reaction(frame, "👀", "remove")
             self._buffer_context(key, frame)
             return
         text = self._strip_mention(frame.get("text") or "")
         # An image/file with no caption is still a real turn — forward it so
         # long as something (text or an attachment) actually came through.
         if not text and not (frame.get("attachments") or []):
+            self.reaction(frame, "👀", "remove")
             return
+        self.reaction(frame, "👍")
         cmd, _, rest = text.partition(" ")
         cmd, rest = cmd.lower(), rest.strip()
         if cmd == "/commands":
@@ -597,6 +615,7 @@ class Bridge:
             self.post(frame, self._cmd_status(key))
         else:
             await self.forward_to_codex(key, frame, text)
+        self.reaction(frame, "✅")
 
     # ---------------------------------------------------------- commands
 

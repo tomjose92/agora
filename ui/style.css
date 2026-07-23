@@ -722,6 +722,19 @@ a.btn { text-decoration: none; }
   background: rgba(139,124,255,.14); border-color: rgba(139,124,255,.5); color: #cfc8ff;
 }
 .ago-react .rc { font-size: 11px; font-weight: 700; }
+.ago-react[data-reactors] { position: relative; }
+.ago-react[data-reactors]::after {
+  content: attr(data-reactors);
+  position: absolute; z-index: 90; left: 50%; bottom: calc(100% + 8px);
+  width: max-content; max-width: min(320px, 80vw); transform: translateX(-50%);
+  pointer-events: none; opacity: 0; visibility: hidden;
+  color: var(--text); background: #171b26; border: 1px solid var(--border-strong);
+  border-radius: 7px; padding: 6px 9px; font-size: 11.5px; font-weight: 500;
+  line-height: 1.35; white-space: normal; box-shadow: 0 8px 24px rgba(0,0,0,.45);
+  transition: opacity .12s ease, visibility .12s ease;
+}
+.ago-react[data-reactors]:hover::after,
+.ago-react[data-reactors]:focus-visible::after { opacity: 1; visibility: visible; }
 /* The trailing "+" chip only surfaces on hover, like the footer actions. */
 .ago-react-add { opacity: 0; transition: opacity .15s ease; padding: 2px 7px; }
 .ago-bubble:hover .ago-react-add { opacity: 1; }
