@@ -181,3 +181,5 @@ behavior for free. As with any thread, treat it as a fresh conversation (use
 [`bridges/claude-cli`](../bridges/claude-cli/README.md) is a ready-made dial-in
 bridge that drives local Claude Code sessions from a channel — a working
 reference implementation of the frames above.
+[`bridges/codex-cli`](../bridges/codex-cli/README.md) is its sibling for the
+Codex CLI (`codex exec` / `codex exec resume`).
