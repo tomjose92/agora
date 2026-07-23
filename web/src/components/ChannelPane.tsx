@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  fmtTs, useChannelAgents, useChannelLive, useGroups, useMe, useMembers,
+  fmtTs, useAgents, useChannelAgents, useChannelLive, useGroups, useMe, useMembers,
   usePinMessage, usePins, useSeedActivity, useStarMessage, useStars,
   useUpdateChannel, type Message,
 } from "@agora/core";
@@ -136,6 +136,10 @@ export function ChannelPane() {
   const group = groups.find(g => g.id === ui.sel.g) || null;
   const channel = group?.channels?.find(c => c.id === ui.sel.c) || null;
   const agents = useChannelAgents(channel?.id || "").data || [];
+  // The channel-agents payload is {id, name} only; avatars live on the full
+  // /api/agents roster, so the picker/mention rows resolve them by id (the
+  // same lookup the vanilla UI and MessageItem do).
+  const roster = useAgents().data || [];
   useSeedActivity(channel?.id || "");
   const updateChannel = useUpdateChannel();
   const [editing, setEditing] = useState(false);
@@ -159,13 +163,13 @@ export function ChannelPane() {
     return [
       ...agents.map(a => ({
         type: "agent" as const, id: a.id, name: a.name, slug: slugify(a.name),
-        avatar: (a as { avatar?: string }).avatar,
+        avatar: roster.find(r => r.id === a.id)?.avatar || undefined,
       })),
       ...members
         .filter(m => m.member_type === "user" && m.member_id !== me_)
         .map(m => ({ type: "user" as const, id: m.member_id, name: m.member_id, slug: m.member_id })),
     ];
-  }, [agents, members, me]);
+  }, [agents, roster, members, me]);
 
   if (!channel || !group) {
     return (

@@ -7,7 +7,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { flashMessage, useJump } from "../state/jump";
 import {
-  flattenMessages, useChannelAgents, useGroups, useMarkThreadRead, useMe,
+  flattenMessages, useAgents, useChannelAgents, useGroups, useMarkThreadRead, useMe,
   useMessage, useMessages, usePinMessage, usePins, useThreads, type Message,
 } from "@agora/core";
 import { slugify } from "../lib/mentions";
@@ -18,7 +18,7 @@ import { buildMentionIndex, type MentionIndex } from "../lib/mentions";
 import { MessageItem } from "./MessageItem";
 import { Composer } from "./Composer";
 import { LiveRows } from "./ChannelPane";
-import { LiveButton, LiveStrip } from "./VoiceControls";
+import { LiveButton, LiveStrip, SpeakButton } from "./VoiceControls";
 
 const AT_BOTTOM_PX = 40;
 
@@ -93,6 +93,9 @@ export function ThreadPane() {
   const pinned = pins.some(p => p.id === rootId);
 
   const agents = useChannelAgents(channel?.id || "").data || [];
+  // Avatars come from the full /api/agents roster (the channel-agents payload
+  // is {id, name} only) — same lookup as vanilla and MessageItem.
+  const roster = useAgents().data || [];
   const isAdmin = !!(group && (group.role === "admin" || me?.instance_admin));
   const mentions = useMemo(
     () => buildMentionIndex(agents.map(a => ({ id: a.id, name: a.name })), me ? [me.username] : []),
@@ -101,9 +104,9 @@ export function ThreadPane() {
   const candidates = useMemo<MentionCandidate[]>(
     () => agents.map(a => ({
       type: "agent" as const, id: a.id, name: a.name, slug: slugify(a.name),
-      avatar: (a as { avatar?: string }).avatar,
+      avatar: roster.find(r => r.id === a.id)?.avatar || undefined,
     })),
-    [agents],
+    [agents, roster],
   );
 
   // Ack replies when the pane is open and the tab is focused.
@@ -133,6 +136,7 @@ export function ThreadPane() {
           </span>
         </div>
         <div className="ago-head-actions">
+          {me?.voice && <SpeakButton />}
           {me?.voice && <LiveButton channelId={channel.id} threadId={rootId} />}
           <button className={`btn sm ${pinned ? "active" : ""}`}
             title={pinned ? "Unpin this thread" : "Pin this thread for quick access"}
