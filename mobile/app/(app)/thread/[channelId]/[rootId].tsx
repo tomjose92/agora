@@ -51,6 +51,7 @@ import { toastErr } from "../../../../src/components/Toast";
 import { onAgentMessage } from "../../../../src/lib/agentBus";
 import { headerActions } from "../../../../src/lib/headerItems";
 import { useHeaderKeyboardOffset } from "../../../../src/lib/keyboard";
+import { speakMessage } from "../../../../src/lib/nativeSpeech";
 import {
   enqueueSpeech,
   prepareSpeechAudio,
@@ -378,6 +379,21 @@ export default function ThreadScreen() {
                   <Text style={styles.sheetText}>
                     {showingTldr[actionsFor.id] ? "Show full message" : "Show TL;DR"}
                   </Text>
+                </Pressable>
+              ) : null}
+              {Platform.OS === "ios" && actionsFor.text.trim() ? (
+                <Pressable
+                  style={styles.sheetBtn}
+                  onPress={() => {
+                    const message = actionsFor;
+                    setActionsFor(null);
+                    void speakMessage(message, (e) => toastErr("Speak failed", e)).catch((e) =>
+                      toastErr("Speak failed", e),
+                    );
+                  }}
+                >
+                  <Icon icon={Volume2} size={18} color={colors.text} />
+                  <Text style={styles.sheetText}>Speak</Text>
                 </Pressable>
               ) : null}
               <Pressable
