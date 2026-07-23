@@ -1,6 +1,6 @@
-/* One message bubble — the React port of agoBubble/agoMsgHTML with the same
-   classes: .bubble.user|.assistant[.peer], .who, foot buttons, agent avatar
-   row wrapper. */
+/* One message bubble: .bubble.user|.assistant[.peer], the .who header,
+   prose, attachments/unfurls/sources/forms/options/reactions, the foot
+   buttons, and the agent avatar row wrapper. */
 
 import { create } from "zustand";
 import {
@@ -33,7 +33,7 @@ export const useSourcesView = create<SourcesView>((set) => ({
 }));
 
 /* The text a bubble renders: cut a trailing "Sources:" block the server
-   lifted into meta.sources (mirrors agoVisibleText). */
+   lifted into meta.sources. */
 function visibleText(m: Message): string {
   const meta = m.meta || {};
   const cut = meta.sources_start;

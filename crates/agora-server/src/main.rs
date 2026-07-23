@@ -39,9 +39,11 @@ async fn main() -> anyhow::Result<()> {
             other => anyhow::bail!("unknown argument: {other}"),
         }
     }
-    // Default to the UI bundled next to the binary or in the repo.
+    // Default to the built UI: web/dist in the repo (run `npm run build`),
+    // or a directory named `ui` next to the binary (how the Docker image
+    // and older deployments lay the assets out).
     if ui_dir.is_none() {
-        for candidate in ["ui", "../ui", "../../ui"] {
+        for candidate in ["web/dist", "../web/dist", "../../web/dist", "ui", "../ui", "../../ui"] {
             let p = PathBuf::from(candidate);
             if p.join("index.html").exists() {
                 ui_dir = Some(p);

@@ -1,4 +1,4 @@
-/* Small formatting helpers ported from ui/shim.js + ui/agora.js. */
+/* Small formatting helpers shared by the clients. */
 
 export function fmtTs(ts: number | null | undefined): string {
   if (!ts) return "";

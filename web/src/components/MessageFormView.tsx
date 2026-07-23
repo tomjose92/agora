@@ -1,4 +1,4 @@
-/* Interactive forms (meta.form) — port of agoFormHTML. Shared state:
+/* Interactive forms (meta.form). Shared state:
    meta.form_state holds the live values every member sees; checkbox taps
    persist immediately, typed text stays a local draft until its check icon
    (or Enter) confirms it. A button press submits and locks the form. */

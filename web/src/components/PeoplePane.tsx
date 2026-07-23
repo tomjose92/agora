@@ -1,5 +1,4 @@
-/* People & invites overlay (#users-panel) — the React port of ui/users.js:
-   workspace accounts with role/disable controls, email invites, and
+/* People & invites overlay (#users-panel): workspace accounts with role/disable controls, email invites, and
    single-use invite links. Admin only. */
 
 import { useState } from "react";

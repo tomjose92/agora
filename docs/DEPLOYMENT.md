@@ -58,7 +58,8 @@ any browser (and the mobile app) can open the UI:
 ```bash
 # on the server
 cargo build --release -p agora-server
-sudo mkdir -p /var/lib/agora && sudo cp -r ui /var/lib/agora/ui
+npm ci && npm run build        # web UI -> web/dist
+sudo mkdir -p /var/lib/agora && sudo cp -r web/dist /var/lib/agora/ui
 ./target/release/agora-server --data-dir /var/lib/agora --ui-dir /var/lib/agora/ui
 ```
 

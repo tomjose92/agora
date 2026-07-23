@@ -1,6 +1,5 @@
-/* Parity harness: drives the Agora web UI through its core flows with
-   selector-only Playwright (no reliance on vanilla globals), so the same
-   script verifies both the vanilla UI at "/" and the React UI at "/app2/".
+/* Regression harness: drives the Agora web UI (served from web/dist)
+   through its core flows with selector-only Playwright.
 
    Usage:
      AGORA_TOKEN=<admin key> node web/e2e/parity.mjs [appPath]

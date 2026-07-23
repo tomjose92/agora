@@ -13,7 +13,8 @@ push, secure store, speech) is NOT covered — those need `npm run ios`.
 ## Server + seed
 
 ```bash
-./target/debug/agora-server --data-dir /tmp/agora-verify --ui-dir ui &
+# build the web UI first if web/dist is missing: npm run build (repo root)
+./target/debug/agora-server --data-dir /tmp/agora-verify --ui-dir web/dist &
 # prints "Admin key: <KEY>" and the port (falls back to ephemeral if 4470 busy)
 # seed via REST: POST /api/groups, /api/groups/$GRP/channels,
 #   /api/channels/$CHAN/messages  with  Authorization: Bearer $KEY

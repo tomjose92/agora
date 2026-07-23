@@ -4,7 +4,8 @@
   "version": "0.1.15",
   "identifier": "app.agora.desktop",
   "build": {
-    "frontendDist": "../../ui"
+    "beforeBuildCommand": "cd ../.. && npm run build",
+    "frontendDist": "../../web/dist"
   },
   "app": {
     "windows": [],
@@ -19,7 +20,7 @@
     "createUpdaterArtifacts": true,
     "icon": ["icons/icon.icns", "icons/icon.png"],
     "resources": {
-      "../../ui": "ui"
+      "../../web/dist": "ui"
     },
     "macOS": {
       "signingIdentity": "Apple Development: Tom Jose (U36YWR75H6)",

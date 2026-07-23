@@ -1,4 +1,4 @@
-/* Message prose: mdliteHtml (byte-identical to vanilla mdLite) + @mention
+/* Message prose: mdliteHtml + @mention
    decoration, mermaid marker divs rendered lazily after paint. */
 
 import { useEffect, useRef } from "react";

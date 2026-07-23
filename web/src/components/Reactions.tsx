@@ -1,5 +1,5 @@
-/* Reaction chips + the trailing add button — same markup as
-   agoReactionsHTML. The picker itself lives in EmojiPicker. */
+/* Reaction chips + the trailing add button. The picker itself lives in
+   EmojiPicker. */
 
 import { useMe, useToggleReaction, type Message } from "@agora/core";
 import { Icon } from "../lib/icons";

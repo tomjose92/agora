@@ -1,4 +1,4 @@
-/* Markdown-lite parser, ported from ui/shim.js mdLite() but emitting a
+/* Markdown-lite parser emitting a
    structured tree instead of HTML so React Native can render it natively.
    Supported, same as desktop: fenced code, inline code, [label](url) and
    bare links, **bold**, *italic*, #-headings (rendered bold), and

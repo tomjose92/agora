@@ -31,60 +31,16 @@ One Rust core, three clients (see the repo layout table in the
   HTTP+WS API (axum), auth, and the outbound connection manager.
 - **`crates/agora-desktop`** — Tauri v2 macOS shell. Two modes (below).
 - **`crates/agora-server`** — the same core, headless, for a VPS / Railway.
-- **`ui/`** — the static web root served by both the desktop bundle and the
-  headless server: `/` is the React app (generated `ui/index.html` +
-  `ui/app2/`), `/vanilla/` the legacy no-build vanilla UI whose JS/CSS stay
-  at the `ui/` root. Shared root assets (`style.css`, `icon.png`,
-  `mermaid.min.js`, `connect.html`) are used by **both** UIs — see
-  "Retiring the vanilla UI" below before deleting anything here.
-- **`web/` + `packages/core`** — the React (Vite + TS) web UI on a shared
+- **`web/` + `packages/core`** — the web UI: React (Vite + TS) on a shared
   client core (`@agora/core`: API client/types, query hooks, WS reducer,
-  stores, helpers), at full parity with the vanilla UI including voice
-  notes, speak-aloud, and live voice. It builds into `ui/app2/` with its
-  entry copied to `ui/index.html` (both committed), so the existing static
-  serving makes it the default at `/` with no server changes; the legacy
-  vanilla UI stays reachable at `/vanilla/` as a fallback until it is
-  retired.
-
-### Retiring the vanilla UI (the checklist for whoever does it)
-
-The vanilla UI at `/vanilla/` exists as a fallback while the React app
-proves itself in daily use. When it's time to remove it, the pieces are
-entangled in non-obvious ways — work through this list:
-
-1. **Delete only the vanilla-specific files**: `ui/agora.js`, `ui/shim.js`,
-   `ui/connections.js`, `ui/users.js`, `ui/icons.js`, `ui/emoji.js`, and
-   `ui/vanilla/`. **Keep** `ui/style.css`, `ui/icon.png`,
-   `ui/mermaid.min.js` (the React app loads all three from the root at
-   runtime) and `ui/connect.html` (the desktop server picker, loaded by
-   literal path from `tauri://localhost` — it is not part of the vanilla
-   UI and must survive).
-2. **Emoji codegen**: drop the `ui/emoji.js` target from
-   `scripts/gen-emoji.js` and update
-   `packages/core/tests/emoji-sync.test.ts`, which reads `ui/emoji.js` to
-   assert the datasets match.
-3. **Icons**: `web/src/lib/icons.tsx` documents `ui/icons.js` as the source
-   of truth — flip that; the React copy becomes canonical.
-4. **Style ownership**: either keep serving `ui/style.css` from the root or
-   fold it into the Vite build and drop the `<link href="/style.css">` from
-   `web/index.html`.
-5. **Parity harness**: stop running `web/e2e/parity.mjs` against
-   `/vanilla/`; it remains the regression suite for `/`. Its selectors were
-   chosen to match both UIs, so nothing else changes.
-6. **Same PR or right after — real build infra**: once vanilla is gone
-   there is no reason to keep committing build artifacts. Stop committing
-   `ui/app2/` + `ui/index.html`; add a Node build stage to the `Dockerfile`
-   (the builder image is Rust-only today and `COPY ui` ships the tree
-   verbatim), a `beforeBuildCommand` to
-   `crates/agora-desktop/tauri.conf.json`, and a build step to
-   `.github/workflows/release-desktop.yml`. Keep `railway.json`'s
-   `healthcheckPath: "/"` serving the built index.
-7. **Docs**: update the repo tables in `AGENTS.md`/`README.md`, the client
-   list above, and the "Web UI" conventions bullet in `AGENTS.md`.
-
-Prerequisite judgment call, not a hard blocker: `/` has been the default
-long enough that no one needs the fallback. (`mobile/` already runs on
-`@agora/core`, so the shared core is exercised by both clients.)
+  stores, helpers), including voice notes, speak-aloud, and live voice.
+  `npm run build` emits `web/dist/` (gitignored, never committed) — the
+  directory the headless server serves (`--ui-dir`, probed by default), the
+  Docker image builds in a Node stage, and the desktop bundle copies via
+  Tauri's `beforeBuildCommand` + `frontendDist`. `web/public/` carries the
+  verbatim root assets: `icon.png`, the vendored `mermaid.min.js`
+  (lazy-loaded), and `connect.html` — the desktop-only server picker loaded
+  by literal path from `tauri://localhost`.
 - **`mobile/`** — React Native (Expo) iOS/Android app, a pure client of a
   hosted `agora-server`. Runs on `@agora/core` (a `file:` dependency plus
   Metro `watchFolders`) for the API client, query hooks, WS reducer, stores,

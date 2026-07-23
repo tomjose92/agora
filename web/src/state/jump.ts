@@ -1,7 +1,6 @@
 /* Jump-to-exact-message (search results, pins, stars): the target waits in
    this store until the right log has the message rendered, then the log
-   scrolls it into view and flashes it — the React counterpart of
-   agoJumpToMessage/agoFlashMessage. */
+   scrolls it into view and flashes it. */
 
 import { create } from "zustand";
 

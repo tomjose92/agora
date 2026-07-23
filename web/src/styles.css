@@ -44,7 +44,7 @@ a:hover { text-decoration: underline; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes blink { 50% { opacity: .35; } }
 
-/* ---------- inline SVG icons (ui/icons.js) ---------- */
+/* ---------- inline SVG icons (lib/icons.tsx) ---------- */
 svg.ico {
   width: 1em; height: 1em; flex-shrink: 0;
   vertical-align: -0.15em;

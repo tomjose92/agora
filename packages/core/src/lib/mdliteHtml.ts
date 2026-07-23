@@ -1,7 +1,8 @@
-/* HTML-emitting markdown-lite: a line-for-line TS port of esc() + mdLite()
-   from ui/shim.js, so the React UI renders byte-identical message HTML to
-   the vanilla UI. (lib/mdlite.ts is the tree-parsing variant the mobile app
-   renders natively; both ship so either host can pick.) */
+/* HTML-emitting markdown-lite for chat messages: fenced code (incl. the
+   .md-mermaid marker), inline code, links, bold/italic, headings, and
+   tables — with esc() applied to everything interpolated. (lib/mdlite.ts
+   is the tree-parsing variant the mobile app renders natively; both ship
+   so either host can pick.) */
 
 export function esc(s: unknown): string {
   return String(s ?? "").replace(/[&<>"']/g, c =>

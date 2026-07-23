@@ -87,6 +87,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # The web UI deps: tauri's beforeBuildCommand runs `npm run build`
+      # (web/ -> web/dist), which frontendDist and the bundle resources copy.
+      - run: npm ci
 
       - name: Build, sign and draft the release
         uses: tauri-apps/tauri-action@v0

@@ -1,4 +1,4 @@
-/* Search overlay (⌘K) — the React port of the agoSearch* family: live
+/* Search overlay (⌘K): live
    results (groups/channels/messages) with keyboard navigation, scope and
    attachment filters, "More results" paging, and the Ask-AI answer view
    with [n] citations. */
@@ -35,8 +35,8 @@ function pinSnippet(m: { alias?: string | null; text?: string }): string {
   return (m.text || "").split("\n")[0].slice(0, 140);
 }
 
-/* [n] citations become superscript links; same pre/code/link split as agoMd
-   keeps code blocks untouched. */
+/* [n] citations become superscript links; the pre/code/link split keeps
+   code blocks untouched. */
 function answerHTML(answer: string, nSources: number): string {
   return mdliteHtml(answer)
     .split(/(<pre[\s\S]*?<\/pre>|<code>[\s\S]*?<\/code>|<a\b[\s\S]*?<\/a>)/)
@@ -103,7 +103,7 @@ export function SearchPane() {
     : scopeStr.startsWith("c:") ? { channelId: scopeStr.slice(2) } : undefined;
   const res = useSearch(debouncedQ, scope, file);
 
-  // 250ms debounce like agoSearchInput.
+  // 250ms input debounce.
   useEffect(() => {
     const t = setTimeout(() => { setDebouncedQ(query.trim()); setSel(0); setExtra([]); }, 250);
     return () => clearTimeout(t);
@@ -149,7 +149,7 @@ export function SearchPane() {
     [res.data, extra],
   );
 
-  // Build the item list in display order (mirrors agoSearchDraw).
+  // Build the item list in display order.
   const items: Item[] = useMemo(() => {
     const list: Item[] = [];
     if (view === "ask") {

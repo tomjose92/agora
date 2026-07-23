@@ -1,5 +1,4 @@
-/* Server-fetched link previews (meta.unfurls) — same markup as
-   agoUnfurlsHTML. */
+/* Server-fetched link previews (meta.unfurls). */
 
 import type { Message } from "@agora/core";
 

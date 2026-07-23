@@ -1,6 +1,6 @@
-/* Inline SVG icon set (Lucide outlines) — copied from ui/icons.js, which
-   stays the source of truth; keep the two maps in sync when adding icons.
-   Markup is byte-identical to the vanilla icon() helper for CSS parity. */
+/* Inline SVG icon set (Lucide outlines, https://lucide.dev — ISC license),
+   vendored so the UI works offline. This map is the source of truth for
+   the web UI's icons. */
 
 export const ICONS: Record<string, string> = {
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
@@ -52,7 +52,7 @@ export function iconSvg(name: string, cls?: string): string {
   return `<svg class="ico${cls ? " " + cls : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
 
-/** React wrapper emitting the same markup as vanilla icon(). */
+/** React wrapper for one named icon. */
 export function Icon({ name, cls }: { name: string; cls?: string }) {
   const body = ICONS[name];
   if (!body) return null;

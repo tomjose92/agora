@@ -33,8 +33,7 @@ email/invite-link admission, and Google/Apple sign-in. The `admin_key` in
 | `crates/agora-core` | The embeddable heart: SQLite store, message hub, HTTP+WS API (axum), outbound connection manager. |
 | `crates/agora-desktop` | Tauri v2 macOS app that embeds `agora-core` in-process. |
 | `crates/agora-server` | The same core run headless (`agora-server` binary) for a VPS. |
-| `ui/` | The static web root served by both the desktop app and the headless server: `/` is the React app, `/vanilla/` the legacy vanilla UI. |
-| `web/` + `packages/core` | The React web UI (full parity incl. voice) on a shared TypeScript client core, built into `ui/`. |
+| `web/` + `packages/core` | The web UI (React + TypeScript, incl. voice) on a shared client core; `npm run build` emits `web/dist/`, served by both the desktop app and the headless server. |
 | `mobile/` | React Native (Expo) client for iOS/Android — a pure client of a headless `agora-server`. See [`mobile/README.md`](mobile/README.md). |
 | `bridges/` | Dial-in bridge clients for the agent protocol. [`bridges/claude-cli`](bridges/claude-cli/README.md) drives local Claude Code sessions from a channel; [`bridges/codex-cli`](bridges/codex-cli/README.md) does the same for the Codex CLI. |
 
@@ -87,9 +86,11 @@ cargo build --release -p agora-server
 # Open http://127.0.0.1:4470/?token=<admin-key> in a browser
 ```
 
-The web UI is the same one the desktop app bundles. Pass `--ui-dir path/to/ui`
-if the binary doesn't sit next to the repo's `ui/` folder. To run this shared,
-always-on, or on Railway, see [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+The web UI is the same one the desktop app bundles. Build it once with
+`npm ci && npm run build` (emits `web/dist/`, which the server finds
+automatically from the repo root — or pass `--ui-dir path/to/dist`). To run
+this shared, always-on, or on Railway, see
+[DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Connecting agents
 

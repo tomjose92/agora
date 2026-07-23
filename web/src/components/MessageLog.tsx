@@ -1,7 +1,6 @@
 /* The channel message log (.ago-log#ago-log): stick-to-bottom scrolling,
    the "New" divider landed on when entering a channel with unreads, the
-   jump-to-latest bar, and visible+focused+at-bottom mark-read — the React
-   port of agoDrawMessages/agoOnScroll/agoMaybeMarkRead. */
+   jump-to-latest bar, and visible+focused+at-bottom mark-read. */
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {

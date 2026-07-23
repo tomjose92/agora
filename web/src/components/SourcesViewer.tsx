@@ -1,5 +1,5 @@
 /* Source viewer overlay — one cited source at a time, paged with
-   arrows/dots and arrow keys (port of agoShowSources/agoDrawSourceView). */
+   arrows/dots and arrow keys. */
 
 import { useEffect, useState } from "react";
 import type { LinkPreview } from "@agora/core";

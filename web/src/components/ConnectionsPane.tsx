@@ -1,8 +1,6 @@
-/* Connections overlay (#conn-panel) — the React port of ui/connections.js:
-   instance name, linked Pantheo instances (4s status poll while open), and
+/* Connections overlay (#conn-panel): instance name, linked Pantheo instances (4s status poll while open), and
    dial-in pairing tokens. Admin only. React-query's refetch keeps typed
-   input intact (no innerHTML clobbering), so the vanilla focus guard isn't
-   needed. */
+   input intact while the poll refreshes. */
 
 import { useState } from "react";
 import {

@@ -1,6 +1,5 @@
-/* Toasts with the vanilla UI's markup/classes (.toast-host > .toast.in) so
-   style.css and the parity harness apply unchanged. toast() is imperative
-   like the vanilla helper; <ToastHost/> renders the queue. */
+/* Toast notifications (.toast-host > .toast.in, styled in styles.css).
+   toast() is imperative; <ToastHost/> renders the queue. */
 
 import { create } from "zustand";
 

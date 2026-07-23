@@ -1,7 +1,6 @@
 /* Composer (.chat-input): textarea with autogrow, Enter-to-send, mention
    autocomplete (@…), the "talk to" agent addressing picker, file chips
-   (paste/drag/pick, 5-file cap), and the thread-ask toggle — the React port
-   of the vanilla composer block plus the agoMention and agoAddr families. */
+   (paste/drag/pick, 5-file cap), and the thread-ask toggle. */
 
 import { useEffect, useRef, useState } from "react";
 import { useAgents, useSendMessage, type ChannelAgent, type OutgoingFile } from "@agora/core";
@@ -131,8 +130,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
     setFiles(next);
   };
 
-  /* Mention autocomplete: a live "@token" ending at the caret (port of
-     agoMentionInput's liveness rule). */
+  /* Mention autocomplete: a live "@token" ending at the caret. */
   const updateMention = (value: string, caret: number) => {
     const upToCaret = value.slice(0, caret);
     const at = upToCaret.lastIndexOf("@");

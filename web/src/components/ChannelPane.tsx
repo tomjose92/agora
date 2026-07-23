@@ -1,7 +1,6 @@
 /* Main channel pane (.agora-main when a channel is selected): header with
    rename/topic edit, pinned-threads bar, members toggle, the message log,
-   live typing/progress rows, and the composer — the React port of
-   agoDrawMain for the channel case. */
+   live typing/progress rows, and the composer. */
 
 import { useMemo, useState } from "react";
 import {
@@ -66,7 +65,7 @@ function PinBar({ channelId }: { channelId: string }) {
   );
 }
 
-/* Starred-messages dropdown (agoStarPopHTML): rows jump to the message —
+/* Starred-messages dropdown: rows jump to the message —
    into its thread when it's a reply, flashing it either way. */
 function StarPop({ channelId, onClose }: { channelId: string; onClose: () => void }) {
   const stars = useStars(channelId).data || [];

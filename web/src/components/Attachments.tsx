@@ -1,4 +1,4 @@
-/* Attachment strip under a bubble — same markup as agoAttachmentsHTML. */
+/* Attachment strip under a bubble: inline images and download chips. */
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
