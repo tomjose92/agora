@@ -57,6 +57,7 @@ import { onAgentMessage } from "../../../src/lib/agentBus";
 import { fmtTs } from "@agora/core";
 import { headerActions } from "../../../src/lib/headerItems";
 import { useHeaderKeyboardOffset } from "../../../src/lib/keyboard";
+import { speakMessage } from "../../../src/lib/nativeSpeech";
 import { enqueueSpeech, prepareSpeechAudio, stopSpeech } from "../../../src/lib/speech";
 import { colors } from "../../../src/lib/theme";
 import { useChannelLive } from "@agora/core";
@@ -126,6 +127,21 @@ function MessageActions({
             >
               <Icon icon={MessageCircle} size={18} color={colors.text} />
               <Text style={styles.sheetText}>Reply in thread</Text>
+            </Pressable>
+          ) : null}
+          {Platform.OS === "ios" && message.text.trim() ? (
+            <Pressable
+              style={styles.sheetBtn}
+              onPress={() =>
+                act(() => {
+                  void speakMessage(message, (e) => toastErr("Speak failed", e)).catch((e) =>
+                    toastErr("Speak failed", e),
+                  );
+                })
+              }
+            >
+              <Icon icon={Volume2} size={18} color={colors.text} />
+              <Text style={styles.sheetText}>Speak</Text>
             </Pressable>
           ) : null}
           <Pressable
