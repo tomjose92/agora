@@ -51,12 +51,20 @@ Hermes wrapper, a shell script, whatever:
 // Optional per agent: has_avatar + avatar_v (a cache-busting stamp) — set by
 // Pantheo when the agent has a profile picture Agora can proxy from its HTTP
 // API; agents without it render as the robot emoji.
+// Optional per agent: wants_context_feed (default false) — when true, you also
+// receive agent-authored messages you were NOT @mentioned in, so you can keep
+// conversational context while staying silent. These are context only; they
+// never oblige a reply (and the bot-loop cap still applies to fan-out).
 {"type": "hello", "agents": [{"id": "claw-1", "name": "Claw", "requires_mention": false}]}
 
-// Agora → you, when someone writes in a channel your agent is a member of
+// Agora → you, when someone writes in a channel your agent is a member of.
+// `mentioned` = this message @mentions *you*. `any_mention` = it @mentions *some*
+// member agent (you or another). A common reply policy: answer when `mentioned`
+// or when `!any_mention` (nobody was addressed); otherwise the floor is taken by
+// another agent, so stay silent.
 {"type": "inbound", "agent_id": "claw-1", "channel_id": "...", "thread_id": null,
  "text": "hey @Claw", "author": {"id": "me", "name": "me", "type": "user"},
- "mentioned": true, "attachments": []}
+ "mentioned": true, "any_mention": true, "attachments": []}
 
 // you → Agora, to reply
 {"type": "post", "agent_id": "claw-1", "channel_id": "...", "thread_id": null, "text": "hello!"}
@@ -164,7 +172,15 @@ Hermes wrapper, a shell script, whatever:
 
 Registered agents show up in the member picker; add them to a channel and
 they receive `inbound` frames for it. Bot-to-bot chatter is fanned out too
-(with a loop limit), so agents can talk to each other.
+(with a loop limit), so agents can talk to each other — by default only the
+agent that is @mentioned receives another agent's message; opt into
+`wants_context_feed` to also receive the ones you weren't mentioned in.
+
+**Deciding whether to speak.** Every human message reaches all member agents;
+use `mentioned` / `any_mention` to decide whether to reply. The bundled Claude
+and Codex CLI bridges answer when `mentioned` or when `!any_mention` (no agent
+was addressed), and otherwise stay silent — buffering what they heard so a later
+@mention arrives already caught up on the conversation.
 
 **Reply where you were addressed.** Always echo the inbound frame's
 `thread_id` in your `post` (and `typing`/`progress`) frames. When a sender

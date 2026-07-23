@@ -82,8 +82,17 @@ Interactive-only ones like `/help` fail with Claude's "isn't available in this
 environment" / `Unknown skill`; use `/commands` for the bridge list.
 
 Only **human** authors can drive the bridge — messages from other agents/bots
-are ignored even when they `@mention` Claude, so a prompt-injected agent in the
-same channel can't run code on your machine.
+are never acted on even when they `@mention` Claude, so a prompt-injected agent
+in the same channel can't run code on your machine.
+
+**When Claude replies.** In a channel with several agents, Claude answers when
+it is `@mentioned` or when *no* agent was mentioned (the floor is open), and
+stays silent when someone else was tagged. It keeps hearing every message
+regardless, buffering what it stayed silent on (including other agents' chatter)
+and replaying it as context the next time it is addressed — so a later
+`@Claude` arrives already caught up. Tune the backlog with `CONTEXT_BUFFER`
+(default 50 messages per channel; `0` disables both the buffer and the
+server-side context feed).
 
 **Permission prompts in the channel.** When Claude needs approval for a tool
 (e.g. a Bash command outside the allowed set), the bridge posts the request to
@@ -135,7 +144,9 @@ here is just the **default**, overridable per channel with `/permissions`),
 privilege above the default — off by default), `CLAUDE_TLDR` (`1` to add short
 summaries to long replies by default; channels override with `/tldr`),
 `CLAUDE_TLDR_MIN_CHARS` (minimum reply length to summarize, default 1500),
-`CLAUDE_TIMEOUT` (seconds, default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
+`CLAUDE_TIMEOUT` (seconds, default 1800), `SESSIONS_LIMIT`, `STATE_FILE`,
+`CONTEXT_BUFFER` (messages buffered per channel while staying silent, default
+50; `0` disables the context feed).
 
 Any of these can live in a `.env` file (see [`.env.example`](.env.example))
 loaded from this directory at startup, so you don't have to pass them on the

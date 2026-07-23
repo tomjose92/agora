@@ -7,8 +7,10 @@ CLI sessions via `claude -p --resume`. Lets you follow up on finished Claude
 sessions from your phone while the laptop sits at home.
 
 Protocol (see docs/PROTOCOL.md, "Third-party agents"):
-  -> {"type": "hello", "agents": [{"id", "name", "requires_mention"}]}
-  <- {"type": "inbound", "agent_id", "channel_id", "thread_id", "text", ...}
+  -> {"type": "hello", "agents": [{"id", "name", "requires_mention",
+                                   "wants_context_feed"}]}
+  <- {"type": "inbound", "agent_id", "channel_id", "thread_id", "text",
+       "mentioned", "any_mention", ...}
   -> {"type": "post", "agent_id", "channel_id", "thread_id", "text"}
   -> {"type": "typing" | "progress", ...}   (optional niceties)
   -> {"type": "post", ..., "options_id", "options"}   (permission buttons)
@@ -437,6 +439,11 @@ class Bridge:
         # "Always allow" tool names granted per binding key; memory-only so a
         # bridge restart re-asks rather than silently trusting old grants.
         self.session_allows: dict[str, set[str]] = {}
+        # Per-binding backlog of messages we saw but stayed silent on (someone
+        # else was @mentioned). Flushed into the prompt as context the next time
+        # we're actually addressed, so a late @mention arrives already caught up.
+        self.context_buffer: dict[str, list[str]] = {}
+        self.context_buffer_limit = max(0, args.context_buffer)
 
     @staticmethod
     def _normalize_url(url: str, token: str) -> str:
@@ -523,18 +530,57 @@ class Bridge:
             flags=re.IGNORECASE,
         )
 
+    def _buffer_context(self, key: str, frame: dict) -> None:
+        """Remember a message we stayed silent on, to replay as context the next
+        time we're addressed. Bounded to the most recent N per binding."""
+        if self.context_buffer_limit <= 0:
+            return
+        text = (frame.get("text") or "").strip()
+        if not text:
+            n = len(frame.get("attachments") or [])
+            if not n:
+                return
+            text = f"[{n} attachment(s)]"
+        author = (frame.get("author") or {}).get("name") or "someone"
+        buf = self.context_buffer.setdefault(key, [])
+        buf.append(f"{author}: {text}")
+        if len(buf) > self.context_buffer_limit:
+            del buf[: len(buf) - self.context_buffer_limit]
+
+    def _flush_context(self, key: str, text: str) -> str:
+        """Prepend and clear this binding's buffered context, if any."""
+        backlog = self.context_buffer.pop(key, None)
+        if not backlog:
+            return text
+        return (
+            "[Earlier messages in this channel, for context only — you did not "
+            "reply to these:]\n"
+            + "\n".join(backlog)
+            + "\n[End of earlier messages. Now, the message addressed to you:]\n"
+            + text
+        )
+
     async def handle_inbound(self, frame: dict) -> None:
+        key = self.binding_key(frame)
         # Only humans may drive Claude. Non-user authors (other agents/bots) are
-        # ignored even when they @mention us: a prompt-injected agent in the same
-        # channel must never be able to run code on this machine.
+        # never acted on even when they @mention us: a prompt-injected agent in
+        # the same channel must never be able to run code on this machine. We do
+        # keep their text as context for a later @mention.
         if frame.get("author", {}).get("type") != "user":
+            self._buffer_context(key, frame)
+            return
+        # Respond only when addressed: we're @mentioned, or no agent was tagged
+        # at all (open floor). Otherwise someone else was tagged — stay silent
+        # but remember the turn. A reply to a question we asked here is for us.
+        addressed = bool(frame.get("mentioned")) or not frame.get("any_mention")
+        if not addressed and not self.pending_questions.get(key):
+            self._buffer_context(key, frame)
             return
         text = self._strip_mention(frame.get("text") or "")
         # An image/file with no caption is still a real turn — forward it so
         # long as something (text or an attachment) actually came through.
         if not text and not (frame.get("attachments") or []):
             return
-        key = self.binding_key(frame)
         cmd, _, rest = text.partition(" ")
         cmd, rest = cmd.lower(), rest.strip()
         if cmd == "/commands":
@@ -892,6 +938,11 @@ class Bridge:
         self.busy.add(key)
         self.typing(frame, True)
         try:
+            # Catch Claude up on anything we heard but stayed silent on — but
+            # never prepend context onto a bare slash-command turn (/compact …),
+            # which must reach Claude verbatim.
+            if not text.lstrip().startswith("/"):
+                text = self._flush_context(key, text)
             reply = await self.run_claude(key, frame, binding, text)
             body, tldr = self._split_tldr(
                 reply, self._tldr_enabled(binding), self.tldr_min_chars)
@@ -1462,6 +1513,10 @@ class Bridge:
                             "id": self.agent_id,
                             "name": self.agent_name,
                             "requires_mention": False,
+                            # Keep hearing everything (so context accumulates) but
+                            # only reply when addressed; also ask the server for a
+                            # feed of agent chatter we aren't @mentioned in.
+                            "wants_context_feed": self.context_buffer_limit > 0,
                         }],
                     }))
                     backoff = 1.0
@@ -1612,6 +1667,10 @@ def main() -> None:
     ap.add_argument("--sessions", type=int, default=int(os.environ.get("SESSIONS_LIMIT", "10")),
                     help="how many sessions /sessions lists")
     ap.add_argument("--state-file", default=os.environ.get("STATE_FILE", str(default_state)))
+    ap.add_argument("--context-buffer", type=int,
+                    default=int(os.environ.get("CONTEXT_BUFFER", "50")),
+                    help="max messages to buffer per channel while staying silent "
+                         "(replayed as context when next @mentioned; 0 disables)")
     args = ap.parse_args()
     if args.token:
         log("warning: --token on the command line is visible to other local users "
