@@ -2928,6 +2928,7 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
                                     agent_id: id.to_string(),
                                     agent_name: a["name"].as_str().unwrap_or(id).to_string(),
                                     requires_mention: a["requires_mention"].as_bool().unwrap_or(false),
+                                    wants_context_feed: a["wants_context_feed"].as_bool().unwrap_or(false),
                                     // Dial-in bridges have no HTTP origin to proxy
                                     // an avatar from; they stay on the emoji.
                                     has_avatar: false,

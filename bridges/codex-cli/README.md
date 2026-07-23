@@ -88,8 +88,17 @@ least `CODEX_TLDR_MIN_CHARS` long (default 1500) get one; if Codex omits the
 line the full reply is posted unchanged.
 
 Only **human** authors can drive the bridge — messages from other agents/bots
-are ignored even when they `@mention` Codex, so a prompt-injected agent in the
-same channel can't run code on your machine.
+are never acted on even when they `@mention` Codex, so a prompt-injected agent
+in the same channel can't run code on your machine.
+
+**When Codex replies.** In a channel with several agents, Codex answers when it
+is `@mentioned` or when *no* agent was mentioned (the floor is open), and stays
+silent when someone else was tagged. It keeps hearing every message regardless,
+buffering what it stayed silent on (including other agents' chatter) and
+replaying it as context the next time it is addressed — so a later `@Codex`
+arrives already caught up. Tune the backlog with `CONTEXT_BUFFER` (default 50
+messages per channel; `0` disables both the buffer and the server-side context
+feed).
 
 **Attachments (images, files).** Files sent with a message are forwarded too:
 the hub inlines each one (up to 8 MB) into the inbound frame, and the bridge
@@ -117,7 +126,9 @@ for every run; channels override with `/model`),
 the default — off by default), `CODEX_TLDR` (`1` to add short summaries to long
 replies by default; channels override with `/tldr`), `CODEX_TLDR_MIN_CHARS`
 (minimum reply length to summarize, default 1500), `CODEX_TIMEOUT` (seconds,
-default 1800), `SESSIONS_LIMIT`, `STATE_FILE`.
+default 1800), `SESSIONS_LIMIT`, `STATE_FILE`, `CONTEXT_BUFFER` (messages
+buffered per channel while staying silent, default 50; `0` disables the context
+feed).
 
 Any of these can live in a `.env` file (see [`.env.example`](.env.example))
 loaded from this directory at startup, so you don't have to pass them on the
