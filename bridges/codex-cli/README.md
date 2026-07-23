@@ -7,7 +7,7 @@ The bridge runs on the machine where you use `codex`, dials **out** to the
 Agora hub (cloud or local, no ports opened on the laptop), registers as an
 agent, and forwards channel messages to `codex exec` / `codex exec resume
 <session>`. Its reaction on the message steps through the turn — 👀 while it is
-working and ☑️ when done — with the completion emoji replacing the eyes so only
+working and ✅ when done — with the completion emoji replacing the eyes so only
 one shows at a time. Messages addressed to another agent have the
 👀 removed and are not marked complete.
 

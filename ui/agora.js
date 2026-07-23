@@ -2423,12 +2423,40 @@ function agoAttachmentsHTML(m) {
   const parts = files.map(f => {
     const url = agoFileUrl(f.id);
     if (AGO_BROWSER_IMAGE.test(f.mime || "")) {
-      return `<a class="ago-att-img" href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${esc(f.filename)}" loading="lazy"></a>`;
+      const encodedUrl = encodeURIComponent(url);
+      const encodedName = encodeURIComponent(f.filename);
+      return `<button class="ago-att-img" type="button" aria-label="Preview ${esc(f.filename)}"
+        onclick="agoOpenImagePreview(decodeURIComponent('${encodedUrl}'), decodeURIComponent('${encodedName}'))"><img src="${url}" alt="${esc(f.filename)}" loading="lazy"></button>`;
     }
     const ico = (f.mime || "").startsWith("image/") ? icon("image") : icon("file-text");
     return `<a class="ago-att-file" href="${url}" download="${esc(f.filename)}" title="Download ${esc(f.filename)}">${ico} <span class="fname">${esc(f.filename)}</span> <span class="fsize">${agoHumanSize(f.size)}</span></a>`;
   });
   return `<div class="ago-atts">${parts.join("")}</div>`;
+}
+
+function agoOpenImagePreview(url, filename) {
+  let ov = document.getElementById("ago-image-lightbox");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "ago-image-lightbox";
+    ov.className = "ago-image-lightbox";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.onclick = e => { if (e.target === ov) agoCloseImagePreview(); };
+    document.body.appendChild(ov);
+  }
+  ov.setAttribute("aria-label", `Image preview: ${filename}`);
+  ov.innerHTML = `<div class="ago-image-lightbox-inner">
+    <button type="button" class="ago-image-lightbox-close" aria-label="Close image preview"
+      onclick="agoCloseImagePreview()">${icon("x")}</button>
+    <img src="${esc(url)}" alt="${esc(filename)}">
+    <div class="ago-image-lightbox-name">${esc(filename)}</div>
+  </div>`;
+  ov.style.display = "";
+}
+function agoCloseImagePreview() {
+  const ov = document.getElementById("ago-image-lightbox");
+  if (ov) ov.style.display = "none";
 }
 
 /* ---------- thread panel ---------- */
@@ -3690,6 +3718,12 @@ function agoSearchToggle() {
 /* Global shortcuts. Escape is only claimed while the overlay is open, so
    the composers' own Escape handling keeps working. */
 document.addEventListener("keydown", e => {
+  const imagePreview = document.getElementById("ago-image-lightbox");
+  if (e.key === "Escape" && imagePreview && imagePreview.style.display !== "none") {
+    e.preventDefault();
+    agoCloseImagePreview();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
       && (e.key === "k" || e.key === "K")) {
     e.preventDefault();

@@ -780,9 +780,35 @@ a.btn { text-decoration: none; }
 .ago-pending-chip .fsize { color: var(--faint); font-size: 10.5px; flex-shrink: 0; }
 .ago-pending-chip .ago-x { opacity: 1; }
 .ago-atts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ago-att-img {
+  display: block; padding: 0; border: 0; background: none; cursor: zoom-in;
+}
 .ago-att-img img {
   display: block; max-width: min(340px, 100%); max-height: 260px;
   border-radius: 10px; border: 1px solid var(--border);
+}
+.ago-image-lightbox {
+  position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center;
+  justify-content: center; padding: 32px; background: rgba(5, 7, 12, .88);
+  backdrop-filter: blur(5px);
+}
+.ago-image-lightbox-inner {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  max-width: 100%; max-height: 100%; gap: 10px;
+}
+.ago-image-lightbox-inner > img {
+  display: block; max-width: min(92vw, 1400px); max-height: 82vh;
+  object-fit: contain; border-radius: 10px; box-shadow: 0 18px 60px rgba(0,0,0,.55);
+}
+.ago-image-lightbox-close {
+  position: absolute; top: -18px; right: -18px; z-index: 1;
+  display: grid; place-items: center; width: 36px; height: 36px;
+  border: 1px solid rgba(255,255,255,.22); border-radius: 999px;
+  background: rgba(20,22,30,.92); color: white; cursor: pointer;
+}
+.ago-image-lightbox-name {
+  max-width: 80vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: rgba(255,255,255,.82); font-size: 12px;
 }
 .ago-att-file {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
