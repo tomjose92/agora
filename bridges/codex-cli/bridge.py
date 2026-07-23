@@ -424,7 +424,7 @@ class Bridge:
         self.listings: dict[str, list[dict]] = {}  # binding key -> last /sessions result
         self.busy: set[str] = set()
         # In-flight lifecycle reaction per inbound message id, so a new stage
-        # (👀 → 👍 → ✅) replaces the previous emoji instead of stacking.
+        # (👀 → ☑️) replaces the previous emoji instead of stacking.
         self._reactions: dict[int, str] = {}
         self.procs: dict[str, asyncio.subprocess.Process] = {}  # key -> running codex
         self.stop_requested: set[str] = set()  # keys cancelled via /stop
@@ -519,8 +519,8 @@ class Bridge:
 
     def set_reaction(self, frame: dict, emoji: str, *, remember: bool = True) -> None:
         """Move our reaction on the inbound message to `emoji`, first removing
-        whatever stage we last placed so only the latest one shows (👀 → 👍 →
-        ✅). Pass ``remember=False`` for the terminal ✅ so we stop tracking the
+        whatever stage we last placed so only the latest one shows (👀 → ☑️).
+        Pass ``remember=False`` for the terminal ☑️ so we stop tracking the
         message once the turn is done."""
         message_id = frame.get("message_id")
         if not message_id:
@@ -616,7 +616,6 @@ class Bridge:
         if not text and not (frame.get("attachments") or []):
             self.clear_reaction(frame)
             return
-        self.set_reaction(frame, "👍")
         cmd, _, rest = text.partition(" ")
         cmd, rest = cmd.lower(), rest.strip()
         if cmd == "/commands":
@@ -646,7 +645,7 @@ class Bridge:
             self.post(frame, self._cmd_status(key))
         else:
             await self.forward_to_codex(key, frame, text)
-        self.set_reaction(frame, "✅", remember=False)
+        self.set_reaction(frame, "☑️", remember=False)
 
     # ---------------------------------------------------------- commands
 

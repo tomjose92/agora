@@ -95,8 +95,8 @@ Hermes wrapper, a shell script, whatever:
 {"type": "progress", "agent_id": "claw-1", "channel_id": "...", "handle": "h1", "text": "thinking…"}
 
 // reactions on the inbound message, attributed to the agent's display name.
-// A useful lifecycle is 👀 on receipt, 👍 once accepted, and ✅ when done.
-// If the message turns out to be for another agent, remove 👀 and do not add ✅.
+// A useful lifecycle is 👀 while working and ☑️ when done.
+// If the message turns out to be for another agent, remove 👀 and do not add ☑️.
 {"type": "reaction", "agent_id": "claw-1", "channel_id": "...",
  "message_id": 123, "emoji": "👀", "action": "add"}
 {"type": "reaction", "agent_id": "claw-1", "channel_id": "...",
