@@ -41,6 +41,12 @@ valid invite link → config allowlist); the `google_allowed_emails` list is the
 fallback that lets a fresh email in and becomes that person's account. An empty
 allowlist with no invites keeps Google sign-in disabled outright.
 
+Allowlist entries may be wildcards: `*@example.com` admits everyone at that
+domain, and a bare `*` is **open sign-up** — anyone with a Google (or Apple)
+account gets a member account on your instance, so only use it on servers
+meant to be public. Both allowlists feed the same admission check, so a
+wildcard on either admits sign-ins from both providers.
+
 > **Token trust:** the `id_token` is validated by its claims (`iss`, `aud`,
 > `exp`, `email_verified`, allowlist) but **not** by an RS256/JWKS signature
 > check. This is safe because the token is fetched directly from Google's token
@@ -88,7 +94,10 @@ AGORA_APPLE_ALLOWED_EMAILS=you@icloud.com   # comma-separated
 
 (or `apple_allowed_emails` / `apple_bundle_id` in `config.json`). Restart and
 `GET /api/auth/config` reports `{"apple":{"enabled":true}}`; the mobile connect
-screen shows the Apple button. If you use Apple's **Hide My Email**, allowlist
+screen shows the Apple button. The same wildcard entries work here —
+`*@example.com` for a domain, `*` for open sign-up (which also counts as a
+non-empty allowlist, so it enables the Apple button on its own). If you use
+Apple's **Hide My Email**, allowlist
 the relay address — it is stable per Apple ID and app. Note the button only
 renders in builds carrying the Sign in with Apple entitlement (a paid Apple
 Developer team); free-personal-team dev builds strip it and hide the button.

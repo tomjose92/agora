@@ -41,7 +41,9 @@ pub fn bootstrap_admin_user(config: &config::Config, store: &store::Store) {
             .iter()
             .chain(snapshot.apple_allowed_emails.iter())
             .map(|e| e.trim().to_lowercase())
-            .find(|e| !e.is_empty());
+            // Wildcard entries (`*`, `*@domain`) open sign-up but name nobody
+            // in particular — they can't be the admin's account email.
+            .find(|e| !e.is_empty() && !e.contains('*'));
         store.create_user(&username, &username, email.as_deref(), "admin");
         // Device tokens registered before accounts existed belonged to the one
         // user this instance had — keep their pushes flowing under the new owner.
@@ -174,5 +176,18 @@ mod tests {
         bootstrap_admin_user(&config, &populated);
         assert_eq!(populated.list_users().len(), 1);
         assert_eq!(populated.list_users()[0]["username"], "ana");
+    }
+
+    #[test]
+    fn bootstrap_skips_wildcard_allowlist_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config::Config::load(dir.path()).unwrap();
+        config.update(|c| {
+            c.google_allowed_emails = vec!["*".into(), "*@example.com".into()];
+        });
+        let store = store::Store::open_in_memory().unwrap();
+        bootstrap_admin_user(&config, &store);
+        // Wildcards admit anyone but name nobody: the admin gets no email.
+        assert_eq!(store.list_users()[0]["email"], serde_json::Value::Null);
     }
 }

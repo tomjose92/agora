@@ -2524,6 +2524,19 @@ async fn unregister_push_token(
 /// (the pre-account gate) → the account is created on first sign-in.
 /// Anything else is rejected — possession of a Google/Apple account grants
 /// nothing by itself.
+/// Does `entry` (an allowlist item, trimmed + lowercased) admit `email`?
+/// `*` is open sign-up, `*@domain` admits a whole domain, anything else is
+/// an exact match.
+fn allowlist_entry_matches(entry: &str, email: &str) -> bool {
+    if entry == "*" {
+        return true;
+    }
+    if let Some(domain) = entry.strip_prefix("*@") {
+        return email.split('@').nth(1) == Some(domain);
+    }
+    entry == email
+}
+
 fn signin_session_for_email(
     state: &AppState,
     email: &str,
@@ -2546,7 +2559,7 @@ fn signin_session_for_email(
         snap.google_allowed_emails
             .iter()
             .chain(snap.apple_allowed_emails.iter())
-            .any(|e| e.trim().to_lowercase() == email)
+            .any(|e| allowlist_entry_matches(&e.trim().to_lowercase(), &email))
     };
     if invite.is_none() && link.is_none() && !allowlisted {
         return Err("no_access");
@@ -3053,6 +3066,22 @@ mod tests {
         let carol = authed_user(&state, &token).unwrap();
         assert_eq!(carol.username, "carol");
         assert!(!carol.instance_admin);
+
+        // A `*@domain` entry admits that whole domain and nothing else.
+        state.config.update(|c| {
+            c.google_allowed_emails = Vec::new();
+            c.apple_allowed_emails = vec!["*@x.io".into()];
+        });
+        let token = signin_session_for_email(&state, "dave@x.io", None).unwrap();
+        assert_eq!(authed_user(&state, &token).unwrap().username, "dave");
+        assert_eq!(signin_session_for_email(&state, "dave@y.io", None), Err("no_access"));
+
+        // A bare `*` is open sign-up: any verified email gets a member account.
+        state.config.update(|c| c.apple_allowed_emails = vec!["*".into()]);
+        let token = signin_session_for_email(&state, "erin@anywhere.dev", None).unwrap();
+        let erin = authed_user(&state, &token).unwrap();
+        assert_eq!(erin.username, "erin");
+        assert!(!erin.instance_admin);
     }
 
     #[test]
