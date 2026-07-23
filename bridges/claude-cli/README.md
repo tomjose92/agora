@@ -6,9 +6,9 @@ a finished session from your phone while the laptop sits at home.
 The bridge runs on the machine where you use `claude`, dials **out** to the
 Agora hub (cloud or local, no ports opened on the laptop), registers as an
 agent, and forwards channel messages to `claude -p --resume <session>`.
-Its reaction on the message steps through the turn — 👀 when it arrives, 👍
-when it accepts, ✅ when done — each stage replacing the previous emoji so only
-one shows at a time. Messages addressed to another agent have the 👀 removed
+Its reaction on the message steps through the turn — 👀 while it is working and
+☑️ when done — with the completion emoji replacing the eyes so only one shows
+at a time. Messages addressed to another agent have the 👀 removed
 and are not marked complete.
 
 ## Setup
