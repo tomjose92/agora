@@ -423,6 +423,9 @@ class Bridge:
         self.bindings: dict[str, dict] = self._load_state()
         self.listings: dict[str, list[dict]] = {}  # binding key -> last /sessions result
         self.busy: set[str] = set()
+        # In-flight lifecycle reaction per inbound message id, so a new stage
+        # (👀 → 👍 → ✅) replaces the previous emoji instead of stacking.
+        self._reactions: dict[int, str] = {}
         self.procs: dict[str, asyncio.subprocess.Process] = {}  # key -> running codex
         self.stop_requested: set[str] = set()  # keys cancelled via /stop
         self.outbox: asyncio.Queue = asyncio.Queue()
@@ -514,6 +517,34 @@ class Bridge:
             "action": action,
         })
 
+    def set_reaction(self, frame: dict, emoji: str, *, remember: bool = True) -> None:
+        """Move our reaction on the inbound message to `emoji`, first removing
+        whatever stage we last placed so only the latest one shows (👀 → 👍 →
+        ✅). Pass ``remember=False`` for the terminal ✅ so we stop tracking the
+        message once the turn is done."""
+        message_id = frame.get("message_id")
+        if not message_id:
+            return
+        prev = self._reactions.get(message_id)
+        if prev != emoji:
+            if prev:
+                self.reaction(frame, prev, "remove")
+            self.reaction(frame, emoji, "add")
+        if remember:
+            self._reactions[message_id] = emoji
+        else:
+            self._reactions.pop(message_id, None)
+
+    def clear_reaction(self, frame: dict) -> None:
+        """Remove our reaction entirely — a turn we picked up but then declined,
+        so the message ends up looking as if we never engaged."""
+        message_id = frame.get("message_id")
+        if not message_id:
+            return
+        prev = self._reactions.pop(message_id, None)
+        if prev:
+            self.reaction(frame, prev, "remove")
+
     # ----------------------------------------------------------- inbound
 
     @staticmethod
@@ -570,22 +601,22 @@ class Bridge:
         if frame.get("author", {}).get("type") != "user":
             self._buffer_context(key, frame)
             return
-        self.reaction(frame, "👀")
+        self.set_reaction(frame, "👀")
         # Respond only when addressed: we're @mentioned, or no agent was tagged
         # at all (open floor). Otherwise someone else was tagged — stay silent
         # but remember the turn so a later @mention lands with the context.
         addressed = bool(frame.get("mentioned")) or not frame.get("any_mention")
         if not addressed:
-            self.reaction(frame, "👀", "remove")
+            self.clear_reaction(frame)
             self._buffer_context(key, frame)
             return
         text = self._strip_mention(frame.get("text") or "")
         # An image/file with no caption is still a real turn — forward it so
         # long as something (text or an attachment) actually came through.
         if not text and not (frame.get("attachments") or []):
-            self.reaction(frame, "👀", "remove")
+            self.clear_reaction(frame)
             return
-        self.reaction(frame, "👍")
+        self.set_reaction(frame, "👍")
         cmd, _, rest = text.partition(" ")
         cmd, rest = cmd.lower(), rest.strip()
         if cmd == "/commands":
@@ -615,7 +646,7 @@ class Bridge:
             self.post(frame, self._cmd_status(key))
         else:
             await self.forward_to_codex(key, frame, text)
-        self.reaction(frame, "✅")
+        self.set_reaction(frame, "✅", remember=False)
 
     # ---------------------------------------------------------- commands
 

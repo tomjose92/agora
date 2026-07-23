@@ -6,9 +6,10 @@ a finished session from your phone while the laptop sits at home.
 The bridge runs on the machine where you use `codex`, dials **out** to the
 Agora hub (cloud or local, no ports opened on the laptop), registers as an
 agent, and forwards channel messages to `codex exec` / `codex exec resume
-<session>`. It reacts 👀 when a human message arrives, 👍 when it accepts the
-turn, and ✅ after handling it. Messages addressed to another agent have 👀
-removed and are not marked complete.
+<session>`. Its reaction on the message steps through the turn — 👀 when it
+arrives, 👍 when it accepts, ✅ when done — each stage replacing the previous
+emoji so only one shows at a time. Messages addressed to another agent have the
+👀 removed and are not marked complete.
 
 ## Setup
 
