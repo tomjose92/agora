@@ -20,6 +20,7 @@ mobile/.expo/
 
 # Bridge runtime state (per-machine channel->session bindings)
 bridges/claude-cli/state.json
+bridges/codex-cli/state.json
 __pycache__/
 
 # OS noise
