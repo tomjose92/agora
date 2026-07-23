@@ -11,6 +11,22 @@ import { withToken } from "../lib/files";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
 
+/* Agent avatar for the roster row: the picture from /api/agents with the bot
+   icon as fallback. The `has-avatar` span must hold only the <img> (no sibling
+   icon) — .ago-av is an inline-flex circle, so a second child would shrink the
+   image out of shape. Mirrors the avatar markup in MessageItem/Composer. */
+function AgentAvatar({ avatar }: { avatar?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (avatar && !failed) {
+    return (
+      <span className="ago-av sm has-avatar">
+        <img src={withToken(avatar)} alt="" onError={() => setFailed(true)} />
+      </span>
+    );
+  }
+  return <span className="ago-av sm"><Icon name="bot" /></span>;
+}
+
 export function MembersPanel() {
   const ui = useUiState();
   const me = useMe().data;
@@ -70,22 +86,11 @@ export function MembersPanel() {
               if (drawnAgents.has(m.member_id)) return null;
               drawnAgents.add(m.member_id);
               const off = liveById[m.member_id] === false;
-              const agent = agents.find(a => a.id === m.member_id) as
-                (typeof agents)[number] & { avatar?: string } | undefined;
+              const agent = agents.find(a => a.id === m.member_id);
               const scopes = agentScopes.get(m.member_id) || [m];
               return (
                 <div key={`a-${m.member_id}`} className="ago-member ago-agent">
-                  {agent?.avatar
-                    ? <span className="ago-av sm has-avatar">
-                        <img src={withToken(agent.avatar)} alt=""
-                          onError={e => {
-                            const img = e.currentTarget;
-                            img.parentElement?.classList.remove("has-avatar");
-                            img.style.display = "none";
-                          }} />
-                        <Icon name="bot" />
-                      </span>
-                    : <span className="ago-av sm"><Icon name="bot" /></span>}
+                  <AgentAvatar avatar={agent?.avatar} />
                   <span className="mname">{m.name || m.member_id}</span>
                   <span className="mmeta short">
                     {m.role}{off ? <> · <span className="ago-off" title="Offline — won’t reply">offline</span></> : null}

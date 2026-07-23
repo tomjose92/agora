@@ -3,7 +3,7 @@
    (paste/drag/pick, 5-file cap), and the thread-ask toggle. */
 
 import { useEffect, useRef, useState } from "react";
-import { useSendMessage, type ChannelAgent, type OutgoingFile } from "@agora/core";
+import { useAgents, useSendMessage, type ChannelAgent, type OutgoingFile } from "@agora/core";
 import { create } from "zustand";
 import { Icon } from "../lib/icons";
 import { autoGrow } from "../lib/autoGrow";
@@ -56,10 +56,22 @@ export const useAddressing = create<AddrState>((set) => ({
   }),
 }));
 
+/* Agent avatar for composer rows (addressing chips, "Talk to" picker, mention
+   popup). The lists these rows iterate may be the bare channel-agents payload
+   ({id, name} — no avatar), so resolve the picture from the full /api/agents
+   roster by id, exactly like vanilla's agoAgentAvatarHTML and MessageItem. */
 function AgentAv({ a, cls }: { a: { id: string; avatar?: string }; cls: string }) {
-  return a.avatar
-    ? <span className={`ago-av ${cls} has-avatar`}><img src={withToken(a.avatar)} alt="" /></span>
-    : <span className={`ago-av ${cls}`}><Icon name="bot" /></span>;
+  const roster = useAgents().data || [];
+  const [failed, setFailed] = useState(false);
+  const av = a.avatar || roster.find(r => r.id === a.id)?.avatar;
+  if (av && !failed) {
+    return (
+      <span className={`ago-av ${cls} has-avatar`}>
+        <img src={withToken(av)} alt="" onError={() => setFailed(true)} />
+      </span>
+    );
+  }
+  return <span className={`ago-av ${cls}`}><Icon name="bot" /></span>;
 }
 
 export function Composer({ channelId, channelName, threadId, agents = [], candidates = [], voiceOK, replyInThread, onToggleReplyInThread }: {
@@ -193,7 +205,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           <span className="ago-addr-label">To</span>
           {selectedAgents.map(a => (
             <span key={a.id} className="ago-addr-chip" title={`@${slugify(a.name)}`}>
-              <AgentAv a={a as { id: string; avatar?: string }} cls="xs" />
+              <AgentAv a={a} cls="xs" />
               <span className="aname">{a.name}</span>
               <button className="ago-x" title={`Stop addressing ${a.name}`}
                 onClick={() => addrToggle(draftKey, a.id)}>
@@ -291,7 +303,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
               return (
                 <div key={a.id} className={`ago-addr-opt ${on ? "selected" : ""}`} role="option"
                   aria-selected={on} onClick={() => addrToggle(draftKey, a.id)}>
-                  <AgentAv a={a as { id: string; avatar?: string }} cls="sm" />
+                  <AgentAv a={a} cls="sm" />
                   <span className="mname">{a.name}</span>
                   <span className="ago-addr-check">{on ? <Icon name="check" /> : null}</span>
                 </div>
