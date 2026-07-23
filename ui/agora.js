@@ -2533,6 +2533,11 @@ function agoDrawThread() {
       </div>
       <div class="ago-head-actions">
         ${_agoVoiceOK ? `
+        <button class="btn sm ago-speak-btn ${_agoSpeakAll ? "active" : ""}"
+          title="${_agoSpeakAll
+            ? "Stop speaking agent replies aloud"
+            : "Speak agent replies aloud (applies to every channel)"}"
+          onclick="agoSpeakToggle()">${_agoSpeakAll ? icon("volume-2") : icon("volume-x")}</button>
         <button class="btn sm ago-live-btn ${agoLiveScopeActive(_agoThreadRoot.id) ? "active" : ""}"
           title="${agoLiveScopeActive(_agoThreadRoot.id)
             ? "End the live voice conversation in this thread"
