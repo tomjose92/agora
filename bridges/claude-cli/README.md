@@ -6,6 +6,9 @@ a finished session from your phone while the laptop sits at home.
 The bridge runs on the machine where you use `claude`, dials **out** to the
 Agora hub (cloud or local, no ports opened on the laptop), registers as an
 agent, and forwards channel messages to `claude -p --resume <session>`.
+It reacts 👀 when a human message arrives, 👍 when it accepts the turn, and
+✅ after handling it. Messages addressed to another agent have 👀 removed and
+are not marked complete.
 
 ## Setup
 

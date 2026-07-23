@@ -43,6 +43,10 @@ pub const HISTORY_PAGE_MAX: i64 = 50;
 pub const SEARCH_PAGE_DEFAULT: i64 = 20;
 pub const SEARCH_PAGE_MAX: i64 = 50;
 
+/// Keep agent-originated reactions bounded by the same practical limit as
+/// the REST surface. This protects message payloads even for custom bridges.
+const MAX_REACTION_KINDS_PER_MESSAGE: usize = 20;
+
 /// Longest `tldr` accepted on an agent `post` frame; anything longer (or not
 /// strictly shorter than the message text) is dropped — the full text always
 /// stands on its own.
@@ -1249,6 +1253,45 @@ impl Hub {
                     }),
                 );
             }
+            Some("reaction") => {
+                let Some(message_id) = frame["message_id"].as_i64() else {
+                    return;
+                };
+                let emoji = frame["emoji"].as_str().unwrap_or_default();
+                if emoji.is_empty()
+                    || emoji.len() > 32
+                    || emoji.chars().any(|c| c.is_ascii())
+                    || !self.store.agents_for_channel(&channel_id).iter().any(|id| id == &agent_id)
+                {
+                    return;
+                }
+                let Some(message) = self
+                    .store
+                    .message(message_id)
+                    .filter(|m| m["channel_id"] == channel_id.as_str())
+                else {
+                    return;
+                };
+                let changed = if frame["action"].as_str() == Some("remove") {
+                    self.store.remove_reaction(&agent_name, message_id, emoji)
+                } else {
+                    let groups = message["reactions"].as_array().cloned().unwrap_or_default();
+                    let already = groups.iter().any(|r| r["emoji"] == emoji);
+                    if !already && groups.len() >= MAX_REACTION_KINDS_PER_MESSAGE {
+                        return;
+                    }
+                    self.store
+                        .add_reaction(&agent_name, &channel_id, message_id, emoji)
+                };
+                if changed {
+                    if let Some(updated) = self.store.message(message_id) {
+                        self.post_transient(
+                            &channel_id,
+                            json!({"type": "message_update", "message": updated}),
+                        );
+                    }
+                }
+            }
             Some("options_resolve") => {
                 let options_id = frame["options_id"].as_str().unwrap_or_default();
                 let text = frame["text"].as_str().unwrap_or("Resolved.");
@@ -2104,6 +2147,41 @@ mod tests {
         h.post_agent_message("bot-a", "Bot A", &cid, "cc @nobody", None);
         let u = h.store.unread_counts("tom", &[cid.clone()]);
         assert_eq!(u[&cid]["mentions"], 1);
+    }
+
+    #[test]
+    fn agent_reactions_are_attributed_broadcast_and_membership_checked() {
+        let h = hub();
+        let _agent_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let _outsider_rx = add_agent(&h, "bot-b", "Bot B", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        let message = h.post_user_message(&cid, "please investigate", "tom", None, None, vec![]);
+        let mid = message["id"].as_i64().unwrap();
+        let (tx, mut rx) = unbounded_channel();
+        h.attach_socket("tom", false, tx);
+
+        h.handle_agent_frame(&json!({
+            "type": "reaction", "agent_id": "bot-a", "channel_id": cid,
+            "message_id": mid, "emoji": "👀", "action": "add",
+        }));
+        assert_eq!(
+            h.store.message(mid).unwrap()["reactions"],
+            json!([{"emoji": "👀", "users": ["Bot A"]}])
+        );
+        assert_eq!(rx.try_recv().unwrap()["type"], "message_update");
+
+        // A connected agent that is not a member cannot react in the room.
+        h.handle_agent_frame(&json!({
+            "type": "reaction", "agent_id": "bot-b", "channel_id": cid,
+            "message_id": mid, "emoji": "✅", "action": "add",
+        }));
+        assert_eq!(h.store.message(mid).unwrap()["reactions"].as_array().unwrap().len(), 1);
+
+        h.handle_agent_frame(&json!({
+            "type": "reaction", "agent_id": "bot-a", "channel_id": cid,
+            "message_id": mid, "emoji": "👀", "action": "remove",
+        }));
+        assert_eq!(h.store.message(mid).unwrap()["reactions"], json!([]));
     }
 
     #[test]

@@ -2262,7 +2262,9 @@ function agoReactionsHTML(m) {
   const chips = list.map(r => {
     const users = r.users || [];
     const mine = users.includes(me);
-    return `<button class="ago-react ${mine ? "mine" : ""}" title="${esc(users.join(", "))}"
+    const reactors = `${users.join(", ")} reacted with ${r.emoji}`;
+    return `<button class="ago-react ${mine ? "mine" : ""}" aria-label="${esc(reactors)}"
+      data-reactors="${esc(reactors)}"
       onclick="agoToggleReaction(${m.id}, '${esc(r.emoji)}')">${esc(r.emoji)}<span class="rc">${users.length}</span></button>`;
   }).join("");
   return `<div class="ago-reacts">${chips}<button class="ago-react ago-react-add"

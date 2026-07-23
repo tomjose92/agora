@@ -94,6 +94,14 @@ Hermes wrapper, a shell script, whatever:
 {"type": "typing",   "agent_id": "claw-1", "channel_id": "...", "active": true}
 {"type": "progress", "agent_id": "claw-1", "channel_id": "...", "handle": "h1", "text": "thinking…"}
 
+// reactions on the inbound message, attributed to the agent's display name.
+// A useful lifecycle is 👀 on receipt, 👍 once accepted, and ✅ when done.
+// If the message turns out to be for another agent, remove 👀 and do not add ✅.
+{"type": "reaction", "agent_id": "claw-1", "channel_id": "...",
+ "message_id": 123, "emoji": "👀", "action": "add"}
+{"type": "reaction", "agent_id": "claw-1", "channel_id": "...",
+ "message_id": 123, "emoji": "👀", "action": "remove"}
+
 // approval buttons: a post can carry `options` (each {id, label, style?}) plus a
 // stable `options_id`. The UI renders them as clickable buttons.
 {"type": "post", "agent_id": "claw-1", "channel_id": "...", "text": "Deploy to prod?",
