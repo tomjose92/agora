@@ -76,11 +76,11 @@ that change app code *without* a bump deliberately publish nothing.
 Bump both (semver patch unless told otherwise), run `cargo check` so
 `Cargo.lock` follows, and commit all three. When the bump lands on `main`,
 [.github/workflows/release-desktop.yml](.github/workflows/release-desktop.yml)
-builds, signs and notarizes the macOS app and attaches it to a **draft**
-GitHub release named `vX.Y.Z` — a maintainer publishes the draft to ship
-(publishing creates the tag; the in-app updater only sees published
-releases). Re-runs are idempotent: if the release already exists the
-workflow no-ops.
+builds, signs and notarizes the macOS app and **publishes** a GitHub
+release named `vX.Y.Z` (publishing creates the tag; the in-app updater
+only sees published releases, so users start updating as soon as the
+workflow finishes). Re-runs are idempotent: if the release already
+exists the workflow no-ops.
 
 **Mobile** — version lives in **one file**:
 
@@ -205,6 +205,6 @@ endpoint must not break:
   `chore(release): …`, `ci: …`.
 - **Only commit when asked.** Don't commit or push proactively.
 - `main` is protected — land changes via PR. Remember the release
-  implication: merging a PR that bumps a version *publishes* (drafts the
+  implication: merging a PR that bumps a version *publishes* (ships the
   desktop release / starts the TestFlight build), so leave bumps out of
   PRs that aren't meant to ship.
