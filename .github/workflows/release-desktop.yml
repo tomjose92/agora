@@ -2,10 +2,10 @@
 # that bumps `version` in crates/agora-desktop/tauri.conf.json (plus the
 # workspace version in Cargo.toml) and this builds the macOS app (universal:
 # Apple Silicon + Intel), produces the DMG + signed updater artifacts + the
-# latest.json feed, and attaches everything to a draft GitHub Release named
-# after that version. Publish the draft to ship it — publishing creates the
-# vX.Y.Z tag, and the app's updater polls
-# releases/latest/download/latest.json, which only sees published releases.
+# latest.json feed, and publishes a GitHub Release named after that version.
+# Publishing creates the vX.Y.Z tag and the app's updater (which polls
+# releases/latest/download/latest.json and only sees published releases)
+# picks it up immediately — merging the bump *is* shipping.
 #
 # Merges that touch desktop code *without* a bump build nothing on purpose:
 # the bump is the publish intent. If the version's release already exists
@@ -64,7 +64,7 @@ jobs:
             echo "Release v$VERSION already exists — nothing to do."
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Drafting release v$VERSION."
+            echo "Publishing release v$VERSION."
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -94,7 +94,7 @@ jobs:
       # (web/ -> web/dist), which frontendDist and the bundle resources copy.
       - run: npm ci
 
-      - name: Build, sign and draft the release
+      - name: Build, sign and publish the release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -114,5 +114,5 @@ jobs:
           tagName: v${{ needs.gate.outputs.version }}
           releaseName: "Agora v${{ needs.gate.outputs.version }}"
           releaseBody: "See the commit history for changes."
-          releaseDraft: true
+          releaseDraft: false
           args: --target universal-apple-darwin

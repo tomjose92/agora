@@ -30,8 +30,8 @@ Your options, in increasing order of effort:
 Tagged releases are built by CI
 ([.github/workflows/release-desktop.yml](../.github/workflows/release-desktop.yml)):
 push a `v*` tag and a macOS runner produces a universal DMG plus signed
-updater artifacts and a `latest.json` feed, attached to a **draft** GitHub
-Release — publish the draft to ship. The app checks that feed on every
+updater artifacts and a `latest.json` feed, published as a GitHub
+Release — merging the version bump ships it. The app checks that feed on every
 launch (silently installing updates for the next start) and on demand via
 **Agora → Check for Updates…** in the app menu, which walks through native
 install/restart dialogs. Local `scripts/redeploy.sh` builds compile the
