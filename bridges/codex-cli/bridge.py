@@ -51,6 +51,7 @@ MAX_TLDR_CHARS = 2000  # hub drops a longer tldr; pre-truncate so ours always la
 PROGRESS_THROTTLE = 2.0  # seconds between progress frames
 TAIL_BYTES = 256 * 1024  # how much of a rollout .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
 
 # TL;DR support. When enabled for a run we ask Codex to end a long reply with a
 # sentinel line the bridge lifts into the post frame's `tldr` field (a short
@@ -403,6 +404,7 @@ class Bridge:
         self.url = self._normalize_url(args.url, args.token)
         self.agent_id = args.agent_id
         self.agent_name = args.agent_name
+        self.avatar = load_agent_avatar(args.agent_avatar, Path(args.env_file))
         self.codex_bin = args.codex_bin
         # Separate a sandbox mode embedded in CODEX_ARGS from the other base
         # args so the per-binding /sandbox choice can't collide with a
@@ -1220,17 +1222,20 @@ class Bridge:
                     self.url, max_size=64 * 1024 * 1024, ping_timeout=60
                 ) as ws:
                     log("connected, registering agent")
+                    agent = {
+                        "id": self.agent_id,
+                        "name": self.agent_name,
+                        "requires_mention": False,
+                        # Keep hearing everything (so context accumulates) but
+                        # only reply when addressed; also ask the server for a
+                        # feed of agent chatter we aren't @mentioned in.
+                        "wants_context_feed": self.context_buffer_limit > 0,
+                    }
+                    if self.avatar:
+                        agent["avatar"] = self.avatar
                     await ws.send(json.dumps({
                         "type": "hello",
-                        "agents": [{
-                            "id": self.agent_id,
-                            "name": self.agent_name,
-                            "requires_mention": False,
-                            # Keep hearing everything (so context accumulates) but
-                            # only reply when addressed; also ask the server for a
-                            # feed of agent chatter we aren't @mentioned in.
-                            "wants_context_feed": self.context_buffer_limit > 0,
-                        }],
+                        "agents": [agent],
                     }))
                     backoff = 1.0
                     await self._pump(ws)
@@ -1261,6 +1266,35 @@ class Bridge:
                     asyncio.create_task(self.handle_inbound(frame))
         finally:
             send_task.cancel()
+
+
+def load_agent_avatar(value: str, env_file: Path) -> dict | None:
+    """Read an avatar locally; relative paths are anchored beside the .env."""
+    if not value.strip():
+        return None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = env_file.resolve().parent / path
+    try:
+        data = path.read_bytes()
+    except OSError as e:
+        log(f"warning: cannot read agent avatar {path}: {e}")
+        return None
+    if not data or len(data) > MAX_AVATAR_BYTES:
+        log(f"warning: agent avatar must be 1..{MAX_AVATAR_BYTES} bytes: {path}")
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime = "image/png"
+    elif data.startswith(b"\xff\xd8\xff"):
+        mime = "image/jpeg"
+    elif data.startswith((b"GIF87a", b"GIF89a")):
+        mime = "image/gif"
+    elif len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        mime = "image/webp"
+    else:
+        log(f"warning: unsupported agent avatar format: {path}")
+        return None
+    return {"mime": mime, "data": base64.b64encode(data).decode("ascii")}
 
 
 def load_env_file(path: Path, *, override: bool = False) -> int:
@@ -1348,6 +1382,8 @@ def main() -> None:
                          "(also available on demand via /worktree)")
     ap.add_argument("--agent-id", default=os.environ.get("AGENT_ID", "codex-cli"))
     ap.add_argument("--agent-name", default=os.environ.get("AGENT_NAME", "Codex"))
+    ap.add_argument("--agent-avatar", default=os.environ.get("AGENT_AVATAR", ""),
+                    help="PNG/JPEG/GIF/WebP avatar (relative paths resolve beside --env-file)")
     ap.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", "codex"))
     ap.add_argument("--codex-args", default=os.environ.get("CODEX_ARGS", ""),
                     help="extra args for every codex run; a sandbox flag here "

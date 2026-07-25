@@ -120,7 +120,7 @@ reasoning snippets) to the channel.
 ## Options
 
 Everything is env-overridable (flags take precedence): `AGORA_URL`,
-`AGORA_PAIRING_TOKEN`, `AGENT_ID` / `AGENT_NAME`, `CODEX_BIN`,
+`AGORA_PAIRING_TOKEN`, `AGENT_ID` / `AGENT_NAME`, `AGENT_AVATAR`, `CODEX_BIN`,
 `CODEX_SANDBOX` (default sandbox mode, `workspace-write` when unset —
 overridable per channel with `/sandbox`), `CODEX_ARGS` (extra args for every
 run, e.g. `-c` config overrides or `--profile`), `CODEX_MODEL` (default model
@@ -137,6 +137,10 @@ Any of these can live in a `.env` file (see [`.env.example`](.env.example))
 loaded from this directory at startup, so you don't have to pass them on the
 command line. Precedence: CLI flag > real environment variable > `.env` file.
 Use `--env-file <path>` / `AGORA_BRIDGE_ENV_FILE` to load a file elsewhere.
+`AGENT_AVATAR` accepts PNG, JPEG, GIF, or WebP up to 2 MB. Relative paths are
+resolved beside the selected `.env` file; the template uses the bundled
+`assets/codex.png`. The image is sent to Agora over the authenticated bridge
+socket and is never exposed as a local filesystem path.
 
 Security-relevant options:
 
