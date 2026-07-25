@@ -19,9 +19,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
+use base64::Engine;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 use crate::config::{Config, Connection, PairingToken};
@@ -32,6 +34,7 @@ use crate::store::{new_token, now, NewAttachment};
 const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
 const MAX_FILES_PER_MESSAGE: usize = 5;
+const MAX_AGENT_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 /// Distinct emoji per message — bounds the chip row like Slack does.
 const MAX_REACTION_KINDS_PER_MESSAGE: usize = 20;
 
@@ -2104,6 +2107,52 @@ fn agent_avatar_path(agent: &Value) -> Value {
     ))
 }
 
+fn avatar_mime(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if data.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+fn dial_in_avatar_path(data_dir: &std::path::Path, agent_id: &str) -> std::path::PathBuf {
+    let digest = Sha256::digest(agent_id.as_bytes());
+    let name = digest.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    data_dir.join("agent_avatars").join(name)
+}
+
+/// Accept an avatar carried by an authenticated dial-in hello. Paths are
+/// never accepted from the peer: the bytes cross the socket because the
+/// bridge and server commonly run on different machines.
+fn store_dial_in_avatar(state: &AppState, agent_id: &str, avatar: &Value) -> Option<i64> {
+    let encoded = avatar["data"].as_str()?;
+    // Reject obviously oversized input before allocating for base64 decode.
+    if encoded.len() > (MAX_AGENT_AVATAR_BYTES * 4 / 3) + 8 {
+        return None;
+    }
+    let data = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+    if data.is_empty() || data.len() > MAX_AGENT_AVATAR_BYTES || avatar_mime(&data).is_none() {
+        return None;
+    }
+    let digest = Sha256::digest(&data);
+    let version = i64::from_be_bytes(digest[..8].try_into().ok()?) & i64::MAX;
+    let path = dial_in_avatar_path(&state.data_dir, agent_id);
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    let tmp = path.with_extension(format!("tmp-{}", new_token()));
+    std::fs::write(&tmp, &data).ok()?;
+    if std::fs::rename(&tmp, &path).is_err() {
+        std::fs::remove_file(&tmp).ok();
+        return None;
+    }
+    Some(version)
+}
+
 /// Ceiling on proxied avatar bytes (Pantheo caps uploads at 2 MB).
 const MAX_AVATAR_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -2161,6 +2210,18 @@ async fn agent_avatar(
         return Err(err(StatusCode::NOT_FOUND, "No profile picture"));
     }
     let source = agent["source"].as_str().unwrap_or_default().to_string();
+    if source.starts_with("pairing:") {
+        let path = dial_in_avatar_path(&state.data_dir, &agent_id);
+        let data = tokio::fs::read(path)
+            .await
+            .map_err(|_| err(StatusCode::NOT_FOUND, "No profile picture"))?;
+        let mime = avatar_mime(&data)
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "No profile picture"))?;
+        let mut resp_headers = HeaderMap::new();
+        resp_headers.insert("content-type", mime.parse().unwrap());
+        resp_headers.insert("cache-control", "private, max-age=86400".parse().unwrap());
+        return Ok((resp_headers, data).into_response());
+    }
     let conn = state
         .config
         .snapshot()
@@ -2937,15 +2998,14 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
                         if frame["type"] == "hello" {
                             for a in frame["agents"].as_array().cloned().unwrap_or_default() {
                                 let Some(id) = a["id"].as_str() else { continue };
+                                let avatar_v = store_dial_in_avatar(&state, id, &a["avatar"]);
                                 state.hub.register_agent(AgentHandle {
                                     agent_id: id.to_string(),
                                     agent_name: a["name"].as_str().unwrap_or(id).to_string(),
                                     requires_mention: a["requires_mention"].as_bool().unwrap_or(false),
                                     wants_context_feed: a["wants_context_feed"].as_bool().unwrap_or(false),
-                                    // Dial-in bridges have no HTTP origin to proxy
-                                    // an avatar from; they stay on the emoji.
-                                    has_avatar: false,
-                                    avatar_v: 0,
+                                    has_avatar: avatar_v.is_some(),
+                                    avatar_v: avatar_v.unwrap_or(0),
                                     source: format!("pairing:{source}"),
                                     conn_id,
                                     tx: tx.clone(),
@@ -3170,6 +3230,42 @@ mod tests {
         // Third-party bots that never sent the field stay on the emoji.
         let legacy = json!({"id": "claw-1"});
         assert_eq!(agent_avatar_path(&legacy), Value::Null);
+    }
+
+    #[test]
+    fn stores_valid_dial_in_avatar_under_hashed_name() {
+        let (state, _dir) = test_state();
+        let png = b"\x89PNG\r\n\x1a\nsmall-test-image";
+        let payload = json!({
+            "mime": "image/png",
+            "data": base64::engine::general_purpose::STANDARD.encode(png),
+        });
+        let version = store_dial_in_avatar(&state, "../unsafe-agent", &payload);
+        assert!(version.is_some());
+        let path = dial_in_avatar_path(&state.data_dir, "../unsafe-agent");
+        assert_eq!(std::fs::read(path).unwrap(), png);
+    }
+
+    #[test]
+    fn rejects_invalid_or_oversized_dial_in_avatar() {
+        let (state, _dir) = test_state();
+        assert_eq!(
+            store_dial_in_avatar(
+                &state,
+                "bot",
+                &json!({"mime": "image/png", "data": "not base64!"})
+            ),
+            None
+        );
+        let oversized = "A".repeat((MAX_AGENT_AVATAR_BYTES * 4 / 3) + 9);
+        assert_eq!(
+            store_dial_in_avatar(
+                &state,
+                "bot",
+                &json!({"mime": "image/png", "data": oversized})
+            ),
+            None
+        );
     }
 
     #[test]

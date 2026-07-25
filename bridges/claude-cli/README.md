@@ -139,7 +139,7 @@ works, the bridge streams typing + progress lines to the channel.
 ## Options
 
 Everything is env-overridable (flags take precedence): `AGORA_URL`,
-`AGORA_PAIRING_TOKEN`, `AGENT_ID` / `AGENT_NAME`, `CLAUDE_BIN`,
+`AGORA_PAIRING_TOKEN`, `AGENT_ID` / `AGENT_NAME`, `AGENT_AVATAR`, `CLAUDE_BIN`,
 `CLAUDE_PERMISSION_ARGS` (default `--permission-mode acceptEdits`; set
 `--dangerously-skip-permissions` for fully unattended runs — the permission mode
 here is just the **default**, overridable per channel with `/permissions`),
@@ -156,6 +156,10 @@ Any of these can live in a `.env` file (see [`.env.example`](.env.example))
 loaded from this directory at startup, so you don't have to pass them on the
 command line. Precedence: CLI flag > real environment variable > `.env` file.
 Use `--env-file <path>` / `AGORA_BRIDGE_ENV_FILE` to load a file elsewhere.
+`AGENT_AVATAR` accepts PNG, JPEG, GIF, or WebP up to 2 MB. Relative paths are
+resolved beside the selected `.env` file; the template uses the bundled
+`assets/claude.png`. The image is sent to Agora over the authenticated bridge
+socket and is never exposed as a local filesystem path.
 
 Security-relevant options:
 
