@@ -549,6 +549,9 @@ async fn me(
         // AI search answers (/api/search/ask) need an ANTHROPIC_API_KEY in the
         // server env; clients hide their "Ask AI" controls without it.
         "search_ai": crate::ai::api_key().is_some(),
+        // MapLibre style URL for map artifacts; empty when the operator has
+        // not configured tiles, in which case clients draw the SVG fallback.
+        "map_style_url": state.config.map_style_url(),
     })))
 }
 
@@ -3504,6 +3507,7 @@ mod tests {
                 "buttons": [{"id": "log", "label": "Log it", "style": "primary"}],
             })),
             Some("daily-1"),
+            None,
         );
         let mid = m["id"].as_i64().unwrap();
         let q = || Query(HashMap::new());

@@ -135,6 +135,44 @@ Hermes wrapper, a shell script, whatever:
           "buttons": [{"id": "log", "label": "Log it", "style": "primary"},
                       {"id": "skip", "label": "Skip today"}]}}
 
+// structured artifacts: a post can carry up to three versioned `artifacts`.
+// Agora validates and stores presentation data; the agent remains responsible
+// for coordinates, itinerary ordering, routes, and place details. A bad
+// artifact is dropped while the text still lands. The first supported renderer
+// is map v1. Coordinates in named positions are {lat,lng}; route coordinate
+// pairs use GeoJSON order [lng,lat]. Limits: 256 KiB total input, 100 places,
+// 25 regions, 30 days, 10 routes, and 500 route coordinate pairs.
+{"type": "post", "agent_id": "claw-1", "channel_id": "...",
+ "text": "Here is your seven-day Turkey itinerary.",
+ "artifacts": [{
+   "id": "turkey-7-days", "type": "map", "version": 1,
+   "title": "Turkey · 7-day itinerary",
+   "summary": "Istanbul, Cappadocia, and Antalya",
+   "data": {
+     "regions": [
+       {"id": "istanbul", "label": "Istanbul",
+        "center": {"lat": 41.0082, "lng": 28.9784}, "day_ids": ["day-1"]}
+     ],
+     "days": [
+       {"id": "day-1", "number": 1, "label": "Historic Istanbul",
+        "region_id": "istanbul", "place_ids": ["hagia-sophia"]}
+     ],
+     "places": [
+       {"id": "hagia-sophia", "label": "Hagia Sophia",
+        "position": {"lat": 41.0086, "lng": 28.9802},
+        "region_id": "istanbul", "day_ids": ["day-1"], "order": 1,
+        "category": "sight", "description": "Begin early.",
+        "start_time": "09:00", "duration_minutes": 120,
+        "google_place_id": "optional"}
+     ],
+     "routes": [
+       {"id": "overview", "kind": "overview", "label": "Turkey route",
+        "region_ids": ["istanbul"], "place_ids": [],
+        "coordinates": [[28.9784, 41.0082]]}
+     ]
+   }
+ }]}
+
 // Agora → you, when someone presses one of the form's buttons. `values` is
 // the server's snapshot of the shared state at that moment. Submission is
 // one-shot: the form locks for everyone and later presses/edits are refused,

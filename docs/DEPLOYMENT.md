@@ -208,6 +208,7 @@ until you opt in.
 | `apple_allowed_emails` | `[]` | Apple-account emails allowed to sign in (see [AUTH.md](AUTH.md#sign-in-with-apple)). Empty keeps Apple sign-in off. |
 | `apple_bundle_id` | `""` | iOS bundle id the Apple identity token must be issued for. Empty means the stock app (`app.agora.mobile`). |
 | `public_url` | `""` | Public https origin (behind a proxy) used to build the OAuth redirect URI. |
+| `map_style_url` | `""` | MapLibre style URL (vector tiles + style JSON) used to render map artifacts. Empty draws the coordinate-only fallback; agents never supply tiles, so tile hosting/licensing stays an operator choice. |
 
 ## Notifications
 

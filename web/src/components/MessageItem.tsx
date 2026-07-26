@@ -19,6 +19,7 @@ import { MessageOptions } from "./MessageOptions";
 import { MessageFormView } from "./MessageFormView";
 import { Reactions } from "./Reactions";
 import { useEmojiPicker } from "./EmojiPicker";
+import { ArtifactList } from "./artifacts/ArtifactList";
 
 /* Source viewer state (the overlay itself mounts app-level). */
 interface SourcesView {
@@ -147,6 +148,7 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
         <span className="bubble-ts">{fmtTs(m.ts)}</span>
       </div>
       <MdText text={onTldr ? (tldr as string) : visibleText(m)} mentions={mentions} />
+      <ArtifactList artifacts={m.meta?.artifacts} />
       <Attachments message={m} />
       <Unfurls message={m} />
       <SourceChips message={m} />

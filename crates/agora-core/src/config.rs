@@ -126,6 +126,11 @@ pub struct ConfigData {
     /// redirect URI behind a proxy. When empty it is derived per request.
     #[serde(default)]
     pub public_url: String,
+    /// MapLibre style URL used to render map artifacts (vector tiles + style
+    /// JSON). Operator-provided so tile hosting/licensing stays out of the
+    /// agent protocol; empty means clients draw the coordinate-only fallback.
+    #[serde(default)]
+    pub map_style_url: String,
 }
 
 fn default_bind() -> String {
@@ -160,6 +165,7 @@ impl Default for ConfigData {
             apple_allowed_emails: Vec::new(),
             apple_bundle_id: String::new(),
             public_url: String::new(),
+            map_style_url: String::new(),
         }
     }
 }
@@ -293,6 +299,10 @@ impl Config {
             .public_url
             .trim_end_matches('/')
             .to_string()
+    }
+
+    pub fn map_style_url(&self) -> String {
+        self.data.lock().unwrap().map_style_url.trim().to_string()
     }
 
     fn save(&self) {
