@@ -6,6 +6,7 @@
 //! bundled UI — lives behind [`run`].
 
 pub mod ai;
+pub mod artifacts;
 pub mod auth;
 pub mod config;
 pub mod connections;

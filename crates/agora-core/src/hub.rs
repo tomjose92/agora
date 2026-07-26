@@ -656,6 +656,7 @@ impl Hub {
     ) -> Value {
         self.post_agent_message_with_options(
             agent_id, agent_name, channel_id, text, thread_id, None, None, None, None, None, None,
+            None,
         )
     }
 
@@ -672,6 +673,7 @@ impl Hub {
         sources: Option<&Value>,
         form: Option<&Value>,
         form_id: Option<&str>,
+        artifacts: Option<&Value>,
     ) -> Value {
         let mut meta_obj = serde_json::Map::new();
         if let Some(opts) = options {
@@ -699,6 +701,9 @@ impl Hub {
         }
         if let Some(t) = tldr {
             meta_obj.insert("tldr".into(), json!(t));
+        }
+        if let Some(sanitized) = artifacts.and_then(crate::artifacts::sanitize_artifacts) {
+            meta_obj.insert("artifacts".into(), sanitized);
         }
         // Sources: an explicit list from the agent wins; a trailing
         // "Sources:" block in the text supplies the list otherwise. Either
@@ -1230,6 +1235,7 @@ impl Hub {
                         frame.get("sources"),
                         frame.get("form"),
                         frame["form_id"].as_str(),
+                        frame.get("artifacts"),
                     );
                 }
             }
@@ -2342,6 +2348,32 @@ mod tests {
         assert_eq!(msg["meta"]["tldr"], "gist");
         assert_eq!(msg["meta"]["options_id"], "o1");
         assert!(msg["meta"]["resolved"].is_null());
+    }
+
+    #[test]
+    fn post_frame_map_artifact_lands_sanitized_in_meta() {
+        let h = hub();
+        let _rx = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": "Your trip",
+            "artifacts": [{
+                "id": "trip", "type": "map", "version": 1, "title": "Turkey",
+                "data": {
+                    "regions": [{"id": "istanbul", "label": "Istanbul",
+                        "center": {"lat": 41.0082, "lng": 28.9784}}],
+                    "days": [],
+                    "places": [{"id": "hagia", "label": "Hagia Sophia",
+                        "position": {"lat": 41.0086, "lng": 28.9802},
+                        "category": "sight", "description": "<script>plain text only</script>"}],
+                    "routes": []
+                }
+            }]
+        }));
+        let msg = &h.store.messages(&cid, None, None, 10)[0];
+        assert_eq!(msg["meta"]["artifacts"][0]["type"], "map");
+        assert_eq!(msg["meta"]["artifacts"][0]["data"]["places"][0]["label"], "Hagia Sophia");
     }
 
     #[test]

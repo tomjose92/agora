@@ -17,3 +17,4 @@ export * from "./lib/mdliteHtml";
 export * from "./lib/format";
 export * from "./lib/unread";
 export * from "./lib/emoji";
+export * from "./lib/artifacts";

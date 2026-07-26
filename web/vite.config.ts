@@ -8,6 +8,9 @@ import react from "@vitejs/plugin-react";
    desktop server picker, loaded by literal path from tauri://localhost). */
 export default defineConfig({
   plugins: [react()],
+  // MapLibre spawns an ES-module worker; emit workers as ESM so its
+  // `?worker&url` bundle (see MapCanvas.tsx) is spawned in matching form.
+  worker: { format: "es" },
   server: {
     proxy: {
       "/api": "http://127.0.0.1:4470",

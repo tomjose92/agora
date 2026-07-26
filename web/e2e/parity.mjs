@@ -267,13 +267,18 @@ async function main() {
   await check("connections: pairing token create + revoke", async () => {
     await page.locator("#btn-connections").click();
     await page.waitForSelector("#conn-panel .conn-body", { timeout: 5000 });
+    // The modal is tabbed now (Connections | Add agent); pairing tokens are
+    // issued from a dial-in agent-type card under "Add agent".
+    await page.locator('#conn-panel [role="tab"]', { hasText: "Add agent" }).click();
+    await page.locator("#conn-panel .conn-card", { hasText: "OpenClaw" }).click();
     await page.fill("#pair-name", "parity-tok");
-    await page.locator("#conn-panel button", { hasText: "New token" }).click();
-    await page.locator("#conn-panel .conn-row", { hasText: "parity-tok" }).waitFor({ timeout: 8000 })
-      .catch(async () => { /* token rows show the token value; accept Revoke button appearing */
-        await page.locator("#conn-panel button", { hasText: "Revoke" }).first().waitFor({ timeout: 4000 });
-      });
-    await page.locator("#conn-panel button", { hasText: "Revoke" }).first().click();
+    await page.locator("#conn-panel button", { hasText: "Issue token" }).click();
+    await page.locator("#conn-panel .conn-issued").waitFor({ timeout: 8000 });
+    await page.locator("#conn-panel button", { hasText: "Done" }).click();
+    // Back on the list tab the freshly issued token is listed and revocable.
+    const row = page.locator("#conn-panel .conn-row", { hasText: "parity-tok" });
+    await row.waitFor({ timeout: 8000 });
+    await row.locator("button", { hasText: "Revoke" }).click();
     await page.locator("#conn-panel .conn-head button").last().click();
   });
 

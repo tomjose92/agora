@@ -12,6 +12,9 @@ export interface Me {
   voice?: boolean;
   /** Server has ANTHROPIC_API_KEY: /api/search/ask (Ask AI) works. */
   search_ai?: boolean;
+  /** Operator-configured MapLibre style URL for map artifacts; empty/absent
+      means clients fall back to the coordinate-only SVG map. */
+  map_style_url?: string;
 }
 
 /** One workspace account from GET /api/users (any signed-in user may list
@@ -93,6 +96,71 @@ export interface MessageForm {
 /** Link metadata for source chips and unfurl cards. Entries start as bare
     URLs; the server enriches them asynchronously (title/description/image
     arrive on a message_update once the page is fetched). */
+export interface ArtifactPosition {
+  lat: number;
+  lng: number;
+}
+
+export interface MapArtifactRegion {
+  id: string;
+  label: string;
+  center: ArtifactPosition;
+  day_ids: string[];
+}
+
+export interface MapArtifactDay {
+  id: string;
+  number: number;
+  label: string;
+  region_id?: string;
+  place_ids: string[];
+}
+
+export type MapArtifactCategory =
+  | "sight" | "food" | "hotel" | "activity" | "transport"
+  | "shopping" | "nature" | "other";
+
+export interface MapArtifactPlace {
+  id: string;
+  label: string;
+  position: ArtifactPosition;
+  region_id?: string;
+  day_ids: string[];
+  order?: number;
+  category: MapArtifactCategory;
+  description?: string;
+  start_time?: string;
+  duration_minutes?: number;
+  google_place_id?: string;
+}
+
+export interface MapArtifactRoute {
+  id: string;
+  kind: "overview" | "day";
+  label?: string;
+  place_ids: string[];
+  region_ids: string[];
+  coordinates: [number, number][];
+}
+
+export interface MapArtifactData {
+  initial_view: { mode: "fit" };
+  regions: MapArtifactRegion[];
+  days: MapArtifactDay[];
+  places: MapArtifactPlace[];
+  routes: MapArtifactRoute[];
+}
+
+export interface MessageArtifact<T = unknown> {
+  id: string;
+  type: string;
+  version: number;
+  title: string;
+  summary?: string;
+  data?: T;
+  unsupported?: boolean;
+}
+
 export interface LinkPreview {
   url: string;
   title?: string;
@@ -131,6 +199,9 @@ export interface MessageMeta {
     ts?: number;
     values?: Record<string, string | boolean>;
   } | null;
+  /* Agent-authored, server-sanitized presentation data. Clients dispatch on
+     type + version and degrade visibly when they do not support a renderer. */
+  artifacts?: MessageArtifact[];
 }
 
 /** One emoji's reactions on a message; users in reaction order, so the
