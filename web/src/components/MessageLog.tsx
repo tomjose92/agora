@@ -10,6 +10,7 @@ import { Icon } from "../lib/icons";
 import { type MentionIndex } from "../lib/mentions";
 import { flashMessage, useJump } from "../state/jump";
 import { MessageItem } from "./MessageItem";
+import { SectionRail } from "./SectionRail";
 
 const AT_BOTTOM_PX = 48;
 
@@ -136,14 +137,17 @@ export function MessageLog({ channelId, isAdmin, mentions, onOpenThread }: {
           <button className="lnk dim" onClick={() => markRead.mutate(null)}>Mark as read</button>
         </div>
       )}
-      <div className="ago-log" id="ago-log" ref={boxRef} onScroll={onScroll}>
-        {rows.length ? rows : (
-          <div className="empty">
-            <div className="glyph"><Icon name="message-circle" /></div>
-            <div>No messages yet</div>
-            <div className="hint">Say something — member agents will answer here. Use the Members button to invite an agent.</div>
-          </div>
-        )}
+      <div className="ago-log-wrap">
+        <div className="ago-log" id="ago-log" ref={boxRef} onScroll={onScroll}>
+          {rows.length ? rows : (
+            <div className="empty">
+              <div className="glyph"><Icon name="message-circle" /></div>
+              <div>No messages yet</div>
+              <div className="hint">Say something — member agents will answer here. Use the Members button to invite an agent.</div>
+            </div>
+          )}
+        </div>
+        <SectionRail boxRef={boxRef} messages={messages as Message[]} />
       </div>
     </>
   );

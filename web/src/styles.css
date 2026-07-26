@@ -701,6 +701,31 @@ a.btn { text-decoration: none; }
 
 .ago-log { flex: 1; overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 12px; position: relative; }
 
+/* Wrapper that lets the section-nav rail float over the log's right gutter
+   without scrolling away with the content. */
+.ago-log-wrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.ago-log-wrap .ago-log { flex: 1; }
+
+/* Dot rail: one clickable dot per conversational section, centered on the
+   log's right edge; the section in view is highlighted. */
+.ago-section-rail {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  max-height: 82%; overflow-y: auto; padding: 6px 3px; z-index: 6;
+  scrollbar-width: none; opacity: .55; transition: opacity .15s;
+}
+.ago-section-rail::-webkit-scrollbar { display: none; }
+.ago-log-wrap:hover .ago-section-rail, .ago-section-rail:focus-within { opacity: 1; }
+.ago-rail-dot {
+  flex: none; width: 7px; height: 7px; padding: 0; border: none; border-radius: 50%;
+  background: var(--faint); opacity: .5; cursor: pointer; transition: transform .12s, opacity .12s, background .12s;
+}
+.ago-rail-dot:hover { opacity: .9; transform: scale(1.3); }
+.ago-rail-dot.active {
+  opacity: 1; background: var(--a2); transform: scale(1.4);
+  box-shadow: 0 0 0 3px rgba(139, 124, 255, .18);
+}
+
 .ago-av {
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
   width: 28px; height: 28px; border-radius: 50%; overflow: hidden;

@@ -1,0 +1,90 @@
+/* The section-navigation dot rail (.ago-section-rail): a vertical column of
+   clickable dots pinned to the right edge of a message log. One dot per
+   conversational section — a user message plus the group of agent replies
+   that follow it, until the next user message (a leading agent group with no
+   preceding user message is its own section too). The dot for the section
+   currently in view is highlighted; clicking a dot scrolls that section to
+   the top. Shared by the channel log (MessageLog) and the thread pane. */
+
+import { useEffect, useMemo, useState } from "react";
+import { type Message } from "@agora/core";
+
+const ACTIVE_OFFSET_PX = 80; // a section counts as "in view" once its top passes this
+const AT_BOTTOM_PX = 8;
+
+function firstLine(text: string, max = 64): string {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t;
+}
+
+interface Section { mid: number; label: string }
+
+/* A new section begins at the first message and at every user message; the
+   agent replies in between hang off the section above them. */
+function sectionsOf(messages: Message[]): Section[] {
+  const out: Section[] = [];
+  for (const m of messages) {
+    if (out.length === 0 || m.author_type === "user") {
+      const who = m.author_name || m.author_id;
+      const body = firstLine(m.text);
+      out.push({ mid: m.id, label: body ? `${who}: ${body}` : who });
+    }
+  }
+  return out;
+}
+
+export function SectionRail({ boxRef, messages }: {
+  boxRef: React.RefObject<HTMLDivElement | null>;
+  messages: Message[];
+}) {
+  const sections = useMemo(() => sectionsOf(messages), [messages]);
+  const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box || sections.length < 2) return;
+    let raf = 0;
+    const recompute = () => {
+      raf = 0;
+      const mark = box.scrollTop + ACTIVE_OFFSET_PX;
+      let idx = 0;
+      for (let i = 0; i < sections.length; i++) {
+        const el = box.querySelector<HTMLElement>(`[data-mid="${sections[i].mid}"]`);
+        if (!el) continue;
+        if (el.offsetTop <= mark) idx = i; else break;
+      }
+      // At the very bottom the last section is the one being read.
+      if (box.scrollHeight - box.scrollTop - box.clientHeight < AT_BOTTOM_PX) {
+        idx = sections.length - 1;
+      }
+      setActive(idx);
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(recompute); };
+    box.addEventListener("scroll", onScroll, { passive: true });
+    recompute();
+    return () => {
+      box.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [boxRef, sections]);
+
+  if (sections.length < 2) return null;
+
+  const jump = (mid: number) => {
+    const box = boxRef.current;
+    const el = box?.querySelector<HTMLElement>(`[data-mid="${mid}"]`);
+    if (box && el) box.scrollTo({ top: Math.max(0, el.offsetTop - 12), behavior: "smooth" });
+  };
+
+  return (
+    <div className="ago-section-rail" role="navigation" aria-label="Jump to a section of the conversation">
+      {sections.map((s, i) => (
+        <button key={s.mid} type="button"
+          className={`ago-rail-dot ${i === active ? "active" : ""}`}
+          title={s.label} aria-label={`Jump to: ${s.label}`}
+          aria-current={i === active ? "true" : undefined}
+          onClick={() => jump(s.mid)} />
+      ))}
+    </div>
+  );
+}

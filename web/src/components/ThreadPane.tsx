@@ -15,6 +15,7 @@ import { Icon } from "../lib/icons";
 import { useUiState } from "../state/ui";
 import { buildMentionIndex, type MentionIndex } from "../lib/mentions";
 import { MessageItem } from "./MessageItem";
+import { SectionRail } from "./SectionRail";
 import { Composer } from "./Composer";
 import { LiveRows } from "./ChannelPane";
 import { LiveButton, LiveStrip, SpeakButton } from "./VoiceControls";
@@ -54,15 +55,18 @@ function ThreadLog({ root, replies, isAdmin, mentions }: {
   }, [jumpTarget, replies.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="ago-log ago-thread-log" id="ago-thread-log" ref={boxRef}
-      data-root={root.id} onScroll={onScroll}>
-      <MessageItem message={root} inThread isAdmin={isAdmin} mentions={mentions}
-        onOpenThread={() => {}} />
-      <div className="ago-thread-sep">{replies.length} repl{replies.length === 1 ? "y" : "ies"}</div>
-      {replies.map(m => (
-        <MessageItem key={m.id} message={m} inThread isAdmin={isAdmin} mentions={mentions}
+    <div className="ago-log-wrap">
+      <div className="ago-log ago-thread-log" id="ago-thread-log" ref={boxRef}
+        data-root={root.id} onScroll={onScroll}>
+        <MessageItem message={root} inThread isAdmin={isAdmin} mentions={mentions}
           onOpenThread={() => {}} />
-      ))}
+        <div className="ago-thread-sep">{replies.length} repl{replies.length === 1 ? "y" : "ies"}</div>
+        {replies.map(m => (
+          <MessageItem key={m.id} message={m} inThread isAdmin={isAdmin} mentions={mentions}
+            onOpenThread={() => {}} />
+        ))}
+      </div>
+      <SectionRail boxRef={boxRef} messages={[root, ...replies]} />
     </div>
   );
 }
