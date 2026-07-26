@@ -113,7 +113,8 @@ export function MapArtifactViewer({ artifact, initialRegion, onClose }: {
                   selectedPlace={selected?.id} onPlace={setSelected} />
               }>
                 <MapCanvas data={data} styleUrl={styleUrl} activeRegion={region || undefined}
-                  visiblePlaces={places} selectedPlace={selected?.id} onPlace={setSelected} />
+                  visiblePlaces={places} selectedPlace={selected?.id} onPlace={setSelected}
+                  onRegion={r => setRegion(current => current === r.id ? "" : r.id)} />
               </Suspense>
             ) : (
               <>
@@ -157,6 +158,14 @@ export function MapArtifactViewer({ artifact, initialRegion, onClose }: {
                   ))}
                 </div>
               </>
+            ) : data.places.length === 0 ? (
+              <div className="ago-map-empty-detail">
+                <strong>No individual places pinned</strong>
+                <span>
+                  This map only marks {data.regions.length === 1 ? "an area" : "areas"} —
+                  ask the agent for specific stops to see pins here.
+                </span>
+              </div>
             ) : (
               <div className="ago-map-empty-detail">
                 <strong>No places match these filters</strong>
