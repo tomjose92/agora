@@ -223,21 +223,49 @@ a.btn { text-decoration: none; }
 }
 .ago-map-open .ico { width: 13px; height: 13px; }
 .ago-map-preview {
-  display: block; width: 100%; height: 190px; padding: 0; border: none;
+  display: block; position: relative; width: 100%; height: 190px; padding: 0; border: none;
   border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
-  cursor: pointer; background: #0b1220;
+  cursor: pointer; background: #0b1220; overflow: hidden;
 }
+.ago-map-preview:focus-visible { outline: 2px solid var(--a1); outline-offset: -2px; }
 .ago-map-graphic { display: block; width: 100%; height: 100%; }
+/* Real-tiles preview: the GL canvas fades in over the SVG sketch once the
+   style has loaded, so the card never flashes blank. */
+.ago-map-preview-holder { position: absolute; inset: 0; }
+.ago-map-preview-holder .ago-map-graphic { position: absolute; inset: 0; }
+.ago-map-preview-gl {
+  position: absolute; inset: 0; opacity: 0; transition: opacity .25s ease;
+}
+.ago-map-preview-gl.ready { opacity: 1; }
+.ago-gl-dot {
+  display: block; width: 12px; height: 12px; border: 2px solid #fff;
+  border-radius: 999px; background: var(--marker, var(--a1));
+  box-shadow: 0 1px 4px rgba(0,0,0,.5);
+}
 
 /* Real MapLibre canvas (loaded only when the viewer opens). MapLibre adds its
    own `.maplibregl-map` class (position: relative) to this same node and its
    stylesheet loads after ours, so the descendant selector's higher specificity
    is required to keep the fill. */
 .ago-map-canvas .ago-map-gl { position: absolute; inset: 0; }
-.ago-map-gl .maplibregl-ctrl-attrib {
+/* Doubled-up compact classes: MapLibre's own `.maplibregl-ctrl-attrib
+   .maplibregl-compact*` rules load after ours and would win a specificity
+   tie, flashing a white pill over the dark UI. */
+.ago-map-gl .maplibregl-ctrl-attrib,
+.ago-map-preview-gl .maplibregl-ctrl-attrib,
+.ago-map-gl .maplibregl-ctrl-attrib.maplibregl-compact,
+.ago-map-preview-gl .maplibregl-ctrl-attrib.maplibregl-compact,
+.ago-map-gl .maplibregl-ctrl-attrib.maplibregl-compact-show,
+.ago-map-preview-gl .maplibregl-ctrl-attrib.maplibregl-compact-show {
   background: rgba(0,0,0,.55); color: rgba(255,255,255,.7); font-size: 9px;
 }
-.ago-map-gl .maplibregl-ctrl-attrib a { color: rgba(255,255,255,.85); }
+.ago-map-gl .maplibregl-ctrl-attrib a,
+.ago-map-preview-gl .maplibregl-ctrl-attrib a { color: rgba(255,255,255,.85); }
+.ago-map-gl .maplibregl-ctrl-attrib-button,
+.ago-map-preview-gl .maplibregl-ctrl-attrib-button { filter: invert(1); }
+/* Google-Maps-style grab/grabbing cursors while panning. */
+.ago-map-gl .maplibregl-canvas { cursor: grab; }
+.ago-map-gl .maplibregl-canvas:active { cursor: grabbing; }
 .ago-gl-marker {
   display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
   border: 2px solid #fff; border-radius: 999px 999px 999px 2px;
@@ -257,6 +285,30 @@ a.btn { text-decoration: none; }
   transition: transform .12s ease;
 }
 .ago-gl-cluster:hover { transform: scale(1.12); }
+/* Labelled area chips (city/region anchors, Google-Maps style). */
+.ago-gl-area {
+  max-width: 180px; overflow: hidden; padding: 4px 9px; border: 1px solid rgba(255,255,255,.25);
+  border-radius: 999px; background: rgba(10,15,26,.82); color: rgba(255,255,255,.92);
+  cursor: pointer; font: 700 10.5px/1.2 inherit; text-overflow: ellipsis; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,.45); backdrop-filter: blur(4px);
+  transition: border-color .12s ease, transform .12s ease;
+}
+.ago-gl-area:hover { border-color: var(--a1); transform: scale(1.05); }
+.ago-gl-area.selected { border-color: var(--a1); background: var(--a1); color: #fff; }
+.ago-gl-area.preview { padding: 3px 7px; font-size: 9.5px; cursor: pointer; }
+/* Hover/click card over a pin. */
+.ago-gl-popup-holder .maplibregl-popup-content {
+  padding: 9px 11px; border-radius: 10px; background: #131a28; color: var(--text);
+  box-shadow: 0 6px 22px rgba(0,0,0,.5); border: 1px solid var(--border-strong);
+}
+.ago-gl-popup-holder .maplibregl-popup-tip { border-top-color: #131a28; border-bottom-color: #131a28; }
+.ago-gl-popup strong { display: block; font-size: 12px; }
+.ago-gl-popup-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.ago-gl-popup-meta span {
+  border-radius: 999px; padding: 2px 6px; color: var(--dim);
+  background: rgba(255,255,255,.06); font-size: 9px;
+}
+.ago-gl-popup-meta .ago-gl-popup-day { color: var(--a1); font-weight: 700; }
 .ago-map-land { fill: #15251f; stroke: rgba(104,211,145,.17); stroke-width: .5; }
 .ago-map-grid { fill: none; stroke: rgba(255,255,255,.035); stroke-width: .3; }
 .ago-map-route {
@@ -313,7 +365,9 @@ a.btn { text-decoration: none; }
   border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 9px;
   font: inherit; font-size: 11px;
 }
-.ago-map-filters > button { margin-left: auto; }
+.ago-map-filters > button {
+  margin-left: auto; flex-shrink: 0; white-space: nowrap; align-self: flex-end;
+}
 .ago-map-modal-body {
   display: grid; grid-template-columns: minmax(0, 1fr) 310px; grid-template-rows: minmax(0, 1fr);
   flex: 1; min-height: 0;

@@ -127,11 +127,18 @@ pub struct ConfigData {
     #[serde(default)]
     pub public_url: String,
     /// MapLibre style URL used to render map artifacts (vector tiles + style
-    /// JSON). Operator-provided so tile hosting/licensing stays out of the
-    /// agent protocol; empty means clients draw the coordinate-only fallback.
+    /// JSON). Empty means the built-in default ([`DEFAULT_MAP_STYLE_URL`]);
+    /// `"none"` opts out of third-party tiles entirely (clients then draw the
+    /// coordinate-only fallback). Operator-overridable so tile
+    /// hosting/licensing stays out of the agent protocol.
     #[serde(default)]
     pub map_style_url: String,
 }
+
+/// OpenFreeMap's Liberty style: free vector tiles, no API key, MapLibre
+/// native — maps work out of the box while `map_style_url` lets operators
+/// swap in their own tiles (or `"none"` for the offline SVG view).
+pub const DEFAULT_MAP_STYLE_URL: &str = "https://tiles.openfreemap.org/styles/liberty";
 
 fn default_bind() -> String {
     "127.0.0.1".to_string()
@@ -301,8 +308,18 @@ impl Config {
             .to_string()
     }
 
+    /// The style URL clients should render map artifacts with: the operator's
+    /// override when set, the built-in default when empty, and empty when the
+    /// operator opted out with `"none"` (clients then use the SVG fallback).
     pub fn map_style_url(&self) -> String {
-        self.data.lock().unwrap().map_style_url.trim().to_string()
+        let configured = self.data.lock().unwrap().map_style_url.trim().to_string();
+        if configured.is_empty() {
+            return DEFAULT_MAP_STYLE_URL.to_string();
+        }
+        if configured.eq_ignore_ascii_case("none") {
+            return String::new();
+        }
+        configured
     }
 
     fn save(&self) {
@@ -373,6 +390,19 @@ mod tests {
         cfg.update(|c| c.apple_allowed_emails = Vec::new());
         let ac = cfg.apple().expect("bundle id opt-in");
         assert!(ac.allowed_emails.is_empty());
+    }
+
+    #[test]
+    fn map_style_url_defaults_and_supports_opt_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config::load(dir.path()).unwrap();
+        // Unset -> the built-in tiles so maps render out of the box.
+        assert_eq!(cfg.map_style_url(), DEFAULT_MAP_STYLE_URL);
+        cfg.update(|c| c.map_style_url = " https://tiles.example.com/style.json ".into());
+        assert_eq!(cfg.map_style_url(), "https://tiles.example.com/style.json");
+        // "none" (any case) disables third-party tiles entirely.
+        cfg.update(|c| c.map_style_url = "None".into());
+        assert_eq!(cfg.map_style_url(), "");
     }
 
     #[test]

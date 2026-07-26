@@ -1,59 +1,39 @@
 import { useEffect, useRef, useState } from "react";
-import type { GeoJSONSource, Map as MlMap, Marker as MlMarker } from "maplibre-gl";
+import type {
+  GeoJSONSource, Map as MlMap, Marker as MlMarker, Popup as MlPopup,
+} from "maplibre-gl";
 import Supercluster from "supercluster";
-import type { MapArtifactData, MapArtifactPlace } from "@agora/core";
+import type { MapArtifactData, MapArtifactPlace, MapArtifactRegion } from "@agora/core";
 import { MapGraphic } from "./MapGraphic";
-import "maplibre-gl/dist/maplibre-gl.css";
-// MapLibre loads its parser off a Web Worker. Vite 8/rolldown doesn't emit the
-// package's internal `new URL('./maplibre-gl-worker.mjs', import.meta.url)`
-// asset, so we hand it a `?worker&url` build (which bundles the shared chunk
-// in) and register it before the first map is created.
-import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import { colorForPlace, loadMaplibre, prefersReducedMotion, webglAvailable } from "./maplibre";
 
-let workerRegistered = false;
-
-/* Distinct, colour-blind-friendly hues cycled per itinerary day so a place's
-   marker reads as "which day". Places without a day fall back to the accent. */
-const DAY_COLORS = [
-  "#5aa0ff", "#f97362", "#4ec9a8", "#e8a13c", "#b98bff",
-  "#ec6ba8", "#54c1e0", "#c0b03a", "#7c9cff", "#5fbf7a",
-];
-const NEUTRAL = "#8aa0c0";
-
-function colorForPlace(place: MapArtifactPlace, data: MapArtifactData): string {
-  const dayId = place.day_ids[0];
-  if (!dayId) return NEUTRAL;
-  const day = data.days.find(d => d.id === dayId);
-  if (!day) return NEUTRAL;
-  return DAY_COLORS[(day.number - 1 + DAY_COLORS.length) % DAY_COLORS.length];
-}
-
-/* A best-effort WebGL probe. MapLibre dropped its static `supported()` helper,
-   and a failed context otherwise surfaces only as a runtime console error. */
-function webglAvailable(): boolean {
-  try {
-    const canvas = document.createElement("canvas");
-    return !!(canvas.getContext("webgl2") || canvas.getContext("webgl"));
-  } catch {
-    return false;
-  }
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === "function"
-    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* The hover card shown over a pin: place name plus its day/category context,
+   so the map answers "what is this?" without a trip to the side panel. */
+function popupHtml(place: MapArtifactPlace, data: MapArtifactData): string {
+  const esc = (text: string) => text
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const chips = place.day_ids
+    .map(id => data.days.find(d => d.id === id))
+    .filter(Boolean)
+    .map(d => `<span class="ago-gl-popup-day">Day ${d!.number}</span>`)
+    .join("");
+  const time = place.start_time ? `<span>${esc(place.start_time)}</span>` : "";
+  return `<div class="ago-gl-popup">
+    <strong>${esc(place.label)}</strong>
+    <div class="ago-gl-popup-meta">${chips}${time}<span>${esc(place.category)}</span></div>
+  </div>`;
 }
 
 /* One place carried as a supercluster point; `place` rides along so a click on
    an un-clustered marker maps straight back to the itinerary entry. */
 type PointProps = { place: MapArtifactPlace; color: string; order: number };
 
-/* Real slippy-map renderer over the operator-configured vector style. Reuses
-   the artifact's sanitized coordinates for clustered markers, a route line, and
-   bounds. Any failure — no WebGL, style/tiles unreachable — degrades to the SVG
-   `MapGraphic` so the itinerary stays usable offline. */
+/* Real slippy-map renderer over the configured vector style. Reuses the
+   artifact's sanitized coordinates for clustered markers, labelled area chips,
+   a route line, and bounds. Any failure — no WebGL, style/tiles unreachable —
+   degrades to the SVG `MapGraphic` so the itinerary stays usable offline. */
 export default function MapCanvas({
-  data, styleUrl, activeRegion, visiblePlaces, selectedPlace, onPlace,
+  data, styleUrl, activeRegion, visiblePlaces, selectedPlace, onPlace, onRegion,
 }: {
   data: MapArtifactData;
   styleUrl: string;
@@ -61,21 +41,26 @@ export default function MapCanvas({
   visiblePlaces: MapArtifactPlace[];
   selectedPlace?: string;
   onPlace: (place: MapArtifactPlace) => void;
+  onRegion?: (region: MapArtifactRegion) => void;
 }) {
   const holder = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   // Every marker currently on the map (points + cluster bubbles), cleared and
   // rebuilt each render; the by-id map drives selection highlighting.
   const shown = useRef<MlMarker[]>([]);
+  const areaMarkers = useRef<MlMarker[]>([]);
   const pointEls = useRef<Map<string, HTMLElement>>(new Map());
   const clusterRef = useRef<Supercluster<PointProps> | null>(null);
   const renderRef = useRef<() => void>(() => {});
+  const popupRef = useRef<MlPopup | null>(null);
   const selectedRef = useRef<string | undefined>(selectedPlace);
   selectedRef.current = selectedPlace;
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const onPlaceRef = useRef(onPlace);
   onPlaceRef.current = onPlace;
+  const onRegionRef = useRef(onRegion);
+  onRegionRef.current = onRegion;
 
   // ---- map lifecycle -------------------------------------------------------
   useEffect(() => {
@@ -86,12 +71,8 @@ export default function MapCanvas({
     let cancelled = false;
     void (async () => {
       try {
-        const maplibre = await import("maplibre-gl");
+        const maplibre = await loadMaplibre();
         if (cancelled || !holder.current) return;
-        if (!workerRegistered) {
-          maplibre.setWorkerUrl(maplibreWorkerUrl);
-          workerRegistered = true;
-        }
         const map = new maplibre.Map({
           container: holder.current,
           style: styleUrl,
@@ -100,7 +81,13 @@ export default function MapCanvas({
           pitchWithRotate: false,
         });
         map.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
-        map.on("load", () => { if (!cancelled) setReady(true); });
+        map.on("load", () => {
+          if (cancelled) return;
+          setReady(true);
+          // Start with the compact attribution collapsed to its (i) toggle.
+          holder.current?.querySelector(".maplibregl-ctrl-attrib")
+            ?.classList.remove("maplibregl-compact-show");
+        });
         // Re-cluster whenever the viewport changes.
         map.on("moveend", () => renderRef.current());
         // A broken style/tile endpoint should fall back, not render blank.
@@ -116,11 +103,46 @@ export default function MapCanvas({
       cancelled = true;
       shown.current.forEach(m => m.remove());
       shown.current = [];
+      areaMarkers.current.forEach(m => m.remove());
+      areaMarkers.current = [];
       pointEls.current.clear();
+      popupRef.current?.remove();
+      popupRef.current = null;
       mapRef.current?.remove();
       mapRef.current = null;
     };
   }, [styleUrl]);
+
+  // ---- labelled area chips -------------------------------------------------
+  // City/region labels stay on the map at all times (Google-Maps-style):
+  // they anchor an areas-only itinerary that would otherwise render as bare
+  // tiles, and clicking one focuses that area's filter.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    let cancelled = false;
+    void (async () => {
+      const maplibre = await loadMaplibre();
+      if (cancelled || !mapRef.current) return;
+      areaMarkers.current.forEach(m => m.remove());
+      areaMarkers.current = data.regions.map(region => {
+        const el = document.createElement("button");
+        el.type = "button";
+        el.className = "ago-gl-area";
+        el.classList.toggle("selected", region.id === activeRegion);
+        el.textContent = region.label;
+        el.setAttribute("aria-label", `Focus ${region.label}`);
+        el.addEventListener("click", event => {
+          event.stopPropagation();
+          onRegionRef.current?.(region);
+        });
+        return new maplibre.Marker({ element: el, anchor: "bottom", offset: [0, -6] })
+          .setLngLat([region.center.lng, region.center.lat])
+          .addTo(map);
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [ready, data, activeRegion]);
 
   // ---- clustered markers ---------------------------------------------------
   useEffect(() => {
@@ -137,11 +159,24 @@ export default function MapCanvas({
     clusterRef.current = index;
 
     void (async () => {
-      const maplibre = await import("maplibre-gl");
+      const maplibre = await loadMaplibre();
       if (cancelled) return;
 
       const applySelected = () => pointEls.current.forEach((el, id) =>
         el.classList.toggle("selected", id === selectedRef.current));
+
+      const showPopup = (place: MapArtifactPlace, lngLat: [number, number]) => {
+        const m = mapRef.current;
+        if (!m) return;
+        popupRef.current?.remove();
+        popupRef.current = new maplibre.Popup({
+          closeButton: false, closeOnClick: false, offset: 18,
+          className: "ago-gl-popup-holder", maxWidth: "260px",
+        })
+          .setLngLat(lngLat)
+          .setHTML(popupHtml(place, data))
+          .addTo(m);
+      };
 
       const render = () => {
         const m = mapRef.current;
@@ -172,10 +207,15 @@ export default function MapCanvas({
             label.textContent = String(props.order);
             el.appendChild(label);
             el.setAttribute("aria-label", props.place.label);
-            el.title = props.place.label;
             el.addEventListener("click", event => {
               event.stopPropagation();
               onPlaceRef.current(props.place);
+              showPopup(props.place, [lng, lat]);
+            });
+            el.addEventListener("mouseenter", () => showPopup(props.place, [lng, lat]));
+            el.addEventListener("mouseleave", () => {
+              popupRef.current?.remove();
+              popupRef.current = null;
             });
             pointEls.current.set(props.place.id, el);
           }
@@ -233,7 +273,7 @@ export default function MapCanvas({
     const map = mapRef.current;
     if (!map || !ready) return;
     void (async () => {
-      const maplibre = await import("maplibre-gl");
+      const maplibre = await loadMaplibre();
       const coords: [number, number][] = visiblePlaces.length
         ? visiblePlaces.map(p => [p.position.lng, p.position.lat])
         : (activeRegion

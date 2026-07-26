@@ -8,8 +8,10 @@
      AGORA_BASE   server origin      (default http://127.0.0.1:4470)
      AGORA_TOKEN  admin key          (required)
      PW_DIR       dir containing node_modules/playwright (default: resolve normally)
-   The server must serve web/dist and, for real tiles, have `map_style_url`
-   set in config.json — the flow works either way (SVG fallback otherwise). */
+   The server must serve web/dist. Real tiles are on by default (built-in
+   OpenFreeMap style; `map_style_url` overrides, `"none"` disables) — the flow
+   works either way, because every check accepts the GL canvas or the SVG
+   fallback (no WebGL / unreachable tiles). */
 
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
@@ -65,6 +67,20 @@ const ARTIFACT = {
   },
 };
 
+/* An areas-only map (all places dropped/missing): the card and viewer must
+   still work and explain themselves instead of rendering an empty husk. */
+const AREAS_ONLY_ARTIFACT = {
+  id: "istanbul-areas", type: "map", version: 1,
+  title: "Istanbul · Areas overview", summary: "Two blocks, no pins yet",
+  data: {
+    regions: [
+      { id: "old-town", label: "Historic Peninsula", center: { lat: 41.0082, lng: 28.9784 } },
+      { id: "beyoglu", label: "Beyoğlu", center: { lat: 41.0361, lng: 28.9770 } },
+    ],
+    days: [], places: [], routes: [],
+  },
+};
+
 const SEED = {};
 async function seed() {
   const groups = (await api("/api/groups")).groups;
@@ -101,6 +117,11 @@ async function injectArtifact() {
   ws.send(JSON.stringify({
     type: "post", agent_id: AGENT_ID, channel_id: SEED.channel,
     text: "Here is your seven-day Turkey itinerary.", artifacts: [ARTIFACT],
+  }));
+  await sleep(400);
+  ws.send(JSON.stringify({
+    type: "post", agent_id: AGENT_ID, channel_id: SEED.channel,
+    text: "Areas overview before we pin specific stops.", artifacts: [AREAS_ONLY_ARTIFACT],
   }));
   await sleep(600);
   ws.close();
@@ -150,14 +171,22 @@ async function main() {
 
   await check("card: map artifact renders in the channel with summary + chips", async () => {
     await openChannel(page);
-    const card = page.locator(".ago-map-card").first();
+    const card = page.locator('.ago-map-card:has-text("Turkey")').first();
     await card.locator(".ago-map-card-head strong", { hasText: "Turkey" }).waitFor({ timeout: 8000 });
     const chips = await card.locator(".ago-map-region-chips button").count();
     if (chips !== 3) throw new Error(`expected 3 region chips, got ${chips}`);
   });
 
+  await check("card: preview shows a map (real tiles or SVG sketch)", async () => {
+    const preview = page.locator('.ago-map-card:has-text("Turkey")').first()
+      .locator(".ago-map-preview");
+    await preview.locator(".ago-map-preview-gl, .ago-map-graphic").first()
+      .waitFor({ timeout: 8000 });
+  });
+
   await check("viewer: opens from the card and shows the interactive map", async () => {
-    await page.locator(".ago-map-card-head").first().click();
+    await page.locator('.ago-map-card:has-text("Turkey")').first()
+      .locator(".ago-map-card-head").click();
     await page.locator(".ago-map-panel").waitFor({ timeout: 8000 });
     // A canvas mounts regardless of WebGL: MapLibre (.ago-map-gl) or SVG fallback.
     await page.locator(".ago-map-canvas .ago-map-gl, .ago-map-canvas .ago-map-graphic")
@@ -192,6 +221,19 @@ async function main() {
   });
 
   await check("viewer: Escape closes the modal", async () => {
+    await page.keyboard.press("Escape");
+    await page.locator(".ago-map-panel").waitFor({ state: "detached", timeout: 5000 });
+  });
+
+  await check("areas-only map: card renders and viewer explains the missing pins", async () => {
+    const card = page.locator('.ago-map-card:has-text("Areas overview")').first();
+    await card.scrollIntoViewIfNeeded();
+    const foot = await card.locator(".ago-map-card-foot").innerText();
+    if (!foot.includes("2 areas")) throw new Error(`unexpected card foot: ${foot}`);
+    await card.locator(".ago-map-card-head").click();
+    await page.locator(".ago-map-panel").waitFor({ timeout: 8000 });
+    await page.locator(".ago-map-empty-detail strong", { hasText: "No individual places pinned" })
+      .waitFor({ timeout: 5000 });
     await page.keyboard.press("Escape");
     await page.locator(".ago-map-panel").waitFor({ state: "detached", timeout: 5000 });
   });
