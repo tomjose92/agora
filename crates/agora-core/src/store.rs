@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS groups (
     description TEXT NOT NULL DEFAULT '',
     created_by TEXT,
     created_at REAL NOT NULL,
-    position INTEGER NOT NULL DEFAULT 0
+    position INTEGER NOT NULL DEFAULT 0,
+    is_public INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS channels (
     id TEXT PRIMARY KEY,
@@ -261,6 +262,15 @@ fn migrate(conn: &Connection) {
             )
             .unwrap();
         }
+    }
+    // Public groups: every signed-in user gets member-level access without a
+    // membership row.
+    if !has_column("groups", "is_public") {
+        conn.execute(
+            "ALTER TABLE groups ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .unwrap();
     }
     for column in ["has_avatar", "avatar_v"] {
         if !has_column("agents", column) {
@@ -554,7 +564,7 @@ impl Store {
     pub fn group(&self, group_id: &str) -> Option<Value> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, name, description, created_by, created_at, hidden FROM groups WHERE id = ?1",
+            "SELECT id, name, description, created_by, created_at, hidden, is_public FROM groups WHERE id = ?1",
             params![group_id],
             |r| {
                 Ok(json!({
@@ -563,6 +573,7 @@ impl Store {
                     "created_by": r.get::<_, Option<String>>(3)?,
                     "created_at": r.get::<_, f64>(4)?,
                     "hidden": r.get::<_, i64>(5)? != 0,
+                    "is_public": r.get::<_, i64>(6)? != 0,
                 }))
             },
         )
@@ -573,7 +584,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, created_by, created_at, hidden FROM groups ORDER BY position, name",
+                "SELECT id, name, description, created_by, created_at, hidden, is_public FROM groups ORDER BY position, name",
             )
             .unwrap();
         stmt.query_map([], |r| {
@@ -583,6 +594,7 @@ impl Store {
                 "created_by": r.get::<_, Option<String>>(3)?,
                 "created_at": r.get::<_, f64>(4)?,
                 "hidden": r.get::<_, i64>(5)? != 0,
+                "is_public": r.get::<_, i64>(6)? != 0,
             }))
         })
         .unwrap()
@@ -599,6 +611,25 @@ impl Store {
                 .execute(
                     "UPDATE groups SET hidden = ?1 WHERE id = ?2",
                     params![hidden as i64, group_id],
+                )
+                .unwrap();
+            if changed == 0 {
+                return None;
+            }
+        }
+        self.group(group_id)
+    }
+
+    /// Open a group to every signed-in user (or make it members-only again).
+    /// Access-level change only — membership rows and group-admin roles are
+    /// untouched.
+    pub fn set_group_public(&self, group_id: &str, is_public: bool) -> Option<Value> {
+        {
+            let conn = self.conn.lock().unwrap();
+            let changed = conn
+                .execute(
+                    "UPDATE groups SET is_public = ?1 WHERE id = ?2",
+                    params![is_public as i64, group_id],
                 )
                 .unwrap();
             if changed == 0 {
@@ -1082,6 +1113,21 @@ impl Store {
         .is_ok()
     }
 
+    /// Member-level *access*: a membership row, or the group being public.
+    /// Access-control call sites use this; membership listings and admin
+    /// checks stay on the raw tables.
+    pub fn user_can_access_group(&self, username: &str, group_id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM groups g WHERE g.id = ?1 AND (g.is_public = 1 OR EXISTS ( \
+                 SELECT 1 FROM memberships m WHERE m.group_id = g.id \
+                 AND m.member_type = 'user' AND m.member_id = ?2))",
+            params![group_id, username],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
     pub fn user_is_group_admin(&self, username: &str, group_id: &str) -> bool {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
@@ -1096,7 +1142,7 @@ impl Store {
     pub fn user_can_see_channel(&self, username: &str, channel_id: &str) -> bool {
         match self.channel(channel_id) {
             Some(chan) => {
-                self.user_in_group(username, chan["group_id"].as_str().unwrap_or_default())
+                self.user_can_access_group(username, chan["group_id"].as_str().unwrap_or_default())
             }
             None => false,
         }
@@ -1955,13 +2001,14 @@ impl Store {
                 p.push(Box::new(agent.to_string()));
             }
             // User visibility mirrors the UI: a person sees a channel iff
-            // they are a member of its group (users are group-scoped).
+            // they are a member of its group (users are group-scoped), or
+            // the group is public.
             if let Some(username) = user {
                 let i = p.len() + 1;
                 sql.push_str(&format!(
-                    " AND EXISTS (SELECT 1 FROM memberships mu \
+                    " AND (g.is_public = 1 OR EXISTS (SELECT 1 FROM memberships mu \
                        WHERE mu.member_type = 'user' AND mu.member_id = ?{i} \
-                       AND mu.group_id = c.group_id)"
+                       AND mu.group_id = c.group_id))"
                 ));
                 p.push(Box::new(username.to_string()));
             }
@@ -1998,8 +2045,8 @@ impl Store {
     pub fn search_channels(&self, query: &str, visible_to: Option<&str>, limit: usize) -> Vec<Value> {
         let pattern = like_pattern(query);
         let member_clause = if visible_to.is_some() {
-            " AND EXISTS (SELECT 1 FROM memberships mu WHERE mu.member_type = 'user' \
-               AND mu.member_id = ?3 AND mu.group_id = c.group_id)"
+            " AND (g.is_public = 1 OR EXISTS (SELECT 1 FROM memberships mu WHERE mu.member_type = 'user' \
+               AND mu.member_id = ?3 AND mu.group_id = c.group_id))"
         } else {
             ""
         };
@@ -2041,8 +2088,8 @@ impl Store {
     pub fn search_groups(&self, query: &str, visible_to: Option<&str>, limit: usize) -> Vec<Value> {
         let pattern = like_pattern(query);
         let member_clause = if visible_to.is_some() {
-            " AND EXISTS (SELECT 1 FROM memberships mu WHERE mu.member_type = 'user' \
-               AND mu.member_id = ?3 AND mu.group_id = groups.id)"
+            " AND (groups.is_public = 1 OR EXISTS (SELECT 1 FROM memberships mu WHERE mu.member_type = 'user' \
+               AND mu.member_id = ?3 AND mu.group_id = groups.id))"
         } else {
             ""
         };
@@ -2849,6 +2896,51 @@ mod tests {
         assert_eq!(s.agents_for_channel(c2id), vec!["bot-a".to_string()]);
         assert!(s.user_in_group("tom", gid));
         assert!(!s.user_in_group("alice", gid));
+    }
+
+    #[test]
+    fn public_groups_grant_access_without_membership() {
+        let s = store();
+        let g = s.create_group("Commons", "open to all", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let c = s.create_channel(gid, "lobby", "");
+        let cid = c["id"].as_str().unwrap();
+        s.add_message(cid, "welcome aboard", "user", "tom", None, None, &[]);
+
+        // Members-only by default.
+        assert_eq!(g["is_public"], false);
+        assert!(!s.user_can_access_group("alice", gid));
+        assert!(!s.user_can_see_channel("alice", cid));
+        assert!(s.search_groups("Commons", Some("alice"), 10).is_empty());
+        assert!(s.search_channels("lobby", Some("alice"), 10).is_empty());
+        assert!(s
+            .search_messages("welcome", false, None, None, None, None, Some("alice"), false, 10, 0)
+            .is_empty());
+
+        // Public: member-level access for everyone; raw membership and the
+        // admin role are untouched.
+        let g = s.set_group_public(gid, true).unwrap();
+        assert_eq!(g["is_public"], true);
+        assert!(s.user_can_access_group("alice", gid));
+        assert!(s.user_can_see_channel("alice", cid));
+        assert!(!s.user_in_group("alice", gid));
+        assert!(!s.user_is_group_admin("alice", gid));
+        assert_eq!(s.search_groups("Commons", Some("alice"), 10).len(), 1);
+        assert_eq!(s.search_channels("lobby", Some("alice"), 10).len(), 1);
+        assert_eq!(
+            s.search_messages("welcome", false, None, None, None, None, Some("alice"), false, 10, 0)
+                .len(),
+            1
+        );
+
+        // Flip back: access revoked again.
+        let g = s.set_group_public(gid, false).unwrap();
+        assert_eq!(g["is_public"], false);
+        assert!(!s.user_can_access_group("alice", gid));
+        assert!(s.search_groups("Commons", Some("alice"), 10).is_empty());
+
+        // Unknown group: no row, no panic.
+        assert!(s.set_group_public("nope", true).is_none());
     }
 
     #[test]
