@@ -57,8 +57,8 @@ one shows at a time. Messages addressed to another agent have the
 | `/use <n \| session-id>` | bind this channel/thread to a session |
 | `/new <dir>` | bind to a fresh session started in `<dir>` — **`<dir>` must be under an allowed root** (see below); disabled entirely when no roots are configured |
 | `/worktree <repo> [branch]` | isolate this thread in a fresh git worktree + branch; `/worktree [show]`, `/worktree remove [force]`, `/worktrees` work like the Claude bridge |
-| `/model <model-id\|default>` | set the model for this channel (`default` clears the override); persists in the binding and is passed as `codex -m` on every run |
-| `/sandbox <read-only\|workspace-write\|full\|bypass\|reset>` | set the sandbox mode for this channel (`reset` clears the override). Lowering privilege is always allowed; **raising it above the bridge default requires `CODEX_ALLOW_SANDBOX_ESCALATION`** |
+| `/model <sol\|terra\|luna\|default>` | switch this channel to the named model (`default` resets it to the bridge default, `sol` unless configured otherwise); persists in the binding and is passed as `codex -m` on every run |
+| `/sandbox <read-only\|workspace-write\|workspace-git\|full\|bypass\|reset>` | set the sandbox mode for this channel (`reset` clears the override). Lowering privilege is always allowed; **raising it above the bridge default requires `CODEX_ALLOW_SANDBOX_ESCALATION`** |
 | `/tldr <on\|off\|default>` | add a toggleable short summary to long replies for this channel (`default` clears the override) |
 | `/stop` | cancel the run in flight on this channel (kills the `codex` child) |
 | `/status` | show the current binding, model, sandbox mode, TL;DR state, and whether a run is in flight |
@@ -77,6 +77,35 @@ reports it. The default mode is `workspace-write` (edit files in the bound
 directory, no network); use `/sandbox read-only` for look-don't-touch channels,
 `danger-full-access` / `bypass` only if you understand
 [SECURITY.md](SECURITY.md).
+
+**`workspace-git`** sits between `workspace-write` and `danger-full-access`:
+workspace-write semantics, plus `.git` writable and the allowlisted git hosts
+reachable, so Codex can branch/commit/push. It works by selecting the Codex
+permission profile of the same name — you must define
+`[permissions.workspace-git]` in `~/.codex/config.toml` (see
+[Permissions](https://developers.openai.com/codex/permissions)), e.g.:
+
+```toml
+[permissions.workspace-git]
+extends = ":workspace"
+
+[permissions.workspace-git.filesystem.":workspace_roots"]
+"." = "write"
+".git" = "write"
+
+[permissions.workspace-git.network]
+enabled = true
+
+[permissions.workspace-git.network.domains]
+"github.com" = "allow"
+"*.github.com" = "allow"
+"*.githubusercontent.com" = "allow"
+```
+
+Two caveats: Codex ignores permission profiles whenever `sandbox_mode` is set,
+so keep `sandbox_mode` out of `~/.codex/config.toml` and out of `CODEX_ARGS`;
+and pushes must use HTTPS remotes (SSH doesn't traverse the sandbox's network
+proxy).
 
 **Codex slash commands don't exist headlessly.** The Codex TUI's `/compact`,
 `/review`, etc. are interactive-only; the bridge forwards unknown `/...` text
@@ -124,7 +153,8 @@ Everything is env-overridable (flags take precedence): `AGORA_URL`,
 `CODEX_SANDBOX` (default sandbox mode, `workspace-write` when unset —
 overridable per channel with `/sandbox`), `CODEX_ARGS` (extra args for every
 run, e.g. `-c` config overrides or `--profile`), `CODEX_MODEL` (default model
-for every run; channels override with `/model`),
+for every run: `sol`, `terra`, or `luna`; defaults to `sol`, and channels
+override it with `/model`),
 `CODEX_ALLOW_SANDBOX_ESCALATION` (`1` to let `/sandbox` raise privilege above
 the default — off by default), `CODEX_TLDR` (`1` to add short summaries to long
 replies by default; channels override with `/tldr`), `CODEX_TLDR_MIN_CHARS`

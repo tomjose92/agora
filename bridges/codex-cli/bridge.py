@@ -69,18 +69,41 @@ TLDR_PROMPT_SUFFIX = (
     "replies. Never mention this note or the sentinel anywhere else.)"
 )
 
-# Model names a channel may switch to via /model are validated, not
-# allowlisted: Codex model ids churn too fast for a hardcoded list, and the
-# value is exec'd without a shell, so the only real hazard is a leading dash
-# being parsed as a flag — which the pattern forbids.
-MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-MODEL_HINT = "a Codex model id (e.g. gpt-5.1-codex) or `default`"
+# Friendly model choices exposed in chat. Keep the raw ids out of channel
+# state so a future id change only needs this mapping updated.
+MODEL_IDS = {
+    "sol": "gpt-5.6-sol",
+    "terra": "gpt-5.6-terra",
+    "luna": "gpt-5.6-luna",
+}
+DEFAULT_MODEL = MODEL_IDS["sol"]
+MODEL_CHOICES = "sol | terra | luna | default"
+
+
+def normalize_model(raw: str) -> str | None:
+    """Map a friendly name or its exact Codex id to a canonical model id."""
+    choice = (raw or "").strip().lower()
+    if choice in MODEL_IDS:
+        return MODEL_IDS[choice]
+    if choice in MODEL_IDS.values():
+        return choice
+    return None
 
 # Sandbox modes, ordered least->most privileged. A channel may always lower
 # privilege; raising above the bridge startup default needs
-# CODEX_ALLOW_SANDBOX_ESCALATION. "bypass" maps to Codex's
-# --dangerously-bypass-approvals-and-sandbox flag (no sandbox at all).
-SANDBOX_RANK = {"read-only": 0, "workspace-write": 1, "danger-full-access": 2, "bypass": 3}
+# CODEX_ALLOW_SANDBOX_ESCALATION. "workspace-git" is workspace-write plus git:
+# it selects the Codex permission profile of the same name (which must exist in
+# ~/.codex/config.toml) so `.git` becomes writable and the allowlisted remotes
+# reachable — branch/commit/push work while the rest of the sandbox holds.
+# "bypass" maps to Codex's --dangerously-bypass-approvals-and-sandbox flag
+# (no sandbox at all).
+SANDBOX_RANK = {
+    "read-only": 0,
+    "workspace-write": 1,
+    "workspace-git": 2,
+    "danger-full-access": 3,
+    "bypass": 4,
+}
 _SANDBOX_ALIASES = {
     "read-only": "read-only",
     "readonly": "read-only",
@@ -90,6 +113,9 @@ _SANDBOX_ALIASES = {
     "workspace": "workspace-write",
     "write": "workspace-write",
     "ww": "workspace-write",
+    "workspace-git": "workspace-git",
+    "git": "workspace-git",
+    "wg": "workspace-git",
     "danger-full-access": "danger-full-access",
     "full-access": "danger-full-access",
     "full": "danger-full-access",
@@ -97,7 +123,7 @@ _SANDBOX_ALIASES = {
     "bypass": "bypass",
     "skip": "bypass",
 }
-SANDBOX_CHOICES = "read-only | workspace-write | danger-full-access | bypass | reset"
+SANDBOX_CHOICES = "read-only | workspace-write | workspace-git | danger-full-access | bypass | reset"
 
 
 def normalize_sandbox_mode(raw: str) -> str | None:
@@ -144,8 +170,8 @@ HELP = """Bridge commands (anything else is sent to the bound Codex session):
 /worktree <repo> [branch] - isolate this thread in a fresh git worktree + branch
 /worktree [show] - show this thread's worktree; /worktree remove [force] - delete it
 /worktrees - list every tracked worktree
-/model <model-id|default> - set the model for this channel (codex -m)
-/sandbox <read-only|workspace-write|full|bypass|reset> - set the sandbox mode
+/model <sol|terra|luna|default> - set the model for this channel (codex -m)
+/sandbox <read-only|workspace-write|workspace-git|full|bypass|reset> - set the sandbox mode
 /tldr <on|off|default> - add a toggleable short summary to long replies
 /stop - cancel the run in flight on this channel
 /status - show the current binding
@@ -413,7 +439,7 @@ class Bridge:
         self.default_sandbox = (
             normalize_sandbox_mode(args.sandbox) or args_mode or "workspace-write"
         )
-        self.default_model = (args.model or "").strip() or None
+        self.default_model = normalize_model(args.model) or DEFAULT_MODEL
         self.tldr_default = args.tldr
         self.tldr_min_chars = max(0, args.tldr_min_chars)
         self.allow_escalation = args.allow_sandbox_escalation
@@ -853,21 +879,21 @@ class Bridge:
         if not b:
             return "No session bound here. Run /sessions then /use <n>."
         if not arg:
-            cur = b.get("model") or self.default_model or "session default"
-            return f"Model: {cur}\nUsage: /model <{MODEL_HINT}>"
+            cur = normalize_model(b.get("model")) or self.default_model
+            return f"Model: {cur}\nUsage: /model <{MODEL_CHOICES}>"
         choice = arg.strip()
         if choice.lower() == "default":
             b.pop("model", None)
             self.bindings[key] = b
             self._save_state()
-            fell_back = self.default_model or "session default"
-            return f"Model reset to the bridge default ({fell_back})."
-        if not MODEL_RE.fullmatch(choice):
-            return f"That doesn't look like a model id. Use {MODEL_HINT}."
-        b["model"] = choice
+            return f"Model reset to the bridge default ({self.default_model})."
+        model = normalize_model(choice)
+        if not model:
+            return f"Unknown model {arg!r}. Options: {MODEL_CHOICES}"
+        b["model"] = model
         self.bindings[key] = b
         self._save_state()
-        return f"Model set to {choice} for this channel. Next messages use `codex -m {choice}`."
+        return f"Model set to {model} for this channel. Next messages use `codex -m {model}`."
 
     def _cmd_sandbox(self, key: str, arg: str) -> str:
         b = self.bindings.get(key)
@@ -948,7 +974,7 @@ class Bridge:
         if not b:
             return "No session bound here. Run /sessions then /use <n>."
         sid = b["session_id"][:8] + "…" if b["session_id"] else "(new, not started)"
-        model = b.get("model") or self.default_model or "session default"
+        model = normalize_model(b.get("model")) or self.default_model
         mode = b.get("sandbox") or self.default_sandbox
         tldr = "on" if self._tldr_enabled(b) else "off"
         busy = " — a run is in flight" if key in self.busy else ""
@@ -1059,12 +1085,22 @@ class Bridge:
         # the no-sandbox flag instead.
         if mode == "bypass":
             return ["--dangerously-bypass-approvals-and-sandbox"]
+        if mode == "workspace-git":
+            # Selects the permission profile of the same name from
+            # ~/.codex/config.toml (workspace-write semantics + `.git` writable
+            # + allowlisted git remotes). Codex ignores permission profiles the
+            # moment sandbox_mode is set anywhere, so this mode must NOT pass
+            # `-c sandbox_mode=...` — and a sandbox_mode in ~/.codex/config.toml
+            # or CODEX_ARGS would silently defeat it too.
+            return ["-c", "default_permissions=workspace-git"]
         return ["-c", f"sandbox_mode={mode}"]
 
     async def run_codex(self, key: str, frame: dict, binding: dict, text: str) -> str:
         prompt, extra_args, tmpdir = self._stage_attachments(frame, text)
         mode = binding.get("sandbox") or self.default_sandbox
-        model = binding.get("model") or self.default_model
+        # Normalize persisted values too: older state files could contain an
+        # arbitrary model id from before the friendly-name allowlist existed.
+        model = normalize_model(binding.get("model")) or self.default_model
         if self._tldr_enabled(binding):
             prompt += TLDR_PROMPT_SUFFIX
         try:
@@ -1392,9 +1428,10 @@ def main() -> None:
                     help="default sandbox mode for every run (default: "
                          "workspace-write; channels override with /sandbox); one "
                          f"of: {SANDBOX_CHOICES.replace(' | reset', '')}")
-    ap.add_argument("--model", default=os.environ.get("CODEX_MODEL", ""),
+    ap.add_argument("--model", default=os.environ.get("CODEX_MODEL", "sol"),
                     help="default model for every run (channels override with "
-                         "/model); empty = the codex config default")
+                         f"/model); one of: {MODEL_CHOICES.replace(' | default', '')} "
+                         "(default: sol)")
     ap.add_argument("--allow-sandbox-escalation", action="store_true",
                     default=os.environ.get("CODEX_ALLOW_SANDBOX_ESCALATION", "").lower()
                     in ("1", "true", "yes"),
@@ -1420,8 +1457,9 @@ def main() -> None:
     if args.sandbox and not normalize_sandbox_mode(args.sandbox):
         ap.error(f"unknown --sandbox mode {args.sandbox!r}; "
                  f"use one of: {SANDBOX_CHOICES.replace(' | reset', '')}")
-    if args.model and not MODEL_RE.fullmatch(args.model.strip()):
-        ap.error(f"--model {args.model!r} doesn't look like a model id")
+    if not normalize_model(args.model):
+        ap.error(f"unknown --model {args.model!r}; use one of: "
+                 f"{MODEL_CHOICES.replace(' | default', '')}")
     if args.token:
         log("warning: --token on the command line is visible to other local users "
             "(ps/proc). Prefer AGORA_PAIRING_TOKEN or --token-file.")

@@ -17,7 +17,11 @@ ordered by decreasing severity.
    there is no in-channel approval step: `codex exec` is strictly
    non-interactive, so whatever the sandbox mode allows happens unattended.
    The default is `workspace-write` (edit files under the bound directory, no
-   network); `read-only` is look-don't-touch; `danger-full-access` and
+   network); `read-only` is look-don't-touch; `workspace-git` is
+   workspace-write plus a writable `.git` and network access to the git hosts
+   allowlisted in the `[permissions.workspace-git]` profile in
+   `~/.codex/config.toml` (unattended branch/commit/**push** — treat it as
+   granting repo-publish rights to the channel); `danger-full-access` and
    `bypass` (`--dangerously-bypass-approvals-and-sandbox`) remove the guard
    rails entirely.
    *Mitigations:* the sandbox mode is per channel (`/sandbox`) and defaults to
@@ -70,11 +74,9 @@ ordered by decreasing severity.
      autonomous agent (a hostile image/file could carry a prompt-injection
      payload the model then acts on). Bounded only by the sandbox mode (#1).
 
-7. **Model ids are validated, not allowlisted.** `/model` accepts any string
-   matching a conservative pattern (no leading dash, safe charset) because
-   Codex model ids churn too fast for a hardcoded list. The value is exec'd
-   without a shell and can only ever be the argument of `-m`, so the exposure
-   is limited to selecting a wrong/expensive model, not argv injection.
+7. **Models are allowlisted.** `/model` accepts only `sol`, `terra`, or `luna` and
+   maps those friendly names to fixed Codex model ids before constructing the
+   argument vector. Values are never interpreted by a shell.
 
 8. **Bounded memory DoS on large output.** The subprocess stdout limit is
    64 MB (raised from asyncio's 64 KB default so JSONL lines carrying whole
