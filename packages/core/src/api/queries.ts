@@ -95,6 +95,18 @@ export function useSetGroupHidden() {
   });
 }
 
+/** Open a group to every signed-in user, or make it members-only again.
+    Group-admin gated server-side — it changes access, not presentation. */
+export function useSetGroupPublic() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { groupId: string; isPublic: boolean }) =>
+      api.patch(`/api/groups/${v.groupId}`, { is_public: v.isPublic }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.groups }),
+  });
+}
+
 export function useCreateChannel() {
   const api = useApi();
   const qc = useQueryClient();

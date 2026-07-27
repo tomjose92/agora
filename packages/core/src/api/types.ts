@@ -53,6 +53,8 @@ export interface Group {
   role: "admin" | "member";
   /** Tucked away in the home list (admin toggle); data is untouched. */
   hidden?: boolean;
+  /** Open to every signed-in user, membership or not (admin toggle). */
+  is_public?: boolean;
 }
 
 export interface Attachment {

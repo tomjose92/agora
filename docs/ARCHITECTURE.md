@@ -110,6 +110,15 @@ helpers in `server.rs`:
 - The admin key resolves to an instance-admin `AuthedUser`, so it keeps working
   everywhere a user session does.
 
+**Public groups.** A group flagged `is_public` (a real `groups` column, not a
+pref) grants every signed-in user member-level access without a membership
+row: it appears in their group list and search results, and `require_member` /
+`user_can_see_channel` (so also hub UI broadcasts) let them read and post in
+its channels. Membership rows, group-admin roles, and the flag toggle itself
+(`PATCH /api/groups/{id}` with `is_public`, group-admin gated) are unaffected —
+public never grants admin. Push notifications still go to actual members and
+instance admins only.
+
 **Presentation state is per-user, never shared.** Hiding and reordering
 groups/channels live in the `user_prefs` table and are overlaid onto payloads
 (`overlay_prefs` in `server.rs`); any member may write their own. The legacy

@@ -229,8 +229,9 @@ fn require_instance_admin(user: &AuthedUser) -> Result<(), ApiError> {
 
 /// Membership is the visibility boundary: users are group-scoped in v1.
 /// Instance admins bypass it (they are the operator).
+/// Member-level access: instance admin, membership row, or a public group.
 fn require_member(state: &AppState, user: &AuthedUser, group_id: &str) -> Result<(), ApiError> {
-    if user.instance_admin || state.hub.store.user_in_group(&user.username, group_id) {
+    if user.instance_admin || state.hub.store.user_can_access_group(&user.username, group_id) {
         Ok(())
     } else {
         Err(err(StatusCode::FORBIDDEN, "You are not a member of this group"))
@@ -784,7 +785,7 @@ async fn join_link(
     (StatusCode::FOUND, [("location", target)]).into_response()
 }
 
-/// The caller's groups only; instance admins (the operator) see all.
+/// The caller's groups plus public ones; instance admins (the operator) see all.
 async fn list_groups(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
@@ -801,7 +802,7 @@ async fn list_groups(
                 || state
                     .hub
                     .store
-                    .user_in_group(&user.username, g["id"].as_str().unwrap_or_default())
+                    .user_can_access_group(&user.username, g["id"].as_str().unwrap_or_default())
         })
         .collect();
     // The caller's personal order (their reorder drags), not the global one.
@@ -833,9 +834,10 @@ async fn create_group(
     Ok(Json(group_payload(&state, &group, &user)))
 }
 
-/// Update a group's presentation flags — today just `hidden`, which tucks
-/// the group away in *the caller's* sidebar (a personal pref, so any member
-/// may set it) without touching its data.
+/// Update a group's flags: `hidden` tucks the group away in *the caller's*
+/// sidebar (a personal pref, so any member may set it); `is_public` opens
+/// the group to every signed-in user (group-admin gated — it changes access,
+/// not presentation).
 async fn update_group(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
@@ -844,15 +846,25 @@ async fn update_group(
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
-    let group = group_or_404(&state, &group_id)?;
+    group_or_404(&state, &group_id)?;
     require_member(&state, &user, &group_id)?;
-    let Some(hidden) = payload["hidden"].as_bool() else {
-        return Err(err(StatusCode::BAD_REQUEST, "hidden (bool) required"));
-    };
-    state
-        .hub
-        .store
-        .set_pref_hidden(&user.username, "group", &group_id, hidden);
+    let is_public = payload.get("is_public").and_then(Value::as_bool);
+    let hidden = payload.get("hidden").and_then(Value::as_bool);
+    if is_public.is_none() && hidden.is_none() {
+        return Err(err(StatusCode::BAD_REQUEST, "hidden or is_public (bool) required"));
+    }
+    if let Some(public) = is_public {
+        require_group_admin(&state, &user, &group_id)?;
+        state.hub.store.set_group_public(&group_id, public);
+    }
+    if let Some(hidden) = hidden {
+        state
+            .hub
+            .store
+            .set_pref_hidden(&user.username, "group", &group_id, hidden);
+    }
+    // Re-read so the payload reflects an is_public change.
+    let group = group_or_404(&state, &group_id)?;
     Ok(Json(group_payload(&state, &group, &user)))
 }
 
@@ -3661,6 +3673,95 @@ mod tests {
         // The admin keeps the store's (creation) order.
         let theirs = list_groups(State(state.clone()), q(), boss).await.unwrap();
         assert_eq!(theirs.0["groups"][0]["channels"][0]["id"], cid.as_str());
+    }
+
+    #[tokio::test]
+    async fn public_group_opens_to_all_and_toggle_stays_admin_only() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("boss", "", None, "member").unwrap();
+        store.create_user("rex", "", None, "member").unwrap();
+        let g = store.create_group("Team", "", Some("boss")); // boss = group admin
+        let gid = g["id"].as_str().unwrap().to_string();
+        let c = store.create_channel(&gid, "general", "");
+        let cid = c["id"].as_str().unwrap().to_string();
+        store.add_message(&cid, "hello", "user", "boss", None, None, &[]);
+        let boss = session_headers(&state, "boss");
+        let rex = session_headers(&state, "rex"); // no membership anywhere
+        let q = || Query(HashMap::new());
+
+        // Outsider: the group is invisible and unreachable.
+        let mine = list_groups(State(state.clone()), q(), rex.clone()).await.unwrap();
+        assert!(mine.0["groups"].as_array().unwrap().is_empty());
+        let denied =
+            list_messages(State(state.clone()), Path(cid.clone()), q(), rex.clone()).await;
+        assert_eq!(denied.unwrap_err().0, StatusCode::FORBIDDEN);
+        // ... and they certainly can't open it up themselves.
+        let denied = update_group(
+            State(state.clone()),
+            Path(gid.clone()),
+            q(),
+            rex.clone(),
+            Json(json!({"is_public": true})),
+        )
+        .await;
+        assert_eq!(denied.unwrap_err().0, StatusCode::FORBIDDEN);
+
+        // The group admin flips it public.
+        let res = update_group(
+            State(state.clone()),
+            Path(gid.clone()),
+            q(),
+            boss.clone(),
+            Json(json!({"is_public": true})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["is_public"], true);
+
+        // Outsider now sees it as a plain member: list, read, post.
+        let mine = list_groups(State(state.clone()), q(), rex.clone()).await.unwrap();
+        assert_eq!(mine.0["groups"][0]["id"], gid.as_str());
+        assert_eq!(mine.0["groups"][0]["role"], "member");
+        let msgs = list_messages(State(state.clone()), Path(cid.clone()), q(), rex.clone())
+            .await
+            .unwrap();
+        assert_eq!(msgs.0["messages"].as_array().unwrap().len(), 1);
+        let posted = post_message(
+            State(state.clone()),
+            Path(cid.clone()),
+            q(),
+            rex.clone(),
+            Json(json!({"text": "hi from outside"})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(posted.0["text"], "hi from outside");
+
+        // Member-level access doesn't grant the toggle: still admin-only.
+        let denied = update_group(
+            State(state.clone()),
+            Path(gid.clone()),
+            q(),
+            rex.clone(),
+            Json(json!({"is_public": false})),
+        )
+        .await;
+        assert_eq!(denied.unwrap_err().0, StatusCode::FORBIDDEN);
+
+        // Admin closes it again; the outsider is back out.
+        let res = update_group(
+            State(state.clone()),
+            Path(gid.clone()),
+            q(),
+            boss,
+            Json(json!({"is_public": false})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["is_public"], false);
+        let mine = list_groups(State(state.clone()), q(), rex).await.unwrap();
+        assert!(mine.0["groups"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

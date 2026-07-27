@@ -2,7 +2,8 @@
    with unread badges and eye toggles, hide/show group, admin delete. */
 
 import {
-  useDeleteGroup, useGroups, useMe, useSetGroupHidden, useUpdateChannel,
+  useDeleteGroup, useGroups, useMe, useSetGroupHidden, useSetGroupPublic,
+  useUpdateChannel,
 } from "@agora/core";
 import { Icon } from "../lib/icons";
 import { toast } from "../lib/toast";
@@ -16,6 +17,7 @@ export function GroupOverview() {
   const g = groups.find(x => x.id === ui.sel.g);
   const deleteGroup = useDeleteGroup();
   const setHidden = useSetGroupHidden();
+  const setPublic = useSetGroupPublic();
   const updateChannel = useUpdateChannel();
   const armed = useConfirm(s => s.armed) === `group:${g?.id}`;
   const arm = useConfirm(s => s.arm);
@@ -35,7 +37,7 @@ export function GroupOverview() {
           <Icon name="chevron-left" />
         </button>
         <div className="ago-head-text">
-          <span className="ago-chan-name">{g.name}{g.hidden ? <span className="ago-hidden-tag">hidden</span> : null}</span>
+          <span className="ago-chan-name">{g.name}{g.is_public ? <span className="ago-hidden-tag">public</span> : null}{g.hidden ? <span className="ago-hidden-tag">hidden</span> : null}</span>
           <span className="dim">{chans.length} channel{chans.length === 1 ? "" : "s"}</span>
         </div>
         <div className="ago-head-actions">
@@ -46,6 +48,20 @@ export function GroupOverview() {
             onClick={() => setHidden.mutate({ groupId: g.id, hidden: !g.hidden })}>
             <Icon name={g.hidden ? "eye" : "eye-off"} /> {g.hidden ? "Show group" : "Hide group"}
           </button>
+          {admin && (
+            <button className="btn sm"
+              title={g.is_public
+                ? "Make this group members-only again"
+                : "Open this group to everyone with an account — no invite needed"}
+              onClick={() => setPublic.mutate({ groupId: g.id, isPublic: !g.is_public }, {
+                onSuccess: () => toast(g.is_public
+                  ? `${g.name} is members-only again`
+                  : `${g.name} is now public — every signed-in user can see and join in`),
+                onError: e => toast("Couldn't change group visibility: " + (e as Error).message, { variant: "warn" }),
+              })}>
+              <Icon name={g.is_public ? "lock" : "globe"} /> {g.is_public ? "Make private" : "Make public"}
+            </button>
+          )}
           {admin && (
             <button className={`btn sm danger ${armed ? "armed" : ""}`}
               onClick={() => {
