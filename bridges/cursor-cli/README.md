@@ -48,7 +48,7 @@ computer. Keep the computer awake and the bridge running for remote access.
 | `/worktree show` / `/worktree remove [force]` | Inspect or remove the thread's worktree |
 | `/worktrees` | List worktrees managed by this bridge |
 | `/models` | Query the installed CLI for models available to the account |
-| `/model <id \| default>` | Store a model override for this channel |
+| `/model <alias \| id \| default>` | Store a model override; aliases: `grok`, `opus`, `sonnet`, `fable`, `sol`, `luna`, `terra`, `composer`, `kimi` |
 | `/mode <plan \| ask \| agent \| force \| default>` | Select read-only or editing behavior |
 | `/tldr <on \| off \| default>` | Toggle short summaries for long replies |
 | `/stop` | Terminate this channel's in-flight Cursor process |
