@@ -1320,24 +1320,6 @@ class Bridge:
             if detail:
                 return f"{name} {phase}: {str(detail)[:180]}"
         return f"{name} {phase}"
-        if itype == "file_change":
-            changes = item.get("changes") or []
-            paths = [str(c.get("path") or "") for c in changes if isinstance(c, dict)]
-            paths = [p for p in paths if p]
-            if paths:
-                shown = ", ".join(Path(p).name for p in paths[:4])
-                more = f" (+{len(paths) - 4} more)" if len(paths) > 4 else ""
-                return f"editing {shown}{more}"
-        if itype == "todo_list":
-            items = item.get("items") or []
-            current = next(
-                (i.get("text") for i in items
-                 if isinstance(i, dict) and not i.get("completed")),
-                None,
-            )
-            if current:
-                return f"todo: {str(current)[:180]}"
-        return None
 
     # --------------------------------------------------------- main loop
 

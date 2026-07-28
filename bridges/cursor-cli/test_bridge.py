@@ -85,6 +85,42 @@ class CursorBinaryTests(unittest.TestCase):
         self.assertIsNone(bridge.resolve_agent_bin("/definitely/missing/agent"))
 
 
+class ProgressSnippetTests(unittest.TestCase):
+    def test_formats_tool_path_and_phase(self):
+        event = {
+            "type": "tool_call",
+            "subtype": "started",
+            "tool_call": {"readToolCall": {"args": {"path": "src/auth.rs"}}},
+        }
+        self.assertEqual(
+            bridge.Bridge._progress_snippet(event),
+            "readToolCall started: src/auth.rs",
+        )
+
+    def test_formats_terminal_command(self):
+        event = {
+            "type": "tool_call",
+            "subtype": "completed",
+            "tool_call": {"terminalToolCall": {"args": {"command": "cargo test"}}},
+        }
+        self.assertEqual(
+            bridge.Bridge._progress_snippet(event),
+            "terminalToolCall completed: cargo test",
+        )
+
+    def test_falls_back_for_unknown_or_empty_tool_shape(self):
+        self.assertEqual(
+            bridge.Bridge._progress_snippet(
+                {"subtype": "started", "tool_call": {"customToolCall": {}}}
+            ),
+            "customToolCall started",
+        )
+        self.assertEqual(
+            bridge.Bridge._progress_snippet({"subtype": "started"}),
+            "tool started",
+        )
+
+
 class ModeSelectionTests(unittest.TestCase):
     def test_force_requires_bridge_opt_in(self):
         instance = bridge.Bridge.__new__(bridge.Bridge)
