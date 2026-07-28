@@ -25,6 +25,26 @@ class ModelSelectionTests(unittest.TestCase):
     def test_shell_metacharacters_are_rejected(self):
         self.assertIsNone(bridge.normalize_model("gpt-5; touch /tmp/no"))
 
+    def test_aliases_resolve_to_full_ids(self):
+        self.assertEqual(bridge.resolve_model("grok"), "cursor-grok-4.5-high-fast")
+        self.assertEqual(bridge.resolve_model("OPUS"), "claude-opus-5-thinking-high-fast")
+        # Non-alias ids pass through validation unchanged.
+        self.assertEqual(bridge.resolve_model("gpt-5.5-high-fast"), "gpt-5.5-high-fast")
+        self.assertIsNone(bridge.resolve_model("grok; rm -rf /"))
+
+    def test_model_command_accepts_alias(self):
+        instance = bridge.Bridge.__new__(bridge.Bridge)
+        instance.bindings = {"channel": {"cwd": "/tmp"}}
+        instance.default_model = None
+        instance._save_state = Mock()
+
+        reply = instance._cmd_model("channel", "sonnet")
+
+        self.assertEqual(
+            instance.bindings["channel"]["model"], "claude-sonnet-5-thinking-high"
+        )
+        self.assertIn("claude-sonnet-5-thinking-high", reply)
+
     def test_model_command_persists_canonical_id(self):
         instance = bridge.Bridge.__new__(bridge.Bridge)
         instance.bindings = {"channel": {"cwd": "/tmp"}}

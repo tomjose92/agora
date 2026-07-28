@@ -101,6 +101,28 @@ def normalize_model(raw: str) -> str | None:
     return choice if re.fullmatch(r"[A-Za-z0-9._:/-]+(?:\[[A-Za-z0-9_=,.-]+\])?", choice) else None
 
 
+# Short names for the flagship fast tier of each model family. Families with
+# no -fast variant (sonnet, fable, kimi) map to their top regular id. Anything
+# not listed here is still reachable with the exact id: /model <id>.
+MODEL_ALIASES = {
+    "grok": "cursor-grok-4.5-high-fast",
+    "opus": "claude-opus-5-thinking-high-fast",
+    "sonnet": "claude-sonnet-5-thinking-high",
+    "fable": "claude-fable-5-thinking-high",
+    "sol": "gpt-5.6-sol-high-fast",
+    "luna": "gpt-5.6-luna-high-fast",
+    "terra": "gpt-5.6-terra-high-fast",
+    "composer": "composer-2.5-fast",
+    "kimi": "kimi-k3-high",
+}
+
+
+def resolve_model(raw: str) -> str | None:
+    """Map a friendly alias to its full model id, then validate."""
+    alias = MODEL_ALIASES.get((raw or "").strip().lower())
+    return normalize_model(alias if alias else raw)
+
+
 MODE_RANK = {"plan": 0, "ask": 0, "agent": 1, "force": 2}
 MODE_CHOICES = "plan | ask | agent | force | default"
 
@@ -116,7 +138,7 @@ HELP = """Bridge commands (anything else is sent to the bound Cursor session):
 /worktree [show] - show this thread's worktree; /worktree remove [force] - delete it
 /worktrees - list every tracked worktree
 /models - list models available to your Cursor account
-/model <id|default> - set the model for this channel
+/model <alias|id|default> - set the model for this channel (aliases: grok, opus, sonnet, fable, sol, luna, terra, composer, kimi)
 /mode <plan|ask|agent|force|default> - set Cursor's execution mode
 /tldr <on|off|default> - add a toggleable short summary to long replies
 /stop - cancel the run in flight on this channel
@@ -421,7 +443,7 @@ class Bridge:
         self.default_mode = args.mode
         self.allow_force = args.allow_force
         self.disable_sandbox = args.disable_sandbox
-        self.default_model = normalize_model(args.model) if args.model else None
+        self.default_model = resolve_model(args.model) if args.model else None
         self.tldr_default = args.tldr
         self.tldr_min_chars = max(0, args.tldr_min_chars)
         self.timeout = args.timeout
@@ -930,16 +952,22 @@ class Bridge:
             return "No session bound here. Run /sessions then /use <n>."
         if not arg:
             cur = normalize_model(b.get("model")) or self.default_model
-            return f"Model: {cur or 'Cursor Auto'}\nUsage: /model <id | default>; /models lists ids."
+            aliases = "\n".join(f"  {name} -> {mid}" for name, mid in MODEL_ALIASES.items())
+            return (
+                f"Model: {cur or 'Cursor Auto'}\n"
+                f"Usage: /model <alias | id | default>; /models lists full ids.\n"
+                f"Aliases:\n{aliases}"
+            )
         choice = arg.strip()
         if choice.lower() == "default":
             b.pop("model", None)
             self.bindings[key] = b
             self._save_state()
             return f"Model reset to the bridge default ({self.default_model or 'Cursor Auto'})."
-        model = normalize_model(choice)
+        model = resolve_model(choice)
         if not model:
-            return "Invalid model id. Run /models and copy one of the listed ids."
+            return ("Invalid model id. Use an alias (" + ", ".join(MODEL_ALIASES)
+                    + ") or run /models and copy one of the listed ids.")
         b["model"] = model
         self.bindings[key] = b
         self._save_state()
@@ -1526,7 +1554,7 @@ def main() -> None:
                          "the humans-only posture; other agents' messages are "
                          "context only")
     args = ap.parse_args()
-    if args.model and not normalize_model(args.model):
+    if args.model and not resolve_model(args.model):
         ap.error("invalid --model id; run `agent models` to list available ids")
     if args.token:
         log("warning: --token on the command line is visible to other local users "
