@@ -155,6 +155,38 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def resolve_agent_bin(configured: str) -> str | None:
+    """Find Cursor CLI even when a service has a minimal PATH.
+
+    Cursor's installer uses ~/.local/bin, which macOS LaunchAgents and some
+    virtual-environment launches commonly omit. An explicit path always wins.
+    """
+    value = (configured or "agent").strip()
+    if "/" in value:
+        path = Path(value).expanduser()
+        return str(path.resolve()) if path.is_file() and os.access(path, os.X_OK) else None
+    found = shutil.which(value)
+    if found:
+        return found
+    for path in (
+        Path.home() / ".local" / "bin" / value,
+        Path.home() / ".cursor" / "bin" / value,
+        Path.home() / ".local" / "bin" / "cursor-agent",
+        Path.home() / ".cursor" / "bin" / "cursor-agent",
+    ):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path.resolve())
+    return None
+
+
+CURSOR_NOT_FOUND = (
+    "Cursor CLI was not found. Install it with "
+    "`curl https://cursor.com/install -fsS | bash`, run `agent login`, then "
+    "restart this bridge. If it is installed elsewhere, set CURSOR_BIN to its "
+    "absolute path."
+)
+
+
 # ------------------------------------------------------------------ git worktrees
 
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -384,7 +416,7 @@ class Bridge:
         self.agent_id = args.agent_id
         self.agent_name = args.agent_name
         self.avatar = load_agent_avatar(args.agent_avatar, Path(args.env_file))
-        self.agent_bin = args.agent_bin
+        self.agent_bin = resolve_agent_bin(args.agent_bin)
         self.base_agent_args = shlex.split(args.agent_args)
         self.default_mode = args.mode
         self.allow_force = args.allow_force
@@ -914,6 +946,8 @@ class Bridge:
         return f"Model set to {model} for this channel. Next messages use `agent --model {model}`."
 
     async def _cmd_models(self) -> str:
+        if not self.agent_bin:
+            return CURSOR_NOT_FOUND
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.agent_bin, "models",
@@ -1132,6 +1166,8 @@ class Bridge:
         return prompt, extra_args, tmpdir
 
     async def run_agent(self, key: str, frame: dict, binding: dict, text: str) -> str:
+        if not self.agent_bin:
+            raise RuntimeError(CURSOR_NOT_FOUND)
         prompt, extra_args, tmpdir = self._stage_attachments(frame, text)
         mode = binding.get("mode") or self.default_mode
         model = normalize_model(binding.get("model")) or self.default_model

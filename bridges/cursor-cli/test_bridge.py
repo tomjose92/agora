@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -48,6 +49,20 @@ class ModelSelectionTests(unittest.TestCase):
 
         self.assertNotIn("model", instance.bindings["channel"])
         self.assertIn("Cursor Auto", reply)
+
+
+class CursorBinaryTests(unittest.TestCase):
+    def test_explicit_executable_path_is_resolved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "agent"
+            executable.write_text("#!/bin/sh\n")
+            executable.chmod(0o700)
+            self.assertEqual(
+                bridge.resolve_agent_bin(str(executable)), str(executable.resolve())
+            )
+
+    def test_missing_explicit_path_returns_none(self):
+        self.assertIsNone(bridge.resolve_agent_bin("/definitely/missing/agent"))
 
 
 class ModeSelectionTests(unittest.TestCase):
