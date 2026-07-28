@@ -1,0 +1,83 @@
+# Automated, read-only Claude review for trusted pull requests.
+#
+# Required repository secret (Settings -> Secrets and variables -> Actions):
+# - ANTHROPIC_API_KEY: a dedicated Anthropic API key for CI.
+#
+# Fork PRs and PRs from untrusted authors are intentionally excluded. GitHub does
+# not expose repository secrets to forked pull_request workflows, and running an
+# authenticated agent over untrusted content increases prompt-injection risk.
+
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: |
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association) &&
+      !contains(github.event.pull_request.title, '[skip-review]') &&
+      !contains(github.event.pull_request.title, '[WIP]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The Claude action validates workflow configuration against the default
+      # branch. Skip execution when this workflow itself changes; review it after
+      # merge on a subsequent PR instead.
+      - name: Detect workflow self-change
+        id: self-change
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const workflowPath = '.github/workflows/claude-code-review.yml';
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            const changed = files.some(({ filename }) => filename === workflowPath);
+            core.setOutput('changed', changed ? 'true' : 'false');
+            if (changed) {
+              core.notice(`${workflowPath} changed; skipping Claude review until the workflow is on the default branch.`);
+            }
+
+      - name: Run Claude Code review
+        if: steps.self-change.outputs.changed != 'true'
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          track_progress: true
+          use_sticky_comment: true
+          show_full_output: false
+          claude_args: >-
+            --model claude-sonnet-5
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
+          prompt: >-
+            /code-review --comment. Review only: do not edit files, create commits,
+            or push changes. Prioritize correctness, security, regressions,
+            reliability, and missing tests. Keep findings concrete and actionable;
+            include file and line references, and avoid low-value style comments.
+
+      - name: Explain self-change skip
+        if: steps.self-change.outputs.changed == 'true'
+        run: echo "Claude review skipped because this PR modifies the review workflow itself."
