@@ -1,7 +1,8 @@
 # Automated, read-only Claude review for trusted pull requests.
 #
 # Required repository secret (Settings -> Secrets and variables -> Actions):
-# - ANTHROPIC_API_KEY: a dedicated Anthropic API key for CI.
+# - CLAUDE_CODE_OAUTH_TOKEN: a Claude Code OAuth token generated locally with
+#   `claude setup-token`. Never generate it or perform browser login in CI.
 #
 # Fork PRs and PRs from untrusted authors are intentionally excluded. GitHub does
 # not expose repository secrets to forked pull_request workflows, and running an
@@ -64,7 +65,7 @@ jobs:
         if: steps.self-change.outputs.changed != 'true'
         uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           track_progress: true
           use_sticky_comment: true
