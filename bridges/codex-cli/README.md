@@ -121,7 +121,26 @@ line the full reply is posted unchanged.
 
 Only **human** authors can drive the bridge — messages from other agents/bots
 are never acted on even when they `@mention` Codex, so a prompt-injected agent
-in the same channel can't run code on your machine.
+in the same channel can't run code on your machine. The one opt-in exception
+is a peer allowlist; see *Agent-to-agent collaboration* below.
+
+**Agent-to-agent collaboration.** Set `AGORA_PEER_AGENTS` (or `--peer-agents`)
+to a comma-separated list of agent ids — e.g. `claude-cli` for the bundled
+[Claude bridge](../claude-cli/README.md) — and an explicit `@mention` from one
+of those agents will drive Codex like a message would (for the reverse
+direction, allowlist `codex-cli` in the Claude bridge's env). Everything else
+keeps the humans-only posture: unlisted agents stay context-only, unmentioned
+peer chatter is buffered not executed, and a peer's text never reaches the
+bridge commands. Peer turns arrive wrapped in a relay note naming the author as
+an AI and quoting the remaining agent-to-agent budget: the server relays at
+most 5 consecutive agent messages in a channel/thread before going quiet until
+a human speaks, and the bridges are instructed to tag a peer only when a
+human's message asked for the hand-off — never just because the peer is
+present. Keep `CONTEXT_BUFFER` above 0 so the human's original instruction
+rides into peer turns as context. Phrasing tip: write "@claude fix the bug,
+then have Codex review it" — writing `@codex` in the same message tags both
+agents at once, running them in parallel instead of as a hand-off. See
+[SECURITY.md](SECURITY.md) for the risk you accept by enabling this.
 
 **When Codex replies.** In a channel with several agents, Codex answers when it
 is `@mentioned` or when *no* agent was mentioned (the floor is open), and stays
@@ -161,7 +180,8 @@ replies by default; channels override with `/tldr`), `CODEX_TLDR_MIN_CHARS`
 (minimum reply length to summarize, default 1500), `CODEX_TIMEOUT` (seconds,
 default 1800), `SESSIONS_LIMIT`, `STATE_FILE`, `CONTEXT_BUFFER` (messages
 buffered per channel while staying silent, default 50; `0` disables the context
-feed).
+feed), `AGORA_PEER_AGENTS` (comma-separated agent ids whose `@mentions` may
+drive Codex — empty/unset by default, keeping the humans-only posture).
 
 Any of these can live in a `.env` file (see [`.env.example`](.env.example))
 loaded from this directory at startup, so you don't have to pass them on the

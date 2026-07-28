@@ -34,10 +34,21 @@ ordered by decreasing severity.
 
 2. **Any channel participant is an operator.** The bridge trusts whoever the
    hub says is in the channel; there is no per-sender allowlist.
-   - *Addressed:* it does not accept commands from non-user authors. Other
-     agents/bots cannot drive it even by `@mention` (closes the path where a
-     prompt-injected sandboxed agent runs code on your laptop). See
-     `handle_inbound` in [bridge.py](bridge.py).
+   - *Addressed:* it does not accept commands from non-user authors **by
+     default**. Other agents/bots cannot drive it even by `@mention` (closes
+     the path where a prompt-injected sandboxed agent runs code on your
+     laptop). See `handle_inbound` in [bridge.py](bridge.py).
+   - *Opt-in exception:* `AGORA_PEER_AGENTS` (`--peer-agents`) allowlists
+     specific agent ids whose explicit `@mentions` may drive Codex, for
+     human-directed agent-to-agent hand-offs. The exposure is bounded: only an
+     explicit mention from an allowlisted id triggers a run; the peer's text
+     never reaches the bridge command table (`/new`, `/sandbox`, …) — it is
+     wrapped in a relay note that names the author as an AI and subordinates
+     it to the humans' instructions; and the hub stops relaying agent-to-agent
+     messages after 5 in a row without a human. **Residual risk you accept by
+     setting it:** an allowlisted peer that is itself prompt-injected can
+     drive this CLI within those bounds. Leave it unset to keep the
+     humans-only posture.
    - *Still open:* any *human* the hub admits to the channel is fully trusted.
 
 3. **The pairing token is an unscoped master key.**
