@@ -266,3 +266,5 @@ bridge that drives local Claude Code sessions from a channel — a working
 reference implementation of the frames above.
 [`bridges/codex-cli`](../bridges/codex-cli/README.md) is its sibling for the
 Codex CLI (`codex exec` / `codex exec resume`).
+[`bridges/cursor-cli`](../bridges/cursor-cli/README.md) drives local Cursor CLI
+sessions with print-mode streaming, session resume, and per-channel models.
