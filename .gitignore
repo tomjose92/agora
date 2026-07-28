@@ -21,6 +21,7 @@ mobile/.expo/
 # Bridge runtime state (per-machine channel->session bindings) and logs
 bridges/claude-cli/state.json
 bridges/codex-cli/state.json
+bridges/cursor-cli/state.json
 bridges/*/bridge.log
 __pycache__/
 

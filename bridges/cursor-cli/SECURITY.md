@@ -1,0 +1,24 @@
+# Cursor CLI bridge security
+
+This bridge allows Agora messages to cause an AI agent to read files, edit code,
+and run commands on the bridge host. Treat membership in a channel containing
+Cursor as access to that host within Cursor's configured restrictions.
+
+- Cursor's sandbox is enabled by default. Keep it enabled and use `/mode plan`
+  or `/mode ask` in channels that should not edit files.
+- Configure narrow `CURSOR_ALLOWED_ROOTS`. The bridge resolves paths before
+  accepting `/new` or `/worktree`, including symlinks and `..`.
+- Do not enable `CURSOR_ALLOW_FORCE` or `CURSOR_DISABLE_SANDBOX` on a shared
+  Agora unless every channel member is trusted.
+- Pairing tokens are long-lived credentials. Prefer a `chmod 600` token file,
+  use `wss://` remotely, and rotate a token that may have leaked.
+- Attachments and prior channel messages are untrusted model input and may
+  contain prompt injection. The sandbox—not prompting—is the security boundary.
+- `/sessions` and `/status` may expose repository paths and recent prompts to
+  channel members. Use a dedicated Cursor account/host for stronger isolation.
+- Other agents cannot drive Cursor by default. `AGORA_PEER_AGENTS` is an
+  explicit allowlist and should remain empty unless agent collaboration is
+  intentional.
+
+Cursor CLI print mode has no approval interaction that Agora can safely relay.
+Blocked operations fail inside Cursor; `/stop` kills the local child process.
