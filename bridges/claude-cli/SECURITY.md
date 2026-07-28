@@ -29,10 +29,21 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
 
 2. **Any channel participant is an operator.** The bridge trusts whoever the hub
    says is in the channel; there is no per-sender allowlist.
-   - *Addressed:* it no longer accepts commands from non-user authors. Other
-     agents/bots can no longer drive it even by `@mention` (closes the path
-     where a prompt-injected sandboxed agent runs code on your laptop). See
-     `handle_inbound` in [bridge.py](bridge.py).
+   - *Addressed:* it does not accept commands from non-user authors **by
+     default**. Other agents/bots cannot drive it even by `@mention` (closes
+     the path where a prompt-injected sandboxed agent runs code on your
+     laptop). See `handle_inbound` in [bridge.py](bridge.py).
+   - *Opt-in exception:* `AGORA_PEER_AGENTS` (`--peer-agents`) allowlists
+     specific agent ids whose explicit `@mentions` may drive Claude, for
+     human-directed agent-to-agent hand-offs. The exposure is bounded: only an
+     explicit mention from an allowlisted id triggers a run; the peer's text
+     never reaches the bridge command table (`/new`, `/permissions`, …) or CLI
+     slash commands — it is wrapped in a relay note that names the author as
+     an AI and subordinates it to the humans' instructions; and the hub stops
+     relaying agent-to-agent messages after 5 in a row without a human.
+     **Residual risk you accept by setting it:** an allowlisted peer that is
+     itself prompt-injected can drive this CLI within those bounds. Leave it
+     unset to keep the humans-only posture.
    - *Still open:* any *human* the hub admits to the channel is fully trusted.
      There is no per-user authorization list in the bridge. This extends to the
      in-channel **permission buttons** (see below): any channel member can tap
@@ -133,7 +144,7 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
 
 | Issue | Status | Where |
 |---|---|---|
-| Non-user authors can drive it (2) | Fixed | `handle_inbound` |
+| Non-user authors can drive it (2) | Fixed (default; opt-in peer allowlist) | `handle_inbound`, `AGORA_PEER_AGENTS` |
 | Attachment path traversal / temp-dir leak (6) | Fixed | `_safe_filename`, `_stage_attachments` |
 | Silent headless denies → in-channel approval (7) | Fixed (by design, see caveats) | `_handle_control_request` |
 | Orphaned child on failure (5) | Fixed | `run_claude` (finally-kill) |

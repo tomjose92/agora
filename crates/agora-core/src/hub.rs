@@ -21,8 +21,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::store::{slugify, NewAttachment, Store};
 
 /// Max consecutive agent-authored messages fanned out to other agents in one
-/// channel/thread before the hub goes quiet until a human speaks again.
-pub const BOT_LOOP_LIMIT: i64 = 4;
+/// channel/thread before the hub goes quiet until a human speaks again: the
+/// first `BOT_LOOP_LIMIT` messages of a streak are relayed to @mentioned
+/// agents; the next one is stored and shown to humans but triggers no agent.
+/// Any human message resets the streak.
+pub const BOT_LOOP_LIMIT: i64 = 5;
 
 /// How much of a thread's root message is inlined as context when an agent
 /// first joins the thread.
@@ -631,7 +634,7 @@ impl Hub {
         self.record_mentions(&message);
         self.broadcast(channel_id, &json!({"type": "message", "message": message}));
         self.maybe_unfurl(&message);
-        self.fan_out(&message, false, None, false, voice);
+        self.fan_out(&message, false, None, false, voice, None);
         message
     }
 
@@ -740,7 +743,14 @@ impl Hub {
         self.maybe_unfurl(&message);
         self.maybe_notify(&message);
         if streak <= BOT_LOOP_LIMIT {
-            self.fan_out(&message, true, Some(agent_id), true, false);
+            self.fan_out(
+                &message,
+                true,
+                Some(agent_id),
+                true,
+                false,
+                Some((BOT_LOOP_LIMIT - streak).max(0)),
+            );
         } else if streak == BOT_LOOP_LIMIT + 1 {
             tracing::info!("bot-loop limit hit in {channel_id} (thread {thread_id:?})");
         }
@@ -940,6 +950,7 @@ impl Hub {
         exclude_agent: Option<&str>,
         mentioned_only: bool,
         voice: bool,
+        bot_turns_left: Option<i64>,
     ) {
         let channel_id = message["channel_id"].as_str().unwrap_or_default();
         let Some(channel) = self.store.channel(channel_id) else {
@@ -976,12 +987,21 @@ impl Hub {
             {
                 continue;
             }
-            let inbound = self
-                .build_inbound(message, &channel, &handle, mentioned, any_agent_mentioned, from_bot, voice);
+            let inbound = self.build_inbound(
+                message,
+                &channel,
+                &handle,
+                mentioned,
+                any_agent_mentioned,
+                from_bot,
+                voice,
+                bot_turns_left,
+            );
             let _ = handle.tx.send(inbound);
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_inbound(
         &self,
         message: &Value,
@@ -991,6 +1011,7 @@ impl Hub {
         any_mention: bool,
         from_bot: bool,
         voice: bool,
+        bot_turns_left: Option<i64>,
     ) -> Value {
         let mut text = message["text"].as_str().unwrap_or_default().to_string();
         // A sender's "reply in thread" ask (meta.client.reply_thread, set by
@@ -1047,7 +1068,7 @@ impl Hub {
             }
             atts.push(entry);
         }
-        json!({
+        let mut frame = json!({
             "type": "inbound",
             "agent_id": handle.agent_id,
             "message_id": message["id"],
@@ -1074,7 +1095,15 @@ impl Hub {
             // rendered in chat.
             "ts": message["ts"],
             "timezone": message["meta"]["client"]["tz"],
-        })
+        });
+        // Only on agent-authored frames: how many further agent messages will
+        // still be relayed before a human must speak. The recipient's own
+        // reply reaches a @mentioned agent iff this is >= 1; at 0 it reaches
+        // humans only.
+        if let Some(n) = bot_turns_left {
+            frame["bot_turns_left"] = json!(n);
+        }
+        frame
     }
 
     /// "Where you are" prompt block for the agent: group, channel, thread
@@ -1123,6 +1152,7 @@ impl Hub {
         let channel_id = channel["id"].as_str().unwrap_or_default();
         let group_id = channel["group_id"].as_str().unwrap_or_default();
         let (mut agents, mut people) = (Vec::new(), Vec::new());
+        let mut live_peer = false;
         {
             let st = self.state.lock().unwrap();
             for m in self.store.members(group_id) {
@@ -1146,6 +1176,7 @@ impl Hub {
                     if member_id == handle.agent_id {
                         agents.push(format!("{name} (you)"));
                     } else if live.is_some() {
+                        live_peer = true;
                         agents.push(format!("{name} (@{})", slugify(&name)));
                     } else {
                         agents.push(format!("{name} (offline)"));
@@ -1165,6 +1196,16 @@ impl Hub {
             "Anyone here can address a specific agent with its @mention; your replies post to this channel{}",
             if thread_id.is_some() { " thread." } else { "." }
         ));
+        if live_peer {
+            lines.push(format!(
+                "Other agents here are colleagues, not users. Only @mention another \
+                 agent when a human's instructions ask you to collaborate with, \
+                 delegate to, or get a review from it — never tag an agent merely \
+                 because it is listed here. Agent-to-agent exchanges stop being \
+                 relayed after {BOT_LOOP_LIMIT} consecutive agent messages without \
+                 a human message."
+            ));
+        }
         if voice {
             // Live voice: the transcript came from speech and the reply will
             // be read aloud by TTS — markdown would be spoken verbatim.
@@ -2017,16 +2058,64 @@ mod tests {
             h.post_agent_message("bot-a", "Bot A", &cid, "hey @bot-b", None);
         }
         // 1 message already posted + BOT_LOOP_LIMIT more = cap exceeded on last.
-        let mut got = 0;
-        while rx_b.try_recv().is_ok() {
-            got += 1;
+        // Each relayed frame carries the remaining agent-turn budget, counting
+        // down to 0 as the streak approaches the cap.
+        let mut turns = Vec::new();
+        while let Ok(f) = rx_b.try_recv() {
+            turns.push(f["bot_turns_left"].as_i64().unwrap());
         }
-        assert_eq!(got, (BOT_LOOP_LIMIT - 1) as usize);
-        // Human speaking resets the streak.
+        let expected: Vec<i64> = (0..=BOT_LOOP_LIMIT - 2).rev().collect();
+        assert_eq!(turns, expected);
+        // Human speaking resets the streak; human frames carry no budget field.
         h.post_user_message(&cid, "humans back", "tom", None, None, vec![]);
-        assert!(rx_b.try_recv().is_ok());
+        let f = rx_b.try_recv().unwrap();
+        assert!(f["bot_turns_left"].is_null());
         h.post_agent_message("bot-a", "Bot A", &cid, "hi again @bot-b", None);
-        assert!(rx_b.try_recv().is_ok());
+        let f = rx_b.try_recv().unwrap();
+        assert_eq!(f["bot_turns_left"].as_i64().unwrap(), BOT_LOOP_LIMIT - 1);
+    }
+
+    #[test]
+    fn bot_turns_left_rides_agent_frames_only() {
+        let h = hub();
+        let _rx_a = add_agent(&h, "bot-a", "Bot A", false);
+        let mut rx_b = add_agent(&h, "bot-b", "Bot B", false);
+        let cid = setup_channel(&h, &["bot-a", "bot-b"]);
+        h.post_user_message(&cid, "hello", "tom", None, None, vec![]);
+        assert!(rx_b.try_recv().unwrap()["bot_turns_left"].is_null());
+        // One agent message past the cap: only BOT_LOOP_LIMIT are relayed,
+        // budgets counting down to 0, but every message is stored for humans.
+        for _ in 0..=BOT_LOOP_LIMIT {
+            h.post_agent_message("bot-a", "Bot A", &cid, "ping @bot-b", None);
+        }
+        let mut turns = Vec::new();
+        while let Ok(f) = rx_b.try_recv() {
+            turns.push(f["bot_turns_left"].as_i64().unwrap());
+        }
+        assert_eq!(turns, (0..BOT_LOOP_LIMIT).rev().collect::<Vec<i64>>());
+        assert_eq!(
+            h.store.messages(&cid, None, None, 50).len() as i64,
+            BOT_LOOP_LIMIT + 2
+        );
+    }
+
+    #[test]
+    fn context_note_includes_collab_etiquette_with_peers() {
+        let h = hub();
+        let mut rx_a = add_agent(&h, "bot-a", "Bot A", false);
+        let cid = setup_channel(&h, &["bot-a", "bot-b"]);
+        // Peer is a member but offline: no etiquette note.
+        h.post_user_message(&cid, "hi", "tom", None, None, vec![]);
+        let note = rx_a.try_recv().unwrap()["context_note"].as_str().unwrap().to_string();
+        assert!(!note.contains("Other agents here are colleagues"));
+        // Peer comes online: etiquette (with the cap) appears.
+        let _rx_b = add_agent(&h, "bot-b", "Bot B", false);
+        h.post_user_message(&cid, "hi again", "tom", None, None, vec![]);
+        let note = rx_a.try_recv().unwrap()["context_note"].as_str().unwrap().to_string();
+        assert!(note.contains("Other agents here are colleagues"));
+        assert!(note.contains(&format!(
+            "{BOT_LOOP_LIMIT} consecutive agent messages"
+        )));
     }
 
     #[test]

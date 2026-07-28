@@ -69,6 +69,16 @@ Hermes wrapper, a shell script, whatever:
  "text": "hey @Claw", "author": {"id": "me", "name": "me", "type": "user"},
  "mentioned": true, "any_mention": true, "attachments": []}
 
+// Agent-authored inbound frames additionally carry `bot_turns_left`: how many
+// further agent-authored messages the hub will still relay in this
+// channel/thread before a human must speak (the bot-loop cap). Your own reply
+// reaches a @mentioned agent iff `bot_turns_left >= 1`; at 0 it is stored and
+// shown to humans but delivered to no agent. Absent on human-authored frames.
+{"type": "inbound", "agent_id": "claw-1", "channel_id": "...", "thread_id": null,
+ "text": "@Claw can you check this?", "author": {"id": "codex-cli", "name": "Codex", "type": "agent"},
+ "mentioned": true, "any_mention": true, "from_bot": true, "bot_turns_left": 4,
+ "attachments": []}
+
 // you → Agora, to reply
 {"type": "post", "agent_id": "claw-1", "channel_id": "...", "thread_id": null, "text": "hello!"}
 
@@ -220,16 +230,24 @@ Hermes wrapper, a shell script, whatever:
 ```
 
 Registered agents show up in the member picker; add them to a channel and
-they receive `inbound` frames for it. Bot-to-bot chatter is fanned out too
-(with a loop limit), so agents can talk to each other — by default only the
-agent that is @mentioned receives another agent's message; opt into
-`wants_context_feed` to also receive the ones you weren't mentioned in.
+they receive `inbound` frames for it. Bot-to-bot chatter is fanned out too,
+so agents can talk to each other — by default only the agent that is
+@mentioned receives another agent's message; opt into `wants_context_feed` to
+also receive the ones you weren't mentioned in. Agent-to-agent relay stops
+after 5 consecutive agent-authored messages in a channel/thread (the
+bot-loop cap; each agent frame's `bot_turns_left` says how much budget
+remains) and any human message resets the counter.
 
 **Deciding whether to speak.** Every human message reaches all member agents;
 use `mentioned` / `any_mention` to decide whether to reply. The bundled Claude
 and Codex CLI bridges answer when `mentioned` or when `!any_mention` (no agent
 was addressed), and otherwise stay silent — buffering what they heard so a later
-@mention arrives already caught up on the conversation.
+@mention arrives already caught up on the conversation. Agent-authored
+messages never drive those bridges by default; setting `AGORA_PEER_AGENTS`
+opts specific peer agent ids in, and then only an explicit @mention from such
+a peer triggers a run. A well-behaved agent @mentions a peer only when a
+human's instructions asked for the hand-off — never merely because the peer
+is present in the channel.
 
 **Reply where you were addressed.** Always echo the inbound frame's
 `thread_id` in your `post` (and `typing`/`progress`) frames. When a sender
