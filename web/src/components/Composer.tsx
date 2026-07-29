@@ -13,13 +13,34 @@ import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
 
 const MAX_FILES = 5;
+const DROP_READ_TIMEOUT_MS = 30_000;
+const DROP_MATERIALIZE_MAX_BYTES = 32 * 1024 * 1024;
 
 /* WKWebView may expose an unsaved macOS screenshot as a file promise whose
    backing data only lives for the drop operation. Read it immediately and
-   keep an independent in-memory File for the later multipart upload. */
+   keep an independent in-memory File for the later multipart upload. Large
+   files are already durable disk-backed handles; copying those into the
+   webview heap would add substantial memory pressure for no benefit. */
 async function materializeDroppedFile(source: File): Promise<File> {
-  const bytes = await source.arrayBuffer();
-  if (!bytes.byteLength) throw new Error("Dropped file was empty");
+  if (source.size > DROP_MATERIALIZE_MAX_BYTES) return source;
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("Dropped file read timed out")),
+      DROP_READ_TIMEOUT_MS,
+    );
+  });
+  let bytes: ArrayBuffer;
+  try {
+    // Start the read before yielding so macOS's promised-file provider is live.
+    bytes = await Promise.race([source.arrayBuffer(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+  if (!bytes.byteLength && source.size > 0) {
+    throw new Error("Dropped file lost its data");
+  }
   return new File([bytes], source.name || "file", {
     type: source.type,
     lastModified: source.lastModified,
@@ -112,6 +133,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const addrClear = useAddressing(s => s.clear);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const filesRef = useRef<File[]>([]);
   const dropReservationsRef = useRef(0);
 
   const inThread = threadId != null;
@@ -132,21 +154,31 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
     return () => document.removeEventListener("click", onClick);
   }, [addrOpen]);
 
-  const addFiles = (list: FileList | File[]) => {
-    const next = [...files];
-    for (const f of Array.from(list)) {
-      if (next.length + dropReservationsRef.current >= MAX_FILES) {
-        toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
-        break;
-      }
-      next.push(f);
-    }
+  const replaceFiles = (update: (current: File[]) => File[]) => {
+    const next = update(filesRef.current);
+    filesRef.current = next;
     setFiles(next);
+  };
+
+  const addFiles = (list: FileList | File[]) => {
+    const incoming = Array.from(list);
+    const available = Math.max(
+      0,
+      MAX_FILES - filesRef.current.length - dropReservationsRef.current,
+    );
+    const accepted = incoming.slice(0, available);
+    if (accepted.length < incoming.length) {
+      toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
+    }
+    if (accepted.length) replaceFiles(current => [...current, ...accepted]);
   };
 
   const addDroppedFiles = async (list: FileList) => {
     const dropped = Array.from(list);
-    const available = Math.max(0, MAX_FILES - files.length - dropReservationsRef.current);
+    const available = Math.max(
+      0,
+      MAX_FILES - filesRef.current.length - dropReservationsRef.current,
+    );
     const accepted = dropped.slice(0, available);
     if (accepted.length < dropped.length) {
       toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
@@ -160,7 +192,8 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       const settled = await Promise.allSettled(accepted.map(materializeDroppedFile));
       const ready = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
       if (ready.length) {
-        setFiles(current => [...current, ...ready].slice(0, MAX_FILES));
+        // These slots were reserved synchronously before any file read yielded.
+        replaceFiles(current => [...current, ...ready]);
       }
       const failed = settled.length - ready.length;
       if (failed) {
@@ -230,7 +263,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       { onError: e => toast("Send failed: " + (e as Error).message, { variant: "warn" }) },
     );
     setText(draftKey, "");
-    setFiles([]);
+    replaceFiles(() => []);
     if (replyInThread && onToggleReplyInThread) onToggleReplyInThread(); // an ask covers one message
     if (taRef.current) { autoGrow(taRef.current); taRef.current.focus(); }
   };
@@ -273,7 +306,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
             onClick={() => addrClear(draftKey)}>Clear</button>
         </div>
       )}
-      {files.length > 0 && (
+      {(files.length > 0 || preparingFiles > 0) && (
         <div className="ago-pending">
           {files.map((f, i) => (
             <span key={i} className="ago-pending-chip" title={f.name}>
@@ -281,21 +314,19 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
               <span className="fname">{f.name}</span>
               <span className="fsize">{humanSize(f.size)}</span>
               <button className="ago-x" title="Remove"
-                onClick={() => setFiles(files.filter((_, j) => j !== i))}>
+                onClick={() => replaceFiles(current => current.filter((_, j) => j !== i))}>
                 <Icon name="x" />
               </button>
             </span>
           ))}
-        </div>
-      )}
-      {preparingFiles > 0 && (
-        <div className="ago-pending">
-          <span className="ago-pending-chip">
-            <Icon name="file-text" />
-            <span className="fname">
-              Preparing {preparingFiles === 1 ? "dropped file…" : `${preparingFiles} dropped files…`}
+          {preparingFiles > 0 && (
+            <span className="ago-pending-chip">
+              <Icon name="file-text" />
+              <span className="fname">
+                Preparing {preparingFiles === 1 ? "dropped file…" : `${preparingFiles} dropped files…`}
+              </span>
             </span>
-          </span>
+          )}
         </div>
       )}
       <div className="chat-input"
