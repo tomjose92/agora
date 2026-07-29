@@ -26,6 +26,10 @@ pub struct Connection {
 pub struct PairingToken {
     pub token: String,
     pub name: String,
+    /// UI hint for the CLI/integration this credential was created for.
+    /// Optional so existing config.json files continue to load unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     pub created_at: f64,
 }
 
@@ -448,5 +452,16 @@ mod tests {
         let text = std::fs::read_to_string(dir.path().join("config.json")).unwrap();
         assert!(text.contains("\"admin_key\": \"cafe1234\""));
         assert!(!text.contains("owner_token"));
+    }
+
+    #[test]
+    fn legacy_pairing_tokens_load_without_a_kind() {
+        let token: PairingToken =
+            serde_json::from_str(r#"{"token":"tok","name":"Old agent","created_at":123}"#).unwrap();
+        assert!(token.kind.is_none());
+        assert_eq!(
+            serde_json::to_value(token).unwrap(),
+            serde_json::json!({"token":"tok","name":"Old agent","created_at":123.0})
+        );
     }
 }

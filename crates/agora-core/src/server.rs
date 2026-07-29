@@ -2577,12 +2577,18 @@ async fn create_pairing(
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     require_instance_admin(&user)?;
-    let name = payload["name"].as_str().unwrap_or("bridge").trim().to_string();
+    let name = payload["name"].as_str().unwrap_or("agent").trim().to_string();
+    let kind = payload["kind"]
+        .as_str()
+        .map(str::trim)
+        .filter(|kind| matches!(*kind, "claw" | "hermes" | "codex" | "cursor" | "claude"))
+        .map(str::to_string);
     let token = new_token();
     state.config.update(|c| {
         c.pairing_tokens.push(PairingToken {
             token: token.clone(),
             name,
+            kind,
             created_at: now(),
         })
     });
@@ -3463,11 +3469,13 @@ mod tests {
             c.pairing_tokens.push(PairingToken {
                 token: "tok-a".into(),
                 name: "duplicate".into(),
+                kind: Some("codex".into()),
                 created_at: 123.0,
             });
             c.pairing_tokens.push(PairingToken {
                 token: "tok-b".into(),
                 name: "duplicate".into(),
+                kind: None,
                 created_at: 456.0,
             });
         });
@@ -3483,6 +3491,7 @@ mod tests {
             json!({
                 "token": "tok-a",
                 "name": "duplicate",
+                "kind": "codex",
                 "created_at": 123.0,
                 "connected": false,
                 "agents": [],
@@ -3548,6 +3557,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pairing_creation_persists_a_known_agent_kind_only() {
+        let (state, _dir) = test_state();
+        state
+            .hub
+            .store
+            .create_user("boss", "Boss", None, "admin")
+            .unwrap();
+        let headers = session_headers(&state, "boss");
+
+        let _ = create_pairing(
+            State(state.clone()),
+            Query(HashMap::new()),
+            headers.clone(),
+            Json(json!({"name": "Desk Codex", "kind": "codex"})),
+        )
+        .await
+        .unwrap();
+        let _ = create_pairing(
+            State(state.clone()),
+            Query(HashMap::new()),
+            headers,
+            Json(json!({"name": "Custom", "kind": "untrusted-value"})),
+        )
+        .await
+        .unwrap();
+
+        let snapshot = state.config.snapshot();
+        assert_eq!(snapshot.pairing_tokens[0].kind.as_deref(), Some("codex"));
+        assert!(snapshot.pairing_tokens[1].kind.is_none());
+    }
+
+    #[tokio::test]
     async fn revoking_pairing_token_closes_the_real_agent_socket() {
         let (state, _dir) = test_state();
         state
@@ -3559,6 +3600,7 @@ mod tests {
             c.pairing_tokens.push(PairingToken {
                 token: "socket-token".into(),
                 name: "socket-test".into(),
+                kind: None,
                 created_at: 123.0,
             });
         });

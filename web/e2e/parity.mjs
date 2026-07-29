@@ -334,9 +334,9 @@ async function main() {
     // The modal is tabbed now (Connections | Add agent); pairing tokens are
     // issued from a dial-in agent-type card under "Add agent".
     await page.locator('#conn-panel [role="tab"]', { hasText: "Add agent" }).click();
-    await page.locator("#conn-panel .conn-card", { hasText: "OpenClaw" }).click();
+    await page.locator("#conn-panel .conn-card-select", { hasText: "OpenClaw" }).click();
     await page.fill("#pair-name", "parity-tok");
-    await page.locator("#conn-panel button", { hasText: "Issue token" }).click();
+    await page.locator("#conn-panel button", { hasText: "Create access" }).click();
     await page.locator("#conn-panel .conn-issued").waitFor({ timeout: 8000 });
     await page.locator("#conn-panel button", { hasText: "Done" }).click();
     // Back on the list tab the freshly issued token is listed and revocable.

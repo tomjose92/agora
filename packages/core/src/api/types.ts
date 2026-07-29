@@ -433,12 +433,15 @@ export interface Connection {
 export interface PairingToken {
   token: string;
   name: string;
+  kind?: PairingKind;
   created_at: number;
   /* Live dial-in status, merged from the hub at request time: a socket for
      this token is up, and the agents it registered (empty until its hello). */
   connected?: boolean;
   agents?: { id: string; name: string }[];
 }
+
+export type PairingKind = "claw" | "hermes" | "codex" | "cursor" | "claude";
 
 export interface InstanceInfo {
   id: string;

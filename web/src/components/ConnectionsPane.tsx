@@ -1,41 +1,73 @@
-/* Connections overlay (#conn-panel): two tabs — "Connections" lists the instance
-   name, linked Pantheo instances (4s status poll while open) and dial-in pairing
-   tokens (live status polled on the same cadence);
-   "Add agent" is a guided flow (pick Pantheo / OpenClaw / Hermes, then link or
-   issue a token). Admin only. React-query's refetch keeps typed input intact
-   while the poll refreshes. */
+/* Admin-only connection manager. "Add agent" presents branded, guided setup
+   for local coding CLIs alongside hosted agent integrations and Pantheo. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  type PairingKind,
+  type PairingToken,
   useConnectionMutations, useConnectionsInfo, usePairingMutations, usePairingTokens,
   useRenameInstance,
 } from "@agora/core";
+import claudeLogo from "../assets/agents/claude.png";
+import codexLogo from "../assets/agents/codex.png";
+import cursorLogo from "../assets/agents/cursor.png";
 import { Icon } from "../lib/icons";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
 
 type Tab = "list" | "add";
-type AddKind = "pantheo" | "claw" | "hermes";
+type AddKind = "pantheo" | PairingKind;
+type AgentCategory = "coding" | "other";
 
-const ADD_KINDS: { kind: AddKind; icon: string; title: string; desc: string }[] = [
+interface AddDefinition {
+  kind: AddKind;
+  category: AgentCategory;
+  icon?: string;
+  logo?: string;
+  title: string;
+  shortTitle: string;
+  desc: string;
+  defaultLabel: string;
+  local?: boolean;
+  directory?: string;
+}
+
+const ADD_DEFINITIONS: AddDefinition[] = [
   {
-    kind: "pantheo", icon: "link", title: "Pantheo instance",
-    desc: "Agora dials out to a Pantheo server; every Agora-enabled agent there becomes available.",
+    kind: "codex", category: "coding", logo: codexLogo, title: "Codex CLI", shortTitle: "Codex",
+    desc: "Continue Codex sessions and work on repositories from Agora.",
+    defaultLabel: "Codex", local: true, directory: "codex-cli",
   },
   {
-    kind: "claw", icon: "bot", title: "OpenClaw",
-    desc: "Issue a pairing token; Claw dials in over the agent WebSocket.",
+    kind: "cursor", category: "coding", logo: cursorLogo, title: "Cursor CLI", shortTitle: "Cursor",
+    desc: "Run Cursor CLI against projects on your computer.",
+    defaultLabel: "Cursor", local: true, directory: "cursor-cli",
   },
   {
-    kind: "hermes", icon: "sparkles", title: "Hermes",
-    desc: "Issue a pairing token; Hermes dials in over the agent WebSocket.",
+    kind: "claude", category: "coding", logo: claudeLogo, title: "Claude Code", shortTitle: "Claude",
+    desc: "Continue Claude Code sessions from any Agora channel.",
+    defaultLabel: "Claude", local: true, directory: "claude-cli",
+  },
+  {
+    kind: "hermes", category: "other", icon: "sparkles", title: "Hermes", shortTitle: "Hermes",
+    desc: "Give Hermes secure access to join rooms in this Agora.",
+    defaultLabel: "Hermes",
+  },
+  {
+    kind: "claw", category: "other", icon: "bot", title: "OpenClaw", shortTitle: "OpenClaw",
+    desc: "Create secure access for an OpenClaw agent.",
+    defaultLabel: "OpenClaw",
+  },
+  {
+    kind: "pantheo", category: "other", icon: "link", title: "Pantheo instance", shortTitle: "Pantheo",
+    desc: "Link another server and make all of its Agora-enabled agents available.",
+    defaultLabel: "",
   },
 ];
 
-const KIND_META: Record<Exclude<AddKind, "pantheo">, { title: string; defaultLabel: string }> = {
-  claw: { title: "OpenClaw", defaultLabel: "openclaw" },
-  hermes: { title: "Hermes", defaultLabel: "hermes" },
-};
+const DEFINITION_BY_KIND = Object.fromEntries(
+  ADD_DEFINITIONS.map(definition => [definition.kind, definition]),
+) as Record<AddKind, AddDefinition>;
 
 function copyText(text: string, what = "Copied") {
   void navigator.clipboard.writeText(text).then(
@@ -44,18 +76,46 @@ function copyText(text: string, what = "Copied") {
   );
 }
 
-/* ws(s):// dial-in address for this Agora, for the token success panel. */
-function agentWsUrl(token: string): string {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${location.host}/agent/ws?token=${token}`;
+function inferredKind(token: PairingToken): PairingKind | null {
+  if (token.kind && token.kind in DEFINITION_BY_KIND) return token.kind;
+  const value = token.name.toLowerCase();
+  if (value.includes("codex")) return "codex";
+  if (value.includes("cursor")) return "cursor";
+  if (value.includes("claude")) return "claude";
+  if (value.includes("claw")) return "claw";
+  if (value.includes("hermes")) return "hermes";
+  return null;
 }
 
-/* Cosmetic type badge for a pairing token, inferred from its label. */
-function tokenBadge(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes("claw")) return "Claw";
-  if (n.includes("hermes")) return "Hermes";
-  return "Bridge";
+function displayDefinition(token: PairingToken): AddDefinition | null {
+  const kind = inferredKind(token);
+  return kind ? DEFINITION_BY_KIND[kind] : null;
+}
+
+function guidePath(definition: AddDefinition): string | null {
+  return definition.local ? `/docs/coding-agents/${definition.kind}.html` : null;
+}
+
+function AgentMark({ definition, small = false }: { definition: AddDefinition | null; small?: boolean }) {
+  if (definition?.logo) {
+    return <img className={`conn-agent-logo${small ? " small" : ""}`} src={definition.logo} alt="" />;
+  }
+  return (
+    <span className={`conn-agent-glyph${small ? " small" : ""}`}>
+      <Icon name={definition?.icon || "bot"} />
+    </span>
+  );
+}
+
+function CommandBlock({ text, label }: { text: string; label: string }) {
+  return (
+    <div className="conn-command">
+      <code>{text}</code>
+      <button className="btn sm" onClick={() => copyText(text, `${label} copied`)}>
+        <Icon name="file-text" /> Copy
+      </button>
+    </div>
+  );
 }
 
 export function ConnectionsPane() {
@@ -85,16 +145,12 @@ export function ConnectionsPane() {
   if (!open) return null;
   const conns = info?.connections || [];
   const instance = info?.instance || null;
-  const err = (msg: string) => (e: unknown) =>
-    toast(`${msg}: ${(e as Error).message || e}`, { variant: "warn" });
+  const err = (message: string) => (error: unknown) =>
+    toast(`${message}: ${(error as Error).message || error}`, { variant: "warn" });
 
   const goAdd = (kind?: AddKind) => {
     setAddKind(kind ?? null); setIssued(null); setTab("add");
-    if (kind && kind !== "pantheo") setPairName(KIND_META[kind].defaultLabel);
-  };
-  const pickKind = (kind: AddKind) => {
-    setAddKind(kind); setIssued(null);
-    setPairName(kind === "pantheo" ? "" : KIND_META[kind].defaultLabel);
+    setPairName(kind && kind !== "pantheo" ? DEFINITION_BY_KIND[kind].defaultLabel : "");
   };
 
   const listTab = (
@@ -105,11 +161,11 @@ export function ConnectionsPane() {
           <div className="conn-add">
             <input id="inst-name" value={instName ?? (instance.name || "")}
               placeholder="name (e.g. Home Agora)"
-              onChange={e => setInstName(e.target.value)} />
+              onChange={event => setInstName(event.target.value)} />
             <button className="btn sm primary" onClick={() => {
-              const v = (instName ?? instance.name ?? "").trim();
-              if (!v) { toast("Name required", { variant: "warn" }); return; }
-              renameInstance(v);
+              const value = (instName ?? instance.name ?? "").trim();
+              if (!value) { toast("Name required", { variant: "warn" }); return; }
+              renameInstance(value);
               setInstName(null);
             }}>Rename</button>
           </div>
@@ -117,28 +173,30 @@ export function ConnectionsPane() {
             (instance id <code>{(instance.id || "").slice(0, 8)}</code>), so several Agoras stay distinct.</p>
         </>
       )}
-      <h4>Pantheo instances <span className="dim">— the app dials out to them</span></h4>
-      {conns.length ? conns.map(c => {
-        const st = c.status;
-        const agents = (st?.agents || []).map(a => a.name || a.id).join(", ");
-        const detail = st?.connected
+      <h4>Pantheo instances <span className="dim">— linked agent servers</span></h4>
+      {conns.length ? conns.map(connection => {
+        const status = connection.status;
+        const agents = (status?.agents || []).map(agent => agent.name || agent.id).join(", ");
+        const detail = status?.connected
           ? (agents ? `agents: ${agents}` : "linked, no agents offered")
-          : (st?.last_error ? String(st.last_error).slice(0, 120) : "connecting…");
+          : (status?.last_error ? String(status.last_error).slice(0, 120) : "connecting…");
         return (
-          <div key={c.name} className="conn-row">
-            <span className={`conn-dot ${st?.connected ? "on" : "err"}`}></span>
+          <div key={connection.name} className="conn-row">
+            <span className={`conn-dot ${status?.connected ? "on" : "err"}`} />
             <div className="conn-row-main">
-              <div className="conn-name">{c.name} <span className="conn-badge">Pantheo</span></div>
-              <div className="conn-url mono">{c.url}</div>
+              <div className="conn-name">{connection.name} <span className="conn-badge">Pantheo</span></div>
+              <div className="conn-url mono">{connection.url}</div>
               <div className="conn-url">{detail}</div>
             </div>
             <button className="btn sm"
-              onClick={() => connMut.update.mutate({ name: c.name, enabled: !c.enabled },
-                { onError: err("Couldn't update connection") })}>
-              {c.enabled ? "Disable" : "Enable"}
+              onClick={() => connMut.update.mutate(
+                { name: connection.name, enabled: !connection.enabled },
+                { onError: err("Couldn't update connection") },
+              )}>
+              {connection.enabled ? "Disable" : "Enable"}
             </button>
             <button className="btn sm danger"
-              onClick={() => connMut.remove.mutate(c.name, { onError: err("Remove failed") })}>
+              onClick={() => connMut.remove.mutate(connection.name, { onError: err("Remove failed") })}>
               Remove
             </button>
           </div>
@@ -148,146 +206,191 @@ export function ConnectionsPane() {
           None yet. <button className="btn sm" onClick={() => goAdd("pantheo")}>Link a Pantheo</button>
         </div>
       )}
-      <h4>Dial-in agents <span className="dim">— pairing tokens for OpenClaw, Hermes, bridges</span></h4>
-      {tokens.length ? tokens.map(t => {
-        const liveNames = (t.agents || []).map(a => a.name || a.id).join(", ");
-        const detail = t.connected
-          ? (liveNames ? `live: ${liveNames}` : "connected, no agents registered")
-          : "offline";
+      <h4>Connected agents <span className="dim">— secure access for CLIs and integrations</span></h4>
+      {tokens.length ? tokens.map(pairing => {
+        const definition = displayDefinition(pairing);
+        const liveNames = (pairing.agents || []).map(agent => agent.name || agent.id).join(", ");
+        const detail = pairing.connected
+          ? (liveNames ? `Live: ${liveNames}` : "Connected, registering…")
+          : "Offline";
         return (
-          <div key={t.token} className="conn-row">
-            <span className={`conn-dot ${t.connected ? "on" : "off"}`}></span>
+          <div key={pairing.token} className="conn-row">
+            <AgentMark definition={definition} small />
+            <span className={`conn-dot ${pairing.connected ? "on" : "off"}`} />
             <div className="conn-row-main">
-              <div className="conn-name">{t.name} <span className="conn-badge">{tokenBadge(t.name)}</span></div>
-              <div className="conn-url mono">{t.token.slice(0, 10)}…{t.token.slice(-4)}</div>
+              <div className="conn-name">
+                {pairing.name}
+                <span className="conn-badge">{definition?.shortTitle || "Agent CLI"}</span>
+              </div>
+              <div className="conn-url mono">{pairing.token.slice(0, 10)}…{pairing.token.slice(-4)}</div>
               <div className="conn-url">{detail}</div>
             </div>
-            <button className="btn sm" onClick={() => copyText(t.token, "Token copied")}>Copy</button>
+            <button className="btn sm" onClick={() => copyText(pairing.token, "Token copied")}>Copy</button>
             <button className="btn sm danger"
-              onClick={() => pairMut.revoke.mutate(t.token, { onError: err("Revoke failed") })}>
+              onClick={() => pairMut.revoke.mutate(pairing.token, { onError: err("Revoke failed") })}>
               Revoke
             </button>
           </div>
         );
       }) : (
         <div className="dim conn-empty">
-          No pairing tokens issued. <button className="btn sm" onClick={() => goAdd()}>Add an agent</button>
+          No agent access created. <button className="btn sm" onClick={() => goAdd()}>Add an agent</button>
         </div>
       )}
     </>
   );
 
   const addPicker = (
-    <>
-      <h4>What are you connecting? <span className="dim">— pick one to get started</span></h4>
-      <div className="conn-cards">
-        {ADD_KINDS.map(k => (
-          <button key={k.kind} className="conn-card" onClick={() => pickKind(k.kind)}>
-            <Icon name={k.icon} cls="conn-card-ico" />
-            <div className="conn-card-title">{k.title}</div>
-            <div className="conn-card-desc">{k.desc}</div>
-          </button>
-        ))}
+    <div className="conn-catalog">
+      <div className="conn-intro">
+        <span className="conn-kicker">Bring your agents into the conversation</span>
+        <h3>Choose an agent to connect</h3>
+        <p>Keep coding sessions moving from any Agora channel, or link another agent service.</p>
       </div>
-    </>
+      {(["coding", "other"] as const).map(category => (
+        <section key={category} className="conn-catalog-section">
+          <h4>{category === "coding" ? "Coding agents" : "Other connections"}</h4>
+          <div className="conn-cards">
+            {ADD_DEFINITIONS.filter(definition => definition.category === category).map(definition => (
+              <article key={definition.kind} className="conn-card">
+                <button className="conn-card-select" onClick={() => goAdd(definition.kind)}>
+                  <div className="conn-card-top">
+                    <AgentMark definition={definition} />
+                    {definition.local && <span className="conn-local-badge">Runs on your computer</span>}
+                  </div>
+                  <div className="conn-card-title">
+                    {definition.title}<Icon name="chevron-right" />
+                  </div>
+                  <div className="conn-card-desc">{definition.desc}</div>
+                </button>
+                {guidePath(definition) && (
+                  <a className="conn-guide-link" href={guidePath(definition)!} target="_blank"
+                    rel="noopener noreferrer">
+                    Setup guide <Icon name="external-link" />
+                  </a>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
   );
 
   const addPantheo = (
     <>
-      <button className="btn sm conn-back" onClick={() => setAddKind(null)}>
-        <Icon name="chevron-left" /> All agent types
-      </button>
+      <BackButton onClick={() => setAddKind(null)} />
       <h4>Link a Pantheo instance</h4>
       <div className="conn-form">
         <label>Name
-          <input id="conn-name" placeholder="e.g. home"
-            value={name} onChange={e => setName(e.target.value)} />
+          <input id="conn-name" placeholder="e.g. home" value={name}
+            onChange={event => setName(event.target.value)} />
         </label>
         <label>Server address
-          <input id="conn-url" placeholder="wss://my-pantheo:8765/agora/connect"
-            value={url} onChange={e => setUrl(e.target.value)} />
+          <input id="conn-url" placeholder="wss://my-pantheo:8765/agora/connect" value={url}
+            onChange={event => setUrl(event.target.value)} />
         </label>
         <label>API token
-          <input id="conn-token" placeholder="PANTHEO_API_TOKEN" type="password"
-            value={token} onChange={e => setToken(e.target.value)} />
+          <input id="conn-token" placeholder="PANTHEO_API_TOKEN" type="password" value={token}
+            onChange={event => setToken(event.target.value)} />
         </label>
         <button className="btn sm primary" onClick={() => {
-          if (!name.trim() || !url.trim()) { toast("Name and address required", { variant: "warn" }); return; }
+          if (!name.trim() || !url.trim()) {
+            toast("Name and address required", { variant: "warn" }); return;
+          }
           connMut.add.mutate({ name: name.trim(), url: url.trim(), token: token.trim() }, {
             onSuccess: () => {
-              setName(""); setUrl(""); setToken("");
-              setTab("list"); setAddKind(null);
+              setName(""); setUrl(""); setToken(""); setTab("list"); setAddKind(null);
               toast("Linked — connecting…", { variant: "ok" });
             },
             onError: err("Link failed"),
           });
         }}>Link</button>
       </div>
-      <p className="conn-hint">Use <code>ws://localhost:8765/agora/connect</code> for a Pantheo running
-        on this machine, or the server's public <code>wss://</code> address for a remote one.
-        Every agent with Agora enabled on that instance becomes available here.</p>
+      <p className="conn-hint">Use <code>ws://localhost:8765/agora/connect</code> for Pantheo on
+        this machine, or its public <code>wss://</code> address for a remote server.</p>
     </>
   );
 
-  const addDialIn = (kind: Exclude<AddKind, "pantheo">) => {
-    const meta = KIND_META[kind];
+  const addAgent = (kind: PairingKind) => {
+    const definition = DEFINITION_BY_KIND[kind];
+    if (issued && definition.local) {
+      return (
+        <CliSetup
+          definition={definition}
+          issued={issued}
+          connected={tokens.some(item => item.token === issued.token && item.connected)}
+          liveAgent={tokens.find(item => item.token === issued.token)?.agents?.[0]?.name}
+          onDone={() => { setIssued(null); setAddKind(null); setTab("list"); }}
+        />
+      );
+    }
     if (issued) {
       return (
-        <>
-          <h4>{meta.title} token issued</h4>
-          <div className="conn-issued">
-            <div className="conn-issued-field">
-              <span className="conn-issued-label">Pairing token</span>
-              <code className="mono">{issued.token}</code>
-              <button className="btn sm" onClick={() => copyText(issued.token, "Token copied")}>Copy</button>
-            </div>
-            <div className="conn-issued-field">
-              <span className="conn-issued-label">Connect URL</span>
-              <code className="mono">{agentWsUrl(issued.token)}</code>
-              <button className="btn sm"
-                onClick={() => copyText(agentWsUrl(issued.token), "URL copied")}>Copy</button>
-            </div>
-            <p className="conn-hint">Point {meta.title} at this URL — it dials in and speaks the Agora
-              agent protocol (see <code>docs/protocol.md</code> in the repo).</p>
-            <button className="btn sm primary" onClick={() => {
-              setIssued(null); setAddKind(null); setTab("list");
-            }}>Done</button>
-          </div>
-        </>
+        <div className="conn-issued">
+          <div className="conn-success-mark"><Icon name="check" /></div>
+          <h3 className="conn-setup-title">{definition.title} access created</h3>
+          <p className="conn-setup-copy">Use this credential in {definition.title}'s Agora settings.</p>
+          <CommandBlock text={issued.token} label="Token" />
+          <button className="btn primary conn-done"
+            onClick={() => { setIssued(null); setAddKind(null); setTab("list"); }}>Done</button>
+        </div>
       );
     }
     return (
       <>
-        <button className="btn sm conn-back" onClick={() => setAddKind(null)}>
-          <Icon name="chevron-left" /> All agent types
-        </button>
-        <h4>Add {meta.title}</h4>
-        <div className="conn-form">
-          <label>Label
-            <input id="pair-name" placeholder={meta.defaultLabel}
-              value={pairName} onChange={e => setPairName(e.target.value)} />
-          </label>
-          <button className="btn sm primary" onClick={() => {
-            const label = pairName.trim() || meta.defaultLabel;
-            pairMut.create.mutate(label, {
-              onSuccess: r => { setIssued({ token: r.token, name: label }); setPairName(""); },
-              onError: err("Couldn't create token"),
-            });
-          }}>Issue token</button>
+        <BackButton onClick={() => setAddKind(null)} />
+        <div className="conn-setup-head">
+          <AgentMark definition={definition} />
+          <div>
+            <span className="conn-step-label">Step 1 of {definition.local ? "3" : "1"}</span>
+            <h3 className="conn-setup-title">Create access for {definition.title}</h3>
+            {guidePath(definition) && (
+              <a className="conn-setup-guide" href={guidePath(definition)!} target="_blank"
+                rel="noopener noreferrer">Open full setup guide <Icon name="external-link" /></a>
+            )}
+          </div>
         </div>
-        <p className="conn-hint">Issuing a token doesn't start anything on this side — {meta.title} uses
-          it to dial in whenever it's ready.</p>
+        {definition.local && (
+          <div className="conn-stepper" aria-label="Setup progress">
+            <span className="active" /><span /><span />
+          </div>
+        )}
+        <p className="conn-setup-copy">Choose a friendly name so you can recognize this agent later.</p>
+        <div className="conn-form conn-token-form">
+          <label>Agent name
+            <input id="pair-name" placeholder={definition.defaultLabel} autoFocus value={pairName}
+              onChange={event => setPairName(event.target.value)} />
+          </label>
+          <button className="btn primary" disabled={pairMut.create.isPending} onClick={() => {
+            const label = pairName.trim() || definition.defaultLabel;
+            pairMut.create.mutate({ name: label, kind }, {
+              onSuccess: result => {
+                setIssued({ token: result.token, name: label });
+                setPairName("");
+              },
+              onError: err("Couldn't create access"),
+            });
+          }}>{pairMut.create.isPending ? "Creating…" : definition.local ? "Continue" : "Create access"}</button>
+        </div>
+        {definition.local && (
+          <p className="conn-security-note">
+            <Icon name="lock" />
+            This CLI runs on your computer and can access only what its local configuration allows.
+          </p>
+        )}
       </>
     );
   };
 
   return (
     <div className="conn-overlay" id="conn-overlay"
-      onClick={e => { if (e.target === e.currentTarget) ui.openPanel(null); }}>
-      <div className="conn-panel" id="conn-panel">
+      onClick={event => { if (event.target === event.currentTarget) ui.openPanel(null); }}>
+      <div className="conn-panel" id="conn-panel" role="dialog" aria-modal="true" aria-label="Connections">
         <div className="conn-head">
           <b>Connections</b>
-          <button className="btn sm" onClick={() => ui.openPanel(null)}><Icon name="x" /></button>
+          <button className="btn sm" aria-label="Close connections"
+            onClick={() => ui.openPanel(null)}><Icon name="x" /></button>
         </div>
         <div className="conn-tabs" role="tablist">
           <button role="tab" aria-selected={tab === "list"}
@@ -301,18 +404,114 @@ export function ConnectionsPane() {
           {tab === "list" ? listTab
             : addKind === null ? addPicker
             : addKind === "pantheo" ? addPantheo
-            : addDialIn(addKind)}
+            : addAgent(addKind)}
         </div>
       </div>
     </div>
   );
 }
 
-/* PUT /api/instance, then refetch the connections payload it rides on. */
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button className="btn sm conn-back" onClick={onClick}>
+      <Icon name="chevron-left" /> All agent types
+    </button>
+  );
+}
+
+function CliSetup({
+  definition, issued, connected, liveAgent, onDone,
+}: {
+  definition: AddDefinition;
+  issued: { token: string; name: string };
+  connected: boolean;
+  liveAgent?: string;
+  onDone: () => void;
+}) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const envText = useMemo(() => (
+    `AGORA_URL=${location.origin}\nAGORA_PAIRING_TOKEN=${issued.token}`
+  ), [issued.token]);
+  const directory = definition.directory!;
+  const startCommand = `python3 -m pip install websockets\ncp -n bridges/${directory}/.env.example bridges/${directory}/.env`;
+
+  return (
+    <>
+      <BackButton onClick={onDone} />
+      <div className="conn-setup-head">
+        <AgentMark definition={definition} />
+        <div>
+          <span className="conn-step-label">Step {connected ? "3" : "2"} of 3</span>
+          <h3 className="conn-setup-title">
+            {connected ? `${liveAgent || definition.shortTitle} is connected` : `Set up ${definition.title}`}
+          </h3>
+          <a className="conn-setup-guide" href={guidePath(definition)!} target="_blank"
+            rel="noopener noreferrer">Open full setup guide <Icon name="external-link" /></a>
+        </div>
+      </div>
+      <div className="conn-stepper" aria-label="Setup progress">
+        <span className="done" /><span className={connected ? "done" : "active"} />
+        <span className={connected ? "active" : ""} />
+      </div>
+      {connected ? (
+        <div className="conn-connected">
+          <div className="conn-connected-orbit"><AgentMark definition={definition} /></div>
+          <h3>Ready for a channel</h3>
+          <p>Add {liveAgent || definition.shortTitle} from a channel's member picker, then start or resume a session.</p>
+          <button className="btn primary" onClick={onDone}>View connections</button>
+        </div>
+      ) : (
+        <>
+          <p className="conn-setup-copy">
+            On the computer where you use {definition.title}, open a terminal in the Agora repository.
+          </p>
+          <ol className="conn-instructions">
+            <li>
+              <b>Prepare the Agora agent</b>
+              <CommandBlock text={startCommand} label="Setup command" />
+            </li>
+            <li>
+              <b>Add these two lines to <code>bridges/{directory}/.env</code></b>
+              <CommandBlock text={envText} label="Configuration" />
+            </li>
+            <li>
+              <b>Start it</b>
+              <CommandBlock text={`python3 bridges/${directory}/bridge.py`} label="Start command" />
+            </li>
+          </ol>
+          <div className="conn-waiting" role="status">
+            <span className="conn-wait-pulse" />
+            <div><b>Waiting for {definition.shortTitle}…</b><span>This screen will update automatically.</span></div>
+          </div>
+          <a className="conn-troubleshoot" href={`${guidePath(definition)}#troubleshooting`}
+            target="_blank" rel="noopener noreferrer">Having trouble? Open troubleshooting</a>
+          <button className="conn-advanced-toggle" aria-expanded={showAdvanced}
+            onClick={() => setShowAdvanced(value => !value)}>
+            Advanced setup <Icon name={showAdvanced ? "chevron-up" : "chevron-down"} />
+          </button>
+          {showAdvanced && (
+            <div className="conn-advanced">
+              <p>Pairing token</p>
+              <CommandBlock text={issued.token} label="Token" />
+              <p>WebSocket URL</p>
+              <CommandBlock text={agentWsUrl(issued.token)} label="WebSocket URL" />
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function agentWsUrl(token: string): string {
+  const protocol = location.protocol === "https:" ? "wss" : "ws";
+  return `${protocol}://${location.host}/agent/ws?token=${token}`;
+}
+
 function useRenameInstanceLocal() {
   const rename = useRenameInstance();
   return (name: string) => rename.mutate(name, {
     onSuccess: () => toast("Renamed — relinking so endpoints pick it up…", { variant: "ok" }),
-    onError: (e) => toast("Rename failed: " + (e as Error).message, { variant: "warn" }),
+    onError: error => toast("Rename failed: " + (error as Error).message, { variant: "warn" }),
   });
 }
