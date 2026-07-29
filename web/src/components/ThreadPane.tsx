@@ -19,6 +19,7 @@ import { SectionRail } from "./SectionRail";
 import { Composer } from "./Composer";
 import { LiveRows } from "./ChannelPane";
 import { LiveButton, LiveStrip, SpeakButton } from "./VoiceControls";
+import { copyDeepLink } from "../lib/deepLinks";
 
 const AT_BOTTOM_PX = 40;
 
@@ -95,6 +96,15 @@ export function ThreadPane() {
   const pinMut = usePinMessage(channel?.id || "");
   const pinned = pins.some(p => p.id === rootId);
 
+  const jumpTarget = useJump(s => s.target);
+  const clearJump = useJump(s => s.clear);
+  useEffect(() => {
+    if (!jumpTarget || jumpTarget.container !== "thread") return;
+    if (jumpTarget.mid === rootId || replies.some(m => m.id === jumpTarget.mid)) return;
+    if (q.hasNextPage && !q.isFetchingNextPage) void q.fetchNextPage();
+    else if (!q.hasNextPage && !q.isLoading) clearJump();
+  }, [jumpTarget, replies.length, q.hasNextPage, q.isFetchingNextPage]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const agents = useChannelAgents(channel?.id || "").data || [];
   // Avatars come from the full /api/agents roster (the channel-agents payload
   // is {id, name} only) — same lookup as vanilla and MessageItem.
@@ -120,7 +130,7 @@ export function ThreadPane() {
     }
   }, [unread, rootId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!channel || !root) {
+  if (!channel || !root || root.channel_id !== channel.id) {
     return <div className="agora-thread" id="agora-thread" style={{ display: "none" }}></div>;
   }
 
@@ -139,6 +149,14 @@ export function ThreadPane() {
           </span>
         </div>
         <div className="ago-head-actions">
+          {group && channel && (
+            <button className="btn sm" title="Copy link to this thread"
+              onClick={() => void copyDeepLink({
+                kind: "thread", groupId: group.id, channelId: channel.id, threadId: rootId,
+              }, "Thread")}>
+              <Icon name="link" /> Link
+            </button>
+          )}
           {me?.voice && <SpeakButton />}
           {me?.voice && <LiveButton channelId={channel.id} threadId={rootId} />}
           <button className={`btn sm ${pinned ? "active" : ""}`}

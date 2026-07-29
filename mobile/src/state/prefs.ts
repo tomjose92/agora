@@ -28,6 +28,7 @@ interface PrefsState {
   recentEmoji: string[];
   load: () => Promise<void>;
   toggleGroup: (groupId: string) => void;
+  expandGroup: (groupId: string) => void;
   setUnreadsOnly: (on: boolean) => void;
   setSpeakAloud: (on: boolean) => void;
   rememberEmoji: (ch: string) => void;
@@ -76,6 +77,14 @@ export const usePrefs = create<PrefsState>((set, get) => ({
     const collapsed = { ...get().collapsedGroups };
     if (collapsed[groupId]) delete collapsed[groupId];
     else collapsed[groupId] = true;
+    set({ collapsedGroups: collapsed });
+    persist(get());
+  },
+
+  expandGroup(groupId) {
+    if (!get().collapsedGroups[groupId]) return;
+    const collapsed = { ...get().collapsedGroups };
+    delete collapsed[groupId];
     set({ collapsedGroups: collapsed });
     persist(get());
   },

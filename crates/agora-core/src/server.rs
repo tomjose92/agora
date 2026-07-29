@@ -388,6 +388,13 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(ui_ws))
         .route("/agent/ws", get(agent_ws));
     if let Some(dir) = &state.ui_dir {
+        // Conversation deep links are real browser paths. Serve the SPA entry
+        // only for that namespace so unknown APIs and assets remain honest
+        // 404s instead of returning index.html with a successful status.
+        app = app.route_service(
+            "/g/{*path}",
+            tower_http::services::ServeFile::new(dir.join("index.html")),
+        );
         app = app.fallback_service(
             tower_http::services::ServeDir::new(dir)
                 .append_index_html_on_directories(true),

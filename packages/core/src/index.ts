@@ -18,3 +18,4 @@ export * from "./lib/format";
 export * from "./lib/unread";
 export * from "./lib/emoji";
 export * from "./lib/artifacts";
+export * from "./lib/deepLinks";

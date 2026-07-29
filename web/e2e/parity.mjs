@@ -51,7 +51,10 @@ async function seed() {
     const root = await api(`/api/channels/${c.id}/messages`, { text: "seed thread root alpha" });
     SEED.threadRoot = root.id;
     for (let i = 1; i <= 3; i++) {
-      await api(`/api/channels/${c.id}/messages`, { text: `seed reply ${i}`, thread_id: root.id });
+      const reply = await api(`/api/channels/${c.id}/messages`, {
+        text: `seed reply ${i}`, thread_id: root.id,
+      });
+      if (i === 2) SEED.threadReply = reply.id;
     }
     // several more threads so the inbox has rows
     for (let i = 2; i <= 6; i++) {
@@ -66,6 +69,12 @@ async function seed() {
     const threads = (await api("/api/threads")).threads;
     const t = threads.find(t => t.root.text === "seed thread root alpha");
     SEED.threadRoot = t ? t.root.id : null;
+    if (SEED.threadRoot) {
+      const replies = (await api(
+        `/api/channels/${c.id}/messages?thread_id=${SEED.threadRoot}&limit=100`,
+      )).messages;
+      SEED.threadReply = replies.find(m => m.text === "seed reply 2")?.id;
+    }
   }
   SEED.group = g.id;
 }
@@ -190,6 +199,21 @@ async function main() {
     await page.keyboard.press("Enter");
     await page.locator("#ago-thread-log .bubble", { hasText: "parity thread reply" })
       .waitFor({ timeout: 8000 });
+  });
+
+  await check("deep links: reload opens and highlights an exact thread reply", async () => {
+    if (!SEED.threadRoot || !SEED.threadReply) throw new Error("seed thread unavailable");
+    const path = `/g/${encodeURIComponent(SEED.group)}/c/${encodeURIComponent(SEED.channel)}` +
+      `/t/${SEED.threadRoot}/m/${SEED.threadReply}`;
+    await page.goto(BASE + path);
+    const target = page.locator(`#ago-thread-log [data-mid="${SEED.threadReply}"]`);
+    await target.waitFor({ timeout: 10000 });
+    await page.waitForFunction(
+      mid => document.querySelector(`#ago-thread-log [data-mid="${mid}"]`)?.classList.contains("ago-flash"),
+      SEED.threadReply,
+      { timeout: 5000 },
+    );
+    if (new URL(page.url()).pathname !== path) throw new Error(`path changed: ${page.url()}`);
   });
 
   await check("threads: pin from pane; pin bar appears in channel", async () => {
