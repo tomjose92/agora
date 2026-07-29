@@ -2525,6 +2525,20 @@ async fn remove_connection(
     Ok(Json(json!({"ok": true})))
 }
 
+#[derive(serde::Serialize)]
+struct PairingAgentStatus<'a> {
+    id: &'a str,
+    name: &'a str,
+}
+
+#[derive(serde::Serialize)]
+struct PairingTokenStatus<'a> {
+    #[serde(flatten)]
+    token: &'a PairingToken,
+    connected: bool,
+    agents: Vec<PairingAgentStatus<'a>>,
+}
+
 async fn list_pairing(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
@@ -2535,28 +2549,21 @@ async fn list_pairing(
     // Live status rides on the response only — the config on disk keeps
     // just the token itself.
     let live = state.hub.pairing_status();
-    let tokens: Vec<Value> = state
-        .config
-        .snapshot()
+    let snapshot = state.config.snapshot();
+    let tokens: Vec<PairingTokenStatus<'_>> = snapshot
         .pairing_tokens
         .iter()
         .map(|t| {
             let agents = live.get(&t.token);
-            let mut value = serde_json::to_value(t).unwrap_or_else(|_| json!({}));
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert("connected".into(), json!(agents.is_some()));
-                obj.insert(
-                    "agents".into(),
-                    json!(agents
-                        .map(|a| {
-                            a.iter()
-                                .map(|(id, name)| json!({"id": id, "name": name}))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()),
-                );
+            PairingTokenStatus {
+                token: t,
+                connected: agents.is_some(),
+                agents: agents
+                    .into_iter()
+                    .flatten()
+                    .map(|(id, name)| PairingAgentStatus { id, name })
+                    .collect(),
             }
-            value
         })
         .collect();
     Ok(Json(json!({"tokens": tokens})))
@@ -3036,13 +3043,30 @@ async fn agent_ws(
     ws.on_upgrade(move |socket| handle_agent_socket(state, socket, source, token))
 }
 
+fn register_pairing_socket(
+    state: &AppState,
+    conn_id: u64,
+    token: &str,
+) -> Option<Arc<tokio::sync::Notify>> {
+    let close = state.hub.register_pairing_conn(conn_id, token);
+    // Revoke may have landed after the upgrade check but before registration.
+    // Re-check only after close_pairing_conns can see this connection.
+    if state.config.valid_pairing_token(token).is_none() {
+        state.hub.unregister_connection(conn_id);
+        return None;
+    }
+    Some(close)
+}
+
 /// Dial-in bridge: the agent speaks first with `hello {agents: [...]}`,
 /// then the same frame protocol as an outbound connection.
 async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String, token: String) {
     let (sink, mut stream) = socket.split();
     let (tx, rx) = unbounded_channel::<Value>();
     let conn_id = state.hub.next_conn_id();
-    let close = state.hub.register_pairing_conn(conn_id, &token);
+    let Some(close) = register_pairing_socket(&state, conn_id, &token) else {
+        return;
+    };
     let mut registered = false;
     let mut writer = tokio::spawn(pump_ws_writer(sink, rx));
     loop {
@@ -3511,6 +3535,12 @@ mod tests {
                 .is_ok()
         );
         state.hub.unregister_connection(conn_id);
+
+        // Simulate an upgrade that passed its first token check immediately
+        // before revoke but did not register in the hub until afterward.
+        let late_conn = state.hub.next_conn_id();
+        assert!(register_pairing_socket(&state, late_conn, "tok-a").is_none());
+        assert!(!state.hub.pairing_status().contains_key("tok-a"));
 
         let revoked = list_pairing(State(state), q(), headers).await.unwrap().0;
         assert_eq!(revoked["tokens"].as_array().unwrap().len(), 1);
