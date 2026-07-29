@@ -280,14 +280,17 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       if ((useDrafts.getState().drafts[draftKey] ?? "") === sentText) {
         setText(draftKey, "");
       }
+      if (replyInThread && onToggleReplyInThread) onToggleReplyInThread();
     }).catch((error) => {
       if (sentIds.length) useAttachmentDrafts.getState().sendFailed(draftKey, sentIds);
       toast("Send failed: " + (error as Error).message, { variant: "warn" });
     });
     // Preserve attachment-bearing drafts until the upload succeeds. Plain text
     // keeps the existing fast optimistic composer behavior.
-    if (!sentIds.length) setText(draftKey, "");
-    if (replyInThread && onToggleReplyInThread) onToggleReplyInThread(); // an ask covers one message
+    if (!sentIds.length) {
+      setText(draftKey, "");
+      if (replyInThread && onToggleReplyInThread) onToggleReplyInThread();
+    }
     if (taRef.current) { autoGrow(taRef.current); taRef.current.focus(); }
   };
 
