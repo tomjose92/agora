@@ -25,6 +25,9 @@ import { useGroups, useThreads } from "@agora/core";
 import { headerBack } from "../../src/lib/headerItems";
 import { colors } from "../../src/lib/theme";
 
+/** Ensure cold-start deep links still have Home beneath them in the stack. */
+export const unstable_settings = { initialRouteName: "index" };
+
 function LiveSocket() {
   const session = useSession((s) => s.session)!;
   const username = useSession((s) => s.username);

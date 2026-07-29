@@ -231,6 +231,26 @@ async function main() {
     await page.waitForSelector(".ago-inbox-list .ago-inbox-row", { timeout: 5000 });
   });
 
+  await check("navigation: live updates do not close the narrow sidebar", async () => {
+    await page.setViewportSize({ width: 500, height: 800 });
+    await page.locator(".agora-main .ago-back").click();
+    await page.locator(".ago-chan", { hasText: "general" }).first().click();
+    await page.locator(".agora-main .ago-back").click();
+    await page.waitForFunction(
+      () => document.getElementById("agora-layout")?.classList.contains("view-side"),
+    );
+    await api(`/api/channels/${SEED.channel}/messages`, {
+      text: `sidebar latch ${Date.now()}`,
+    });
+    await page.waitForTimeout(500);
+    const sideOpen = await page.$eval(
+      "#agora-layout",
+      el => el.classList.contains("view-side"),
+    );
+    if (!sideOpen) throw new Error("live update closed the narrow sidebar");
+    await page.setViewportSize({ width: 1400, height: 800 });
+  });
+
   await check("threads: pin from pane; pin bar appears in channel", async () => {
     // Be independent of the preceding history check, which intentionally
     // leaves the UI in the inbox after navigating Back.

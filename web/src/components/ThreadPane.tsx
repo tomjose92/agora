@@ -22,6 +22,7 @@ import { LiveButton, LiveStrip, SpeakButton } from "./VoiceControls";
 import { copyDeepLink } from "../lib/deepLinks";
 
 const AT_BOTTOM_PX = 40;
+const MAX_JUMP_PAGES = 10;
 
 function ThreadLog({ root, replies, isAdmin, mentions }: {
   root: Message;
@@ -103,9 +104,12 @@ export function ThreadPane() {
     if (!jumpTarget || jumpTarget.container !== "thread") return;
     if (jumpTarget.mid === rootId || replies.some(m => m.id === jumpTarget.mid)) return;
     if (replies.length && replies[0].id <= jumpTarget.mid) clearJump();
+    else if ((q.data?.pages.length || 0) >= MAX_JUMP_PAGES) clearJump();
     else if (q.hasNextPage && !q.isFetchingNextPage) void q.fetchNextPage();
     else if (!q.hasNextPage && !q.isLoading) clearJump();
-  }, [jumpTarget, replies.length, q.hasNextPage, q.isFetchingNextPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    jumpTarget, replies.length, q.hasNextPage, q.isFetchingNextPage, q.isLoading,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const agents = useChannelAgents(channel?.id || "").data || [];
   // Avatars come from the full /api/agents roster (the channel-agents payload
@@ -135,7 +139,7 @@ export function ThreadPane() {
   if (!channel || (!root && !fetchedRootQ.isError)) {
     return <div className="agora-thread" id="agora-thread" style={{ display: "none" }}></div>;
   }
-  if (!root || root.channel_id !== channel.id) {
+  if (!root || root.channel_id !== channel.id || root.thread_id != null) {
     return (
       <div className="agora-thread" id="agora-thread">
         <div className="ago-head">

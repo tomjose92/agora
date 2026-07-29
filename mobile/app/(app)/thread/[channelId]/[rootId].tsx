@@ -65,6 +65,7 @@ import { useSession } from "../../../../src/state/session";
 import { tldrOf, useTldrView } from "@agora/core";
 
 type Row = { kind: "root"; m: Message } | { kind: "msg"; m: Message };
+const MAX_DEEP_LINK_PAGES = 10;
 
 export default function ThreadScreen() {
   const params = useLocalSearchParams<{
@@ -122,7 +123,14 @@ export default function ThreadScreen() {
   );
   const fetchedRoot = useMessage(rootId, cachedRoot === null);
   const candidateRoot = cachedRoot ?? fetchedRoot.data ?? null;
-  const root = candidateRoot?.channel_id === channelId ? candidateRoot : null;
+  const root =
+    candidateRoot?.channel_id === channelId && candidateRoot.thread_id == null
+      ? candidateRoot
+      : null;
+  const rootUnavailable =
+    fetchedRoot.isError ||
+    (candidateRoot != null &&
+      (candidateRoot.channel_id !== channelId || candidateRoot.thread_id != null));
 
   const thread = useMemo(() => flattenMessages(replies.data), [replies.data]);
   const rows = useMemo<Row[]>(() => {
@@ -258,6 +266,8 @@ export default function ThreadScreen() {
       }, 300);
     } else if (thread.length && thread[0].id <= targetMessageId) {
       landedOnMessage.current = targetMessageId;
+    } else if ((replies.data?.pages.length || 0) >= MAX_DEEP_LINK_PAGES) {
+      landedOnMessage.current = targetMessageId;
     } else if (replies.hasNextPage && !replies.isFetchingNextPage) {
       void replies.fetchNextPage();
     } else if (!replies.hasNextPage) {
@@ -289,6 +299,15 @@ export default function ThreadScreen() {
     return (
       <View style={styles.root}>
         <Text style={styles.empty}>This thread doesn't belong to the linked group.</Text>
+      </View>
+    );
+  }
+  if (rootUnavailable) {
+    return (
+      <View style={styles.root}>
+        <Text style={styles.empty}>
+          This thread doesn't exist here, or you don't have access to it.
+        </Text>
       </View>
     );
   }

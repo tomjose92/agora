@@ -56,7 +56,7 @@ export function AgoraLayout() {
     if (!groups || !groups.length) return;
     const location = `${locationKey}:${window.location.pathname}`;
     if (window.location.pathname === "/threads") {
-      if (resolvedLocation.current !== location) {
+      if (ui.view.kind !== "inbox" || ui.threadRoot != null) {
         resolvedLocation.current = location;
         ui.openInbox("none");
       }
@@ -64,18 +64,44 @@ export function AgoraLayout() {
     }
     const target = parseDeepLink(window.location.pathname);
     if (target) {
-      // Group rows are patched by live/read events. Resolve a location once,
-      // rather than re-selecting and re-jumping whenever those rows change.
-      if (resolvedLocation.current === location) return;
-      resolvedLocation.current = location;
       const group = groups.find(g => g.id === target.groupId);
       if (group) {
         if (target.kind === "group") {
-          ui.openGroupPage(group.id, "none");
+          if (ui.view.kind !== "group" || ui.sel.g !== group.id || ui.threadRoot != null) {
+            ui.openGroupPage(group.id, "none");
+          }
+          resolvedLocation.current = location;
           return;
         }
         const channel = (group.channels || []).find(c => c.id === target.channelId);
         if (channel) {
+          const channelSelected =
+            ui.view.kind === "channel" &&
+            ui.sel.g === group.id &&
+            ui.sel.c === channel.id;
+          const expectedThread =
+            target.kind === "thread" ? target.threadId
+              : target.kind === "message" ? target.threadId : null;
+          const scopeSelected =
+            channelSelected && ui.threadRoot === (expectedThread ?? null);
+
+          // pushState does not emit popstate. In-app navigation already put
+          // the UI in this scope, so treat it as resolved without resetting
+          // narrow-screen drill-down state on the next groups cache update.
+          if (scopeSelected && target.kind !== "message") {
+            resolvedLocation.current = location;
+            return;
+          }
+          if (scopeSelected && resolvedLocation.current === location) return;
+          if (scopeSelected && target.kind === "message") {
+            resolvedLocation.current = location;
+            requestJump({
+              mid: target.messageId,
+              container: target.threadId == null ? "log" : "thread",
+            });
+            return;
+          }
+
           ui.selectChannel(group.id, channel.id, "none");
           if (target.kind === "thread") {
             ui.openThread(target.threadId, "none");
@@ -88,6 +114,7 @@ export function AgoraLayout() {
               container: target.threadId == null ? "log" : "thread",
             });
           }
+          resolvedLocation.current = location;
           return;
         }
       }
@@ -105,6 +132,14 @@ export function AgoraLayout() {
     if (!selChan && ui.view.kind === "channel") {
       const chan = (selGroup.channels || []).find(c => !c.hidden) || (selGroup.channels || [])[0];
       if (chan) ui.selectChannel(selGroup.id, chan.id, "replace");
+      return;
+    }
+    // Normalize the legacy/root entry even when localStorage already points
+    // at a valid selection; otherwise Back can land on an inert "/" URL.
+    if ((window.location.pathname === "/" || target) && selChan) {
+      if (ui.view.kind === "group") ui.openGroupPage(selGroup.id, "replace");
+      else if (ui.view.kind === "inbox") ui.openInbox("replace");
+      else ui.selectChannel(selGroup.id, selChan.id, "replace");
     }
   }, [groups, locationKey]); // eslint-disable-line react-hooks/exhaustive-deps
 

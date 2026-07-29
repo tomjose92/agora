@@ -66,6 +66,7 @@ import { useSession } from "../../../src/state/session";
 import { tldrOf, useTldrView } from "@agora/core";
 
 type Row = { kind: "msg"; m: Message } | { kind: "divider" };
+const MAX_DEEP_LINK_PAGES = 10;
 
 function openThread(channelId: string, root: Message, channelName: string) {
   router.push({
@@ -362,6 +363,8 @@ export default function ChannelScreen() {
       chronological.length &&
       chronological[0].id <= targetMessageId
     ) {
+      landedOnMessage.current = targetMessageId;
+    } else if ((messages.data?.pages.length || 0) >= MAX_DEEP_LINK_PAGES) {
       landedOnMessage.current = targetMessageId;
     } else if (messages.hasNextPage && !messages.isFetchingNextPage) {
       void messages.fetchNextPage();
