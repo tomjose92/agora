@@ -4,6 +4,13 @@
 # - CLAUDE_CODE_OAUTH_TOKEN: a Claude Code OAuth token generated locally with
 #   `claude setup-token`. Never generate it or perform browser login in CI.
 #
+# GitHub operations authenticate via the Claude GitHub App
+# (https://github.com/apps/claude), which must be installed on this repo: the
+# action exchanges the workflow's OIDC token for an app installation token.
+# Don't pass `github_token` — comments would post as github-actions[bot],
+# which the sticky-comment lookup can't recognize, so every push would create
+# a new review comment instead of updating the existing one.
+#
 # Fork PRs and PRs from untrusted authors are intentionally excluded. GitHub does
 # not expose repository secrets to forked pull_request workflows, and running an
 # authenticated agent over untrusted content increases prompt-injection risk.
@@ -33,6 +40,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      id-token: write
 
     steps:
       - name: Checkout pull request
@@ -66,7 +74,6 @@ jobs:
         uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
           plugin_marketplaces: https://github.com/anthropics/claude-code.git
           plugins: code-review@claude-code-plugins
           track_progress: true
