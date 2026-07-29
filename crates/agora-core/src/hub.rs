@@ -448,6 +448,9 @@ impl Hub {
                     .push((agent.agent_id.clone(), agent.agent_name.clone()));
             }
         }
+        for agents in out.values_mut() {
+            agents.sort_by(|a, b| a.0.cmp(&b.0));
+        }
         out
     }
 
@@ -2616,9 +2619,24 @@ mod tests {
             conn_id: conn,
             tx,
         });
+        let (tx, _rx) = unbounded_channel();
+        h.register_agent(AgentHandle {
+            agent_id: "alpha-1".into(),
+            agent_name: "Alpha".into(),
+            requires_mention: false,
+            wants_context_feed: false,
+            has_avatar: false,
+            avatar_v: 0,
+            source: "pairing:openclaw".into(),
+            conn_id: conn,
+            tx,
+        });
         assert_eq!(
             h.pairing_status().get("tok-a"),
-            Some(&vec![("claw-1".to_string(), "Claw".to_string())])
+            Some(&vec![
+                ("alpha-1".to_string(), "Alpha".to_string()),
+                ("claw-1".to_string(), "Claw".to_string()),
+            ])
         );
 
         // A second token is tracked independently — keyed by token, so two
