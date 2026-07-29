@@ -51,7 +51,7 @@ document.querySelector("#docs-root").innerHTML = `
         <ol class="docs-steps">
           <li><b>Clone Agora and enter the repository</b>${code("git clone https://github.com/tomjose92/agora.git\ncd agora")}</li>
           <li><b>Create an isolated Python environment</b>${code("python3 -m venv .venv\nsource .venv/bin/activate\npython3 -m pip install --upgrade pip websockets")}</li>
-          <li><b>Create access in Agora</b><span>Open <strong>Connections → Add agent → ${escapeHtml(guide.name)}</strong>, choose a name, and continue. Keep the generated token private.</span></li>
+          <li><b>Create access in Agora</b><span>Open <strong>Connections → Add agent → Coding agents → ${escapeHtml(guide.name)}</strong>, choose a name, and continue. Keep the generated token private.</span></li>
           <li><b>Create your local configuration</b>${code(`cp bridges/${guide.directory}/.env.example bridges/${guide.directory}/.env\nchmod 600 bridges/${guide.directory}/.env`)}<span>Open <code>bridges/${escapeHtml(guide.directory)}/.env</code> and <strong>replace</strong> its active <code>AGORA_URL</code> and <code>AGORA_PAIRING_TOKEN</code> placeholder lines. Do not append duplicate keys.</span>${code(`# Replace the placeholder connection lines with:\n${guide.exampleEnv}`)}</li>
           <li><b>Choose repository access</b><span>Set <code>${escapeHtml(guide.allowedRoots)}</code> to colon-separated parent directories. New sessions cannot start until at least one root is configured.</span></li>
           <li><b>Start the Agora agent</b>${code(guide.start)}<span>Keep this process running and the computer awake. No inbound port is opened.</span></li>
@@ -68,6 +68,7 @@ document.querySelector("#docs-root").innerHTML = `
         <h2>Environment variables</h2>
         <p>Put values in <code>bridges/${escapeHtml(guide.directory)}/.env</code>, export them in the shell, or pass equivalent CLI flags. Real environment variables override the file; command-line flags override both.</p>
         <div class="docs-table-wrap"><table><thead><tr><th>Variable</th><th>Requirement</th><th>Default</th><th>Behavior</th></tr></thead><tbody>${envRows}</tbody></table></div>
+        <p><small><strong>*</strong> Provide either <code>AGORA_PAIRING_TOKEN</code> or <code>AGORA_PAIRING_TOKEN_FILE</code>.</small></p>
       </section>
       <section class="docs-section" id="security">
         <h2>Security model</h2>

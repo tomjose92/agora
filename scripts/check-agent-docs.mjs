@@ -12,12 +12,7 @@ const sharedVariables = sharedEnv.map(([name]) => name);
 const envRead = /os\.(?:environ\.get|getenv)\(\s*(["'])([A-Z0-9_]+)\1(?:\s*,\s*(["'])(.*?)\3)?/g;
 const indexedEnvRead = /os\.environ\s*\[\s*(["'])([A-Z0-9_]+)\1\s*\]/g;
 const ignoredLiteralDefaults = new Set([
-  "AGORA_URL", "AGORA_PAIRING_TOKEN", "AGENT_ID", "AGENT_NAME", "AGENT_AVATAR", "STATE_FILE",
-]);
-const falseFromEmpty = new Set([
-  "CODEX_AUTO_WORKTREE", "CODEX_ALLOW_SANDBOX_ESCALATION", "CODEX_TLDR",
-  "CURSOR_AUTO_WORKTREE", "CURSOR_ALLOW_FORCE", "CURSOR_DISABLE_SANDBOX", "CURSOR_TLDR",
-  "CLAUDE_AUTO_WORKTREE", "CLAUDE_ALLOW_PERMISSION_ESCALATION", "CLAUDE_TLDR",
+  "AGORA_PAIRING_TOKEN", "AGENT_ID", "AGENT_NAME", "AGENT_AVATAR", "STATE_FILE",
 ]);
 const displayedDefault = value => {
   const normalized = value.replace(/^Empty(?: \(.*\))?$/, "");
@@ -47,7 +42,10 @@ for (const [directory, guideKey] of Object.entries(agents)) {
     const [, , variable, , literalDefault] = match;
     if (literalDefault === undefined || ignoredLiteralDefaults.has(variable)) return [];
     const documentedDefault = documentedDefaults.get(variable);
-    const effectiveDefault = falseFromEmpty.has(variable) && literalDefault === "" ? "0" : literalDefault;
+    const followingSource = source.slice(match.index + match[0].length, match.index + match[0].length + 80);
+    const booleanFromEmpty = literalDefault === ""
+      && /^\s*\)\.lower\(\)\s+in\s+\(/.test(followingSource);
+    const effectiveDefault = booleanFromEmpty ? "0" : literalDefault;
     return documentedDefault === effectiveDefault
       ? []
       : [`${variable} (code: ${JSON.stringify(effectiveDefault)}, guide: ${JSON.stringify(documentedDefault)})`];

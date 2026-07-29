@@ -1,7 +1,7 @@
 /* Admin-only connection manager. "Add agent" presents branded, guided setup
    for local coding CLIs alongside hosted agent integrations and Pantheo. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type PairingKind,
   type PairingToken,
@@ -91,6 +91,13 @@ function guidePath(definition: AddDefinition): string | null {
   return definition.local ? `/docs/coding-agents/${definition.kind}.html` : null;
 }
 
+function agentWsUrl(token: string): string {
+  const url = new URL("/agent/ws", window.location.origin);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
 function AgentMark({ definition, small = false }: { definition: AddDefinition | null; small?: boolean }) {
   if (definition?.logo) {
     return <img className={`conn-agent-logo${small ? " small" : ""}`} src={definition.logo} alt="" />;
@@ -151,6 +158,7 @@ export function ConnectionsPane() {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [pairName, setPairName] = useState("");
+  const panelRef = useRef<HTMLDivElement>(null);
   const renameInstance = useRenameInstanceLocal();
 
   useEffect(() => {
@@ -159,6 +167,38 @@ export function ConnectionsPane() {
       setName(""); setUrl(""); setToken(""); setPairName("");
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const panel = panelRef.current;
+    panel?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        ui.openPanel(null);
+        return;
+      }
+      if (event.key !== "Tab" || !panel) return;
+      const focusable = [...panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )].filter(element => !element.hidden);
+      if (!focusable.length) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, ui]);
 
   if (!open) return null;
   const conns = info?.connections || [];
@@ -353,6 +393,9 @@ export function ConnectionsPane() {
               : `Use this credential in ${definition.title}'s Agora settings.`}
           </p>
           <CommandBlock text={issued.token} label="Token" />
+          {!definition.local && (
+            <CommandBlock text={agentWsUrl(issued.token)} label="Connection address" />
+          )}
           <div className="conn-issued-actions">
             {guide && (
               <a className="btn primary conn-guide-cta" href={guide} target="_blank"
@@ -413,7 +456,8 @@ export function ConnectionsPane() {
   return (
     <div className="conn-overlay" id="conn-overlay"
       onClick={event => { if (event.target === event.currentTarget) ui.openPanel(null); }}>
-      <div className="conn-panel" id="conn-panel" role="dialog" aria-modal="true" aria-label="Connections">
+      <div ref={panelRef} className="conn-panel" id="conn-panel" role="dialog" aria-modal="true"
+        aria-label="Connections" tabIndex={-1}>
         <div className="conn-head">
           <b>Connections</b>
           <button className="btn sm" aria-label="Close connections"

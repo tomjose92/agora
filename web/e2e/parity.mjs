@@ -341,6 +341,11 @@ async function main() {
       const href = await page.locator(`#conn-panel a[href="/docs/coding-agents/${kind}.html"]`).getAttribute("href");
       if (!href) throw new Error(`missing ${kind} setup guide link`);
     }
+    const guidePage = await page.context().newPage();
+    const guideResponse = await guidePage.goto(`${BASE}/docs/coding-agents/codex.html`);
+    if (!guideResponse?.ok()) throw new Error(`Codex setup guide returned ${guideResponse?.status()}`);
+    await guidePage.locator("#docs-root h1", { hasText: "Codex CLI" }).waitFor({ timeout: 5000 });
+    await guidePage.close();
     await page.locator("#conn-panel button", { hasText: "All connection types" }).click();
 
     // Non-coding integrations still use the same access/revoke lifecycle.

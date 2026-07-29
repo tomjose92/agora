@@ -1,7 +1,7 @@
 /* Bundled documentation data. scripts/check-agent-docs.mjs ensures every
    environment variable consumed by a connector appears in these references. */
 export const sharedEnv = [
-  ["AGORA_URL", "Required", "—", "Agora's http(s) or ws(s) base URL. The agent WebSocket path is added automatically."],
+  ["AGORA_URL", "Optional", "ws://127.0.0.1:4470", "Agora's http(s) or ws(s) base URL. The agent WebSocket path is added automatically."],
   ["AGORA_PAIRING_TOKEN", "Required*", "—", "Credential created by Agora. Prefer the token-file option on shared machines."],
   ["AGORA_PAIRING_TOKEN_FILE", "Optional", "—", "Path to a chmod 600 file containing the pairing token. Replaces the inline token."],
   ["AGORA_BRIDGE_ENV_FILE", "Optional", ".env beside script", "Load configuration from another env file. Real environment values and CLI flags still win."],
@@ -24,7 +24,7 @@ export const guides = {
     requirement: "A signed-in Codex CLI available as codex on the computer containing your repositories.",
     allowedRoots: "CODEX_ALLOWED_ROOTS",
     start: "python3 bridges/codex-cli/bridge.py",
-    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCODEX_ALLOWED_ROOTS=$HOME/code:$HOME/work",
+    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCODEX_ALLOWED_ROOTS=~/code:~/work",
     commands: [
       ["/sessions [n]", "List recent local Codex sessions."],
       ["/use <n|id>", "Bind this conversation to a session."],
@@ -58,7 +58,7 @@ export const guides = {
     requirement: "Cursor CLI installed and authenticated with agent login. This connects CLI sessions, not desktop IDE chats.",
     allowedRoots: "CURSOR_ALLOWED_ROOTS",
     start: "python3 bridges/cursor-cli/bridge.py",
-    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCURSOR_ALLOWED_ROOTS=$HOME/code:$HOME/work",
+    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCURSOR_ALLOWED_ROOTS=~/code:~/work",
     commands: [
       ["/sessions [n]", "List discoverable Cursor CLI sessions."],
       ["/use <n|id>", "Bind this conversation to a session."],
@@ -93,7 +93,7 @@ export const guides = {
     requirement: "A signed-in Claude Code CLI available as claude on the computer containing your repositories.",
     allowedRoots: "CLAUDE_ALLOWED_ROOTS",
     start: "python3 bridges/claude-cli/bridge.py",
-    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCLAUDE_ALLOWED_ROOTS=$HOME/code:$HOME/work",
+    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCLAUDE_ALLOWED_ROOTS=~/code:~/work",
     commands: [
       ["/sessions [n]", "List recent Claude Code sessions."],
       ["/use <n|id>", "Bind this conversation to a session."],
