@@ -667,12 +667,13 @@ export function useSeedActivity(channelId: string) {
   }, [channelId, query.data, seed]);
 }
 
-export function useAgents() {
+export function useAgents(poll = false) {
   const api = useApi();
   return useQuery({
     queryKey: keys.agents,
     queryFn: async () =>
       (await api.get<{ agents: AgentInfo[] }>("/api/agents")).agents,
+    refetchInterval: poll ? 4000 : false,
   });
 }
 
@@ -737,12 +738,13 @@ export function useConnectionMutations() {
   };
 }
 
-export function usePairingTokens(enabled = true) {
+export function usePairingTokens(enabled = true, poll = false) {
   const api = useApi();
   return useQuery({
     queryKey: keys.pairing,
     queryFn: async () =>
       (await api.get<{ tokens: PairingToken[] }>("/api/pairing")).tokens,
+    refetchInterval: poll ? 4000 : false,
     enabled,
   });
 }

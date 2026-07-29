@@ -213,6 +213,9 @@ struct UiSocket {
 struct HubState {
     agents: HashMap<String, AgentHandle>,
     sockets: Vec<UiSocket>,
+    /// Live dial-in bridge sockets: conn_id -> pairing token. Keyed by the
+    /// token (not its label) so tokens sharing a label stay distinct.
+    pairing_conns: HashMap<u64, String>,
     next_id: u64,
     /// Consecutive agent-authored messages per (channel_id, thread_id or 0).
     bot_streak: HashMap<(String, i64), i64>,
@@ -393,10 +396,35 @@ impl Hub {
         st.agents.insert(handle.agent_id.clone(), handle);
     }
 
+    /// A dial-in bridge socket authenticated with `token`; up from the WS
+    /// upgrade (before any hello), gone when `unregister_connection` runs.
+    pub fn register_pairing_conn(&self, conn_id: u64, token: &str) {
+        self.state.lock().unwrap().pairing_conns.insert(conn_id, token.to_string());
+    }
+
+    /// Live dial-in status per pairing token: a key is present iff some
+    /// socket for that token is up; the value lists the (id, name) of the
+    /// agents it registered (empty until its hello arrives).
+    pub fn pairing_status(&self) -> HashMap<String, Vec<(String, String)>> {
+        let st = self.state.lock().unwrap();
+        let mut out: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        for (conn_id, token) in &st.pairing_conns {
+            let agents = out.entry(token.clone()).or_default();
+            agents.extend(
+                st.agents
+                    .values()
+                    .filter(|h| h.conn_id == *conn_id)
+                    .map(|h| (h.agent_id.clone(), h.agent_name.clone())),
+            );
+        }
+        out
+    }
+
     /// Drop every agent that arrived on `conn_id`; clears their stale
     /// typing/progress lines so late viewers don't see ghosts.
     pub fn unregister_connection(&self, conn_id: u64) -> Vec<String> {
         let mut st = self.state.lock().unwrap();
+        st.pairing_conns.remove(&conn_id);
         let gone: Vec<String> = st
             .agents
             .values()
@@ -2532,5 +2560,46 @@ mod tests {
         let msg = &h.store.messages(&cid, None, None, 10)[1];
         assert_eq!(msg["meta"]["sources"][0]["url"], "https://y.com");
         assert_eq!(msg["meta"]["sources_start"], "More.\n".len());
+    }
+
+    #[test]
+    fn pairing_status_tracks_sockets_and_their_agents() {
+        let h = hub();
+        assert!(h.pairing_status().is_empty());
+
+        // Socket up before hello: connected, no agents yet.
+        let conn = h.next_conn_id();
+        h.register_pairing_conn(conn, "tok-a");
+        assert_eq!(h.pairing_status().get("tok-a"), Some(&vec![]));
+
+        // Hello registers an agent on that conn.
+        let (tx, _rx) = unbounded_channel();
+        h.register_agent(AgentHandle {
+            agent_id: "claw-1".into(),
+            agent_name: "Claw".into(),
+            requires_mention: false,
+            wants_context_feed: false,
+            has_avatar: false,
+            avatar_v: 0,
+            source: "pairing:openclaw".into(),
+            conn_id: conn,
+            tx,
+        });
+        assert_eq!(
+            h.pairing_status().get("tok-a"),
+            Some(&vec![("claw-1".to_string(), "Claw".to_string())])
+        );
+
+        // A second token is tracked independently — keyed by token, so two
+        // tokens sharing a label never merge.
+        let conn_b = h.next_conn_id();
+        h.register_pairing_conn(conn_b, "tok-b");
+        assert!(h.pairing_status().contains_key("tok-b"));
+
+        // Socket drop clears only its own entry.
+        h.unregister_connection(conn);
+        let st = h.pairing_status();
+        assert!(!st.contains_key("tok-a"));
+        assert!(st.contains_key("tok-b"));
     }
 }

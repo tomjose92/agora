@@ -2532,7 +2532,32 @@ async fn list_pairing(
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     require_instance_admin(&user)?;
-    Ok(Json(json!({"tokens": state.config.snapshot().pairing_tokens})))
+    // Live status rides on the response only — the config on disk keeps
+    // just the token itself.
+    let live = state.hub.pairing_status();
+    let tokens: Vec<Value> = state
+        .config
+        .snapshot()
+        .pairing_tokens
+        .iter()
+        .map(|t| {
+            let agents = live.get(&t.token);
+            json!({
+                "token": t.token,
+                "name": t.name,
+                "created_at": t.created_at,
+                "connected": agents.is_some(),
+                "agents": agents
+                    .map(|a| {
+                        a.iter()
+                            .map(|(id, name)| json!({"id": id, "name": name}))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
+            })
+        })
+        .collect();
+    Ok(Json(json!({"tokens": tokens})))
 }
 
 async fn create_pairing(
@@ -3005,15 +3030,16 @@ async fn agent_ws(
     let Some(source) = state.config.valid_pairing_token(&token) else {
         return (StatusCode::UNAUTHORIZED, "bad pairing token").into_response();
     };
-    ws.on_upgrade(move |socket| handle_agent_socket(state, socket, source))
+    ws.on_upgrade(move |socket| handle_agent_socket(state, socket, source, token))
 }
 
 /// Dial-in bridge: the agent speaks first with `hello {agents: [...]}`,
 /// then the same frame protocol as an outbound connection.
-async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String) {
+async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String, token: String) {
     let (sink, mut stream) = socket.split();
     let (tx, rx) = unbounded_channel::<Value>();
     let conn_id = state.hub.next_conn_id();
+    state.hub.register_pairing_conn(conn_id, &token);
     let mut registered = false;
     let mut writer = tokio::spawn(pump_ws_writer(sink, rx));
     loop {
