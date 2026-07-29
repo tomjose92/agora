@@ -3548,6 +3548,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn revoking_pairing_token_closes_the_real_agent_socket() {
+        let (state, _dir) = test_state();
+        state
+            .hub
+            .store
+            .create_user("boss", "Boss", None, "admin")
+            .unwrap();
+        state.config.update(|c| {
+            c.pairing_tokens.push(PairingToken {
+                token: "socket-token".into(),
+                name: "socket-test".into(),
+                created_at: 123.0,
+            });
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let service = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, service).await.unwrap();
+        });
+
+        let url = format!("ws://{addr}/agent/ws?token=socket-token");
+        let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                json!({
+                    "type": "hello",
+                    "agents": [{"id": "socket-agent", "name": "Socket Agent"}],
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let status = state.hub.pairing_status();
+                if status
+                    .get("socket-token")
+                    .is_some_and(|agents| agents.iter().any(|(id, _)| id == "socket-agent"))
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("agent hello should register");
+
+        let _ = revoke_pairing(
+            State(state.clone()),
+            Path("socket-token".into()),
+            Query(HashMap::new()),
+            session_headers(&state, "boss"),
+        )
+        .await
+        .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                match socket.next().await {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(_))) => continue,
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Pong(_))) => continue,
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))
+                    | Some(Err(_))
+                    | None => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        })
+        .await
+        .expect("revoked socket should close");
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while state.hub.pairing_status().contains_key("socket-token") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("closed socket should unregister");
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn reactions_toggle_validate_and_gate_membership() {
         let (state, _dir) = test_state();
         let store = &state.hub.store;
