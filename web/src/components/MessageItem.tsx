@@ -20,6 +20,8 @@ import { MessageFormView } from "./MessageFormView";
 import { Reactions } from "./Reactions";
 import { useEmojiPicker } from "./EmojiPicker";
 import { ArtifactList } from "./artifacts/ArtifactList";
+import { useUiState } from "../state/ui";
+import { copyDeepLink } from "../lib/deepLinks";
 
 /* Source viewer state (the overlay itself mounts app-level). */
 interface SourcesView {
@@ -121,6 +123,7 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
   const armKey = useConfirm(s => s.arm);
   const disarm = useConfirm(s => s.disarm);
   const openPicker = useEmojiPicker(s => s.open);
+  const groupId = useUiState(s => s.sel.g);
 
   const pinnable = m.thread_id == null;
   const pinned = pinnable && pins.some(p => p.id === m.id);
@@ -170,6 +173,18 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
           onClick={e => openPicker(m.id, e.currentTarget)}>
           <Icon name="smile" /> react
         </button>
+        {groupId && (
+          <button className="ago-thread-btn" title="Copy link to this message"
+            onClick={() => void copyDeepLink({
+              kind: "message",
+              groupId,
+              channelId: m.channel_id,
+              threadId: m.thread_id,
+              messageId: m.id,
+            }, "Message")}>
+            <Icon name="link" /> link
+          </button>
+        )}
         {pinnable && (
           <button className={`ago-thread-btn ago-pin-btn ${pinned ? "pinned" : ""}`}
             title={pinned ? "Unpin this thread" : "Pin this thread for quick access"}

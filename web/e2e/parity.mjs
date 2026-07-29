@@ -51,7 +51,10 @@ async function seed() {
     const root = await api(`/api/channels/${c.id}/messages`, { text: "seed thread root alpha" });
     SEED.threadRoot = root.id;
     for (let i = 1; i <= 3; i++) {
-      await api(`/api/channels/${c.id}/messages`, { text: `seed reply ${i}`, thread_id: root.id });
+      const reply = await api(`/api/channels/${c.id}/messages`, {
+        text: `seed reply ${i}`, thread_id: root.id,
+      });
+      if (i === 2) SEED.threadReply = reply.id;
     }
     // several more threads so the inbox has rows
     for (let i = 2; i <= 6; i++) {
@@ -66,6 +69,12 @@ async function seed() {
     const threads = (await api("/api/threads")).threads;
     const t = threads.find(t => t.root.text === "seed thread root alpha");
     SEED.threadRoot = t ? t.root.id : null;
+    if (SEED.threadRoot) {
+      const replies = (await api(
+        `/api/channels/${c.id}/messages?thread_id=${SEED.threadRoot}&limit=100`,
+      )).messages;
+      SEED.threadReply = replies.find(m => m.text === "seed reply 2")?.id;
+    }
   }
   SEED.group = g.id;
 }
@@ -192,7 +201,62 @@ async function main() {
       .waitFor({ timeout: 8000 });
   });
 
+  await check("deep links: reload opens and highlights an exact thread reply", async () => {
+    if (!SEED.threadRoot || !SEED.threadReply) throw new Error("seed thread unavailable");
+    const path = `/g/${encodeURIComponent(SEED.group)}/c/${encodeURIComponent(SEED.channel)}` +
+      `/t/${SEED.threadRoot}/m/${SEED.threadReply}`;
+    await page.goto(BASE + path);
+    const target = page.locator(`#ago-thread-log [data-mid="${SEED.threadReply}"]`);
+    await target.waitFor({ timeout: 10000 });
+    await page.waitForFunction(
+      mid => document.querySelector(`#ago-thread-log [data-mid="${mid}"]`)?.classList.contains("ago-flash"),
+      SEED.threadReply,
+      { timeout: 5000 },
+    );
+    if (new URL(page.url()).pathname !== path) throw new Error(`path changed: ${page.url()}`);
+    await page.waitForTimeout(1900);
+    await api(`/api/channels/${SEED.channel}/messages`, { text: `deep-link latch ${Date.now()}` });
+    await page.waitForTimeout(500);
+    if (await target.evaluate(el => el.classList.contains("ago-flash"))) {
+      throw new Error("deep-link target flashed again after a live group update");
+    }
+  });
+
+  await check("history: Back restores the threads inbox", async () => {
+    await page.locator(".ago-inbox-item", { hasText: "Threads" }).click();
+    await page.waitForURL(/\/threads$/);
+    await page.locator(".ago-chan", { hasText: "general" }).first().click();
+    await page.goBack();
+    await page.waitForURL(/\/threads$/);
+    await page.waitForSelector(".ago-inbox-list .ago-inbox-row", { timeout: 5000 });
+  });
+
+  await check("navigation: live updates do not close the narrow sidebar", async () => {
+    await page.setViewportSize({ width: 500, height: 800 });
+    await page.locator(".agora-main .ago-back").click();
+    await page.locator(".ago-chan", { hasText: "general" }).first().click();
+    await page.locator(".agora-main .ago-back").click();
+    await page.waitForFunction(
+      () => document.getElementById("agora-layout")?.classList.contains("view-side"),
+    );
+    await api(`/api/channels/${SEED.channel}/messages`, {
+      text: `sidebar latch ${Date.now()}`,
+    });
+    await page.waitForTimeout(500);
+    const sideOpen = await page.$eval(
+      "#agora-layout",
+      el => el.classList.contains("view-side"),
+    );
+    if (!sideOpen) throw new Error("live update closed the narrow sidebar");
+    await page.setViewportSize({ width: 1400, height: 800 });
+  });
+
   await check("threads: pin from pane; pin bar appears in channel", async () => {
+    // Be independent of the preceding history check, which intentionally
+    // leaves the UI in the inbox after navigating Back.
+    await page.locator(".ago-inbox-item", { hasText: "Threads" }).click();
+    await page.locator(".ago-inbox-row", { hasText: "seed thread root alpha" }).first().click();
+    await page.waitForSelector("#ago-thread-log .bubble", { timeout: 5000 });
     await page.locator('button[title="Pin this thread for quick access"]').first().click();
     await page.locator('.ago-pinbar .ago-pin-count', { hasText: "pinned" }).waitFor({ timeout: 8000 })
       .catch(async () => {

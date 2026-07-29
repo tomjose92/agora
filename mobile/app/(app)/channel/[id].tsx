@@ -66,6 +66,7 @@ import { useSession } from "../../../src/state/session";
 import { tldrOf, useTldrView } from "@agora/core";
 
 type Row = { kind: "msg"; m: Message } | { kind: "divider" };
+const MAX_DEEP_LINK_PAGES = 10;
 
 function openThread(channelId: string, root: Message, channelName: string) {
   router.push({
@@ -256,8 +257,14 @@ function ListSheet<T extends Message>({
 }
 
 export default function ChannelScreen() {
-  const params = useLocalSearchParams<{ id: string; name?: string; groupId?: string }>();
+  const params = useLocalSearchParams<{
+    id: string;
+    name?: string;
+    groupId?: string;
+    messageId?: string;
+  }>();
   const channelId = params.id;
+  const targetMessageId = params.messageId ? Number(params.messageId) : null;
   const session = useSession((s) => s.session)!;
   const keyboardOffset = useHeaderKeyboardOffset();
 
@@ -270,7 +277,12 @@ export default function ChannelScreen() {
     return null;
   }, [groups.data, channelId]);
   const channelName = params.name || channelMeta?.channel.name || "channel";
-  const groupId = params.groupId || channelMeta?.group.id;
+  // Treat the visibility-scoped groups payload as authoritative. Even normal
+  // in-app navigation waits for it so a crafted groupId cannot drive members
+  // or admin UI for a channel owned by another group.
+  const groupId = channelMeta?.group.id;
+  const groupMismatch =
+    !!params.groupId && !!channelMeta && params.groupId !== channelMeta.group.id;
 
   const messages = useMessages(channelId, null);
   const send = useSendMessage(channelId);
@@ -326,12 +338,48 @@ export default function ChannelScreen() {
 
   const listRef = useRef<FlashListRef<Row>>(null);
   const [showJump, setShowJump] = useState(false);
+  const [highlightedId, setHighlightedId] = useState<number | null>(null);
+  const landedOnMessage = useRef<number | null>(null);
+
+  /* A shared deep link may point well beyond the newest page. Page older
+     history until the row exists, then center it. */
+  useEffect(() => {
+    if (!targetMessageId || landedOnMessage.current === targetMessageId) return;
+    const idx = rows.findIndex((r) => r.kind === "msg" && r.m.id === targetMessageId);
+    if (idx >= 0) {
+      landedOnMessage.current = targetMessageId;
+      atBottom.current = false;
+      setHighlightedId(targetMessageId);
+      setTimeout(() => setHighlightedId(null), 1800);
+      setTimeout(() => {
+        listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
+      }, 80);
+      // FlashList v2 has no onScrollToIndexFailed callback. Repeat after its
+      // measurement pass so heterogeneous message heights still land exactly.
+      setTimeout(() => {
+        listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
+      }, 300);
+    } else if (
+      chronological.length &&
+      chronological[0].id <= targetMessageId
+    ) {
+      landedOnMessage.current = targetMessageId;
+    } else if ((messages.data?.pages.length || 0) >= MAX_DEEP_LINK_PAGES) {
+      landedOnMessage.current = targetMessageId;
+    } else if (messages.hasNextPage && !messages.isFetchingNextPage) {
+      void messages.fetchNextPage();
+    } else if (!messages.hasNextPage) {
+      landedOnMessage.current = targetMessageId;
+    }
+  }, [
+    targetMessageId, rows, chronological, messages.hasNextPage, messages.isFetchingNextPage,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Land on the "New" divider instead of the bottom when there's a backlog
      (Slack behavior) — once, on the first page load. */
   const landedOnDivider = useRef(false);
   useEffect(() => {
-    if (landedOnDivider.current || !rows.length) return;
+    if (targetMessageId || landedOnDivider.current || !rows.length) return;
     landedOnDivider.current = true;
     const idx = rows.findIndex((r) => r.kind === "divider");
     if (idx <= 0) return; // no divider (or it's at the very top already)
@@ -339,7 +387,7 @@ export default function ChannelScreen() {
     setTimeout(() => {
       listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.2 });
     }, 80);
-  }, [rows]);
+  }, [rows, targetMessageId]);
 
   const agentCandidates = useMemo<MentionCandidate[]>(
     () => (channelAgents.data ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -426,19 +474,29 @@ export default function ChannelScreen() {
         );
       }
       return (
-        <MessageItem
-          session={session}
-          message={item.m}
-          starred={starredIds.has(item.m.id)}
-          pinned={pinnedIds.has(item.m.id)}
-          onOpenThread={(root) => openThread(channelId, root, channelName)}
-          onLongPress={setActionsFor}
-          onAvatarPress={setProfileFor}
-        />
+        <View style={highlightedId === item.m.id ? styles.deepLinkTarget : undefined}>
+          <MessageItem
+            session={session}
+            message={item.m}
+            starred={starredIds.has(item.m.id)}
+            pinned={pinnedIds.has(item.m.id)}
+            onOpenThread={(root) => openThread(channelId, root, channelName)}
+            onLongPress={setActionsFor}
+            onAvatarPress={setProfileFor}
+          />
+        </View>
       );
     },
-    [session, starredIds, pinnedIds, channelId, channelName],
+    [session, starredIds, pinnedIds, channelId, channelName, highlightedId],
   );
+
+  if (groupMismatch) {
+    return (
+      <View style={styles.root}>
+        <Text style={styles.empty}>This channel doesn't belong to the linked group.</Text>
+      </View>
+    );
+  }
 
   return (
     <>
@@ -627,6 +685,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   headerBtns: { flexDirection: "row", gap: 16 },
   headerBtnOff: { opacity: 0.35 },
+  deepLinkTarget: { backgroundColor: "rgba(139,124,255,0.16)", borderRadius: 8 },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 40 },
   noAgents: {
     backgroundColor: "rgba(251,191,36,0.08)",

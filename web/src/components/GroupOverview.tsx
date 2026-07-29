@@ -9,6 +9,7 @@ import { Icon } from "../lib/icons";
 import { toast } from "../lib/toast";
 import { useConfirm } from "../state/confirm";
 import { useUiState } from "../state/ui";
+import { copyDeepLink } from "../lib/deepLinks";
 
 export function GroupOverview() {
   const ui = useUiState();
@@ -41,6 +42,10 @@ export function GroupOverview() {
           <span className="dim">{chans.length} channel{chans.length === 1 ? "" : "s"}</span>
         </div>
         <div className="ago-head-actions">
+          <button className="btn sm" title="Copy link to this group"
+            onClick={() => void copyDeepLink({ kind: "group", groupId: g.id }, "Group")}>
+            <Icon name="link" /> Link
+          </button>
           <button className="btn sm"
             title={g.hidden
               ? "Bring this group back into your sidebar"

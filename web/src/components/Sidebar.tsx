@@ -57,7 +57,7 @@ function SideThread({ t, g, c }: { t: ThreadRow; g: Group; c: Channel }) {
       onClick={e => {
         e.stopPropagation();
         ui.selectChannel(g.id, c.id);
-        ui.openThread(t.root.id);
+        ui.openThread(t.root.id, "replace");
       }}>
       <span className="tico"><Icon name="corner-down-right" /></span>
       <span className="nm">{snippet}</span>

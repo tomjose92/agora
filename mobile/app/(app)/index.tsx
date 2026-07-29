@@ -15,7 +15,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Link, Stack, router } from "expo-router";
+import { Link, Stack, router, useLocalSearchParams } from "expo-router";
 import {
   Bot,
   ChevronDown,
@@ -408,6 +408,7 @@ function HiddenSection({ groups }: { groups: Group[] }) {
 }
 
 export default function Home() {
+  const { groupId } = useLocalSearchParams<{ groupId?: string }>();
   const groups = useGroups();
   const threads = useThreads();
   const createGroup = useCreateGroup();
@@ -416,9 +417,13 @@ export default function Home() {
   const loadPrefs = usePrefs((s) => s.load);
   const unreadsOnly = usePrefs((s) => s.unreadsOnly);
   const setUnreadsOnly = usePrefs((s) => s.setUnreadsOnly);
+  const expandGroup = usePrefs((s) => s.expandGroup);
   useEffect(() => {
     if (!prefsLoaded) void loadPrefs();
   }, [prefsLoaded, loadPrefs]);
+  useEffect(() => {
+    if (prefsLoaded && groupId) expandGroup(groupId);
+  }, [prefsLoaded, groupId, expandGroup]);
 
   const threadUnread = totalThreadUnread(threads.data ?? []);
 

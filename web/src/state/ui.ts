@@ -4,6 +4,7 @@
    agora_thread = "expanded"/"open"; agora_unreads_only = "1"/"0". */
 
 import { create } from "zustand";
+import { deepLinkPath } from "@agora/core";
 import { voiceCancel } from "./voiceRec";
 import { liveStop, useLiveVoice } from "./liveVoice";
 import { speakStop } from "./speak";
@@ -41,9 +42,9 @@ interface UiState {
   threadExpanded: boolean;
   membersOpen: boolean;
   searchOpen: boolean;
-  selectChannel: (g: string, c: string) => void;
-  openInbox: () => void;
-  openGroupPage: (g: string) => void;
+  selectChannel: (g: string, c: string, history?: "push" | "replace" | "none") => void;
+  openInbox: (history?: "push" | "replace" | "none") => void;
+  openGroupPage: (g: string, history?: "push" | "replace" | "none") => void;
   backToGroups: () => void;
   isExpanded: (g: string) => boolean;
   setExpanded: (g: string, on: boolean) => void;
@@ -51,8 +52,8 @@ interface UiState {
   setUnreadsOnly: (on: boolean) => void;
   toggleHiddenSection: () => void;
   toggleSide: () => void;
-  openThread: (rootId: number) => void;
-  closeThread: () => void;
+  openThread: (rootId: number, history?: "push" | "replace" | "none") => void;
+  closeThread: (history?: "push" | "replace" | "none") => void;
   toggleThreadSize: () => void;
   setMembersOpen: (on: boolean) => void;
   setSearchOpen: (on: boolean) => void;
@@ -74,7 +75,7 @@ export const useUiState = create<UiState>((set, get) => ({
   membersOpen: false,
   searchOpen: false,
 
-  selectChannel: (g, c) => set((s) => {
+  selectChannel: (g, c, history = "push") => set((s) => {
     if (s.sel.c !== c || s.sel.g !== g) {
       // A recording is tied to the channel it started in; so are a live
       // session and the speak queue.
@@ -83,13 +84,18 @@ export const useUiState = create<UiState>((set, get) => ({
       speakStop();
     }
     localStorage.setItem("agora_sel", JSON.stringify({ g, c }));
+    writeHistory(deepLinkPath({ kind: "channel", groupId: g, channelId: c }), history);
     return { sel: { g, c }, view: { kind: "channel" }, threadRoot: null, mobileView: "main" as const };
   }),
-  openInbox: () => set({ view: { kind: "inbox" }, threadRoot: null, mobileView: "main" }),
-  openGroupPage: (g) => set((s) => {
+  openInbox: (history = "push") => {
+    writeHistory("/threads", history);
+    set({ view: { kind: "inbox" }, threadRoot: null, mobileView: "main" });
+  },
+  openGroupPage: (g, history = "push") => set((s) => {
     const sel = { ...s.sel, g };
     localStorage.setItem("agora_sel", JSON.stringify(sel));
-    return { sel, view: { kind: "group" }, mobileView: "main" as const };
+    writeHistory(deepLinkPath({ kind: "group", groupId: g }), history);
+    return { sel, view: { kind: "group" }, threadRoot: null, mobileView: "main" as const };
   }),
   backToGroups: () => set({ mobileView: "side" }),
 
@@ -115,15 +121,25 @@ export const useUiState = create<UiState>((set, get) => ({
     localStorage.setItem("agora_side", next ? "collapsed" : "open");
     return { sideCollapsed: next };
   }),
-  openThread: (rootId) => set(() => {
+  openThread: (rootId, history = "push") => set((s) => {
     // Switching threads ends a recording/live session scoped to another one.
     const scope = useLiveVoice.getState().scope;
     if (scope && scope.threadId != null && scope.threadId !== rootId) liveStop();
+    if (s.sel.g && s.sel.c) {
+      writeHistory(deepLinkPath({
+        kind: "thread", groupId: s.sel.g, channelId: s.sel.c, threadId: rootId,
+      }), history);
+    }
     return { threadRoot: rootId, mobileView: "thread" as const };
   }),
-  closeThread: () => set(() => {
+  closeThread: (history = "replace") => set((s) => {
     const scope = useLiveVoice.getState().scope;
     if (scope && scope.threadId != null) liveStop();
+    if (s.sel.g && s.sel.c) {
+      writeHistory(deepLinkPath({
+        kind: "channel", groupId: s.sel.g, channelId: s.sel.c,
+      }), history);
+    }
     return { threadRoot: null, mobileView: "main" as const };
   }),
   toggleThreadSize: () => set((s) => {
@@ -135,3 +151,8 @@ export const useUiState = create<UiState>((set, get) => ({
   setSearchOpen: (on) => set({ searchOpen: on }),
   openPanel: (p) => set((s) => ({ panel: s.panel === p ? null : p })),
 }));
+
+function writeHistory(path: string, mode: "push" | "replace" | "none"): void {
+  if (mode === "none" || window.location.pathname === path) return;
+  window.history[mode === "replace" ? "replaceState" : "pushState"]({}, "", path);
+}

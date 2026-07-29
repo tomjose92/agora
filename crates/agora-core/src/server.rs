@@ -388,6 +388,17 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(ui_ws))
         .route("/agent/ws", get(agent_ws));
     if let Some(dir) = &state.ui_dir {
+        // Conversation deep links are real browser paths. Serve the SPA entry
+        // only for that namespace so unknown APIs and assets remain honest
+        // 404s instead of returning index.html with a successful status.
+        app = app.route_service(
+            "/g/{*path}",
+            tower_http::services::ServeFile::new(dir.join("index.html")),
+        );
+        app = app.route_service(
+            "/threads",
+            tower_http::services::ServeFile::new(dir.join("index.html")),
+        );
         app = app.fallback_service(
             tower_http::services::ServeDir::new(dir)
                 .append_index_html_on_directories(true),
@@ -3045,6 +3056,9 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::{to_bytes, Body};
+    use axum::http::Request;
+    use tower::ServiceExt;
 
     fn test_state() -> (AppState, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -3064,6 +3078,36 @@ mod tests {
             upload_limiter,
         };
         (state, dir)
+    }
+
+    #[tokio::test]
+    async fn conversation_paths_serve_spa_without_masking_missing_routes() {
+        let (mut state, dir) = test_state();
+        let ui = dir.path().join("ui");
+        std::fs::create_dir(&ui).unwrap();
+        std::fs::write(ui.join("index.html"), b"<main>agora spa</main>").unwrap();
+        state.ui_dir = Some(ui);
+        let app = router(state);
+
+        for path in ["/g/team/c/general/t/42", "/threads"] {
+            let deep = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(deep.status(), StatusCode::OK, "{path}");
+            let body = to_bytes(deep.into_body(), 1024).await.unwrap();
+            assert_eq!(&body[..], b"<main>agora spa</main>");
+        }
+
+        for path in ["/api/not-a-route", "/assets/not-a-real-file.js"] {
+            let missing = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(missing.status(), StatusCode::NOT_FOUND, "{path}");
+        }
     }
 
     #[test]

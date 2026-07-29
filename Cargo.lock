@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agora-core"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "anyhow",
  "axum",
@@ -29,6 +29,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "tower",
  "tower-http",
  "tracing",
  "ureq",
@@ -36,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "agora-desktop"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "agora-core",
  "anyhow",
@@ -63,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "agora-server"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "agora-core",
  "anyhow",

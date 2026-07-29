@@ -13,6 +13,7 @@ import { MessageItem } from "./MessageItem";
 import { SectionRail } from "./SectionRail";
 
 const AT_BOTTOM_PX = 48;
+const MAX_JUMP_PAGES = 10;
 
 export function MessageLog({ channelId, isAdmin, mentions, onOpenThread }: {
   channelId: string;
@@ -86,6 +87,12 @@ export function MessageLog({ channelId, isAdmin, mentions, onOpenThread }: {
     if (!jumpTarget || jumpTarget.container !== "log" || !boxRef.current) return;
     if (flashMessage(boxRef.current, jumpTarget.mid)) {
       stickRef.current = false;
+      jumpClear();
+    } else if (messages.length && messages[0].id <= jumpTarget.mid) {
+      // IDs are globally monotonic. Once the oldest loaded row is below the
+      // target, another older page cannot contain an absent target.
+      jumpClear();
+    } else if ((q.data?.pages.length || 0) >= MAX_JUMP_PAGES) {
       jumpClear();
     } else if (q.hasNextPage && !q.isFetchingNextPage) {
       void q.fetchNextPage();

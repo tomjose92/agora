@@ -65,15 +65,19 @@ import { useSession } from "../../../../src/state/session";
 import { tldrOf, useTldrView } from "@agora/core";
 
 type Row = { kind: "root"; m: Message } | { kind: "msg"; m: Message };
+const MAX_DEEP_LINK_PAGES = 10;
 
 export default function ThreadScreen() {
   const params = useLocalSearchParams<{
     channelId: string;
     rootId: string;
     channelName?: string;
+    messageId?: string;
+    groupId?: string;
   }>();
   const channelId = params.channelId;
   const rootId = Number(params.rootId);
+  const targetMessageId = params.messageId ? Number(params.messageId) : null;
   const session = useSession((s) => s.session)!;
   const keyboardOffset = useHeaderKeyboardOffset();
   const qc = useQueryClient();
@@ -99,6 +103,7 @@ export default function ThreadScreen() {
   }, [groups.data, channelId]);
   const members = useMembers(groupId ?? "");
   const channelName = params.channelName || resolvedChannelName;
+  const groupMismatch = !!params.groupId && !!groupId && params.groupId !== groupId;
 
   /* Tapping the header title jumps to the thread's channel. `navigate`
      (not `push`) pops back to the channel screen when the thread was opened
@@ -117,7 +122,15 @@ export default function ThreadScreen() {
     [topLevel.data, rootId],
   );
   const fetchedRoot = useMessage(rootId, cachedRoot === null);
-  const root = cachedRoot ?? fetchedRoot.data ?? null;
+  const candidateRoot = cachedRoot ?? fetchedRoot.data ?? null;
+  const root =
+    candidateRoot?.channel_id === channelId && candidateRoot.thread_id == null
+      ? candidateRoot
+      : null;
+  const rootUnavailable =
+    fetchedRoot.isError ||
+    (candidateRoot != null &&
+      (candidateRoot.channel_id !== channelId || candidateRoot.thread_id != null));
 
   const thread = useMemo(() => flattenMessages(replies.data), [replies.data]);
   const rows = useMemo<Row[]>(() => {
@@ -235,10 +248,41 @@ export default function ThreadScreen() {
   }, [channelId, params.channelName, rootId, root?.text]);
 
   const listRef = useRef<FlashListRef<Row>>(null);
+  const [highlightedId, setHighlightedId] = useState<number | null>(null);
+  const landedOnMessage = useRef<number | null>(null);
+  useEffect(() => {
+    if (!targetMessageId || landedOnMessage.current === targetMessageId) return;
+    const idx = rows.findIndex((row) => row.m.id === targetMessageId);
+    if (idx >= 0) {
+      landedOnMessage.current = targetMessageId;
+      atBottom.current = false;
+      setHighlightedId(targetMessageId);
+      setTimeout(() => setHighlightedId(null), 1800);
+      setTimeout(() => {
+        listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
+      }, 80);
+      setTimeout(() => {
+        listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
+      }, 300);
+    } else if (thread.length && thread[0].id <= targetMessageId) {
+      landedOnMessage.current = targetMessageId;
+    } else if ((replies.data?.pages.length || 0) >= MAX_DEEP_LINK_PAGES) {
+      landedOnMessage.current = targetMessageId;
+    } else if (replies.hasNextPage && !replies.isFetchingNextPage) {
+      void replies.fetchNextPage();
+    } else if (!replies.hasNextPage) {
+      landedOnMessage.current = targetMessageId;
+    }
+  }, [
+    targetMessageId, rows, thread, replies.hasNextPage, replies.isFetchingNextPage,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderRow = useCallback(
     ({ item }: { item: Row }) => (
-      <View style={item.kind === "root" ? styles.rootMsg : undefined}>
+      <View style={[
+        item.kind === "root" ? styles.rootMsg : undefined,
+        highlightedId === item.m.id ? styles.deepLinkTarget : undefined,
+      ]}>
         <MessageItem
           session={session}
           message={item.m}
@@ -248,8 +292,25 @@ export default function ThreadScreen() {
         />
       </View>
     ),
-    [session, starredIds],
+    [session, starredIds, highlightedId],
   );
+
+  if (groupMismatch) {
+    return (
+      <View style={styles.root}>
+        <Text style={styles.empty}>This thread doesn't belong to the linked group.</Text>
+      </View>
+    );
+  }
+  if (rootUnavailable) {
+    return (
+      <View style={styles.root}>
+        <Text style={styles.empty}>
+          This thread doesn't exist here, or you don't have access to it.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <>
@@ -453,6 +514,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   headerBtns: { flexDirection: "row", gap: 16 },
   headerBtnOff: { opacity: 0.35 },
+  deepLinkTarget: { backgroundColor: "rgba(139,124,255,0.16)", borderRadius: 8 },
   headerTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
   headerChan: { color: colors.dim },
   rootMsg: {

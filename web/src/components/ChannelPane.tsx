@@ -18,6 +18,7 @@ import { buildMentionIndex } from "../lib/mentions";
 import { MessageLog } from "./MessageLog";
 import { Composer } from "./Composer";
 import { LiveButton, LiveStrip, SpeakButton } from "./VoiceControls";
+import { copyDeepLink } from "../lib/deepLinks";
 
 function pinSnippet(m: { alias?: string | null; text?: string }): string {
   const alias = (m.alias || "").trim();
@@ -231,6 +232,12 @@ export function ChannelPane() {
           </div>
         )}
         <div className="ago-head-actions">
+          <button className="btn sm" title="Copy link to this channel"
+            onClick={() => void copyDeepLink({
+              kind: "channel", groupId: group.id, channelId: channel.id,
+            }, "Channel")}>
+            <Icon name="link" /> Link
+          </button>
           {me?.voice && <SpeakButton />}
           {me?.voice && <LiveButton channelId={channel.id} threadId={null} />}
           <button className={`btn sm ago-star-toggle ${starsOpen ? "active" : ""}`}

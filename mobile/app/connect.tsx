@@ -15,7 +15,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Redirect } from "expo-router";
+import { Redirect, type Href, useLocalSearchParams } from "expo-router";
 import { Image as ExpoImage } from "expo-image";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as WebBrowser from "expo-web-browser";
@@ -33,6 +33,7 @@ WebBrowser.maybeCompleteAuthSession();
 type Step = "server" | "signin";
 
 export default function Connect() {
+  const { next } = useLocalSearchParams<{ next?: string }>();
   const { status, savedUrl, signIn } = useSession();
   const [step, setStep] = useState<Step>(savedUrl ? "signin" : "server");
   const [url, setUrl] = useState(savedUrl);
@@ -83,7 +84,10 @@ export default function Connect() {
     if (step === "signin" && base) void probe(base);
   }, [step, base, probe]);
 
-  if (status === "signedIn") return <Redirect href="/(app)" />;
+  if (status === "signedIn") {
+    const target = next?.startsWith("/") ? next as Href : "/(app)";
+    return <Redirect href={target} />;
+  }
 
   const toSignin = async (target?: string) => {
     const entered = target ?? url;

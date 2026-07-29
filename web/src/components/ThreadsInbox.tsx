@@ -33,7 +33,7 @@ function InboxRow({ t }: { t: ThreadRow }) {
     <div className={`ago-inbox-row ${t.unread ? "unread" : ""}`}
       onClick={() => {
         ui.selectChannel(t.group_id, t.channel_id);
-        ui.openThread(root.id);
+        ui.openThread(root.id, "replace");
       }}>
       <div className="ago-inbox-top">
         <span className="chan"><span className="hash">#</span>{t.channel_name}<span className="grp"> · {t.group_name}</span></span>
