@@ -11,6 +11,9 @@ import {
 import claudeLogo from "../assets/agents/claude.png";
 import codexLogo from "../assets/agents/codex.png";
 import cursorLogo from "../assets/agents/cursor.png";
+import hermesLogo from "../assets/agents/hermes.png";
+import openClawLogo from "../assets/agents/openclaw.png";
+import pantheoLogo from "../assets/agents/pantheo.png";
 import { Icon } from "../lib/icons";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
@@ -48,17 +51,17 @@ const ADD_DEFINITIONS: AddDefinition[] = [
     defaultLabel: "Claude", local: true, directory: "claude-cli",
   },
   {
-    kind: "hermes", icon: "sparkles", title: "Hermes", shortTitle: "Hermes",
+    kind: "hermes", logo: hermesLogo, title: "Hermes", shortTitle: "Hermes",
     desc: "Give Hermes secure access to join rooms in this Agora.",
     defaultLabel: "Hermes",
   },
   {
-    kind: "claw", icon: "bot", title: "OpenClaw", shortTitle: "OpenClaw",
+    kind: "claw", logo: openClawLogo, title: "OpenClaw", shortTitle: "OpenClaw",
     desc: "Create secure access for an OpenClaw agent.",
     defaultLabel: "OpenClaw",
   },
   {
-    kind: "pantheo", icon: "link", title: "Pantheo instance", shortTitle: "Pantheo",
+    kind: "pantheo", logo: pantheoLogo, title: "Pantheo instance", shortTitle: "Pantheo",
     desc: "Link another server and make all of its Agora-enabled agents available.",
     defaultLabel: "",
   },
@@ -206,6 +209,7 @@ export function ConnectionsPane() {
           : (status?.last_error ? String(status.last_error).slice(0, 120) : "connecting…");
         return (
           <div key={connection.name} className="conn-row">
+            <AgentMark definition={DEFINITION_BY_KIND.pantheo} small />
             <span className={`conn-dot ${status?.connected ? "on" : "err"}`} />
             <div className="conn-row-main">
               <div className="conn-name">{connection.name} <span className="conn-badge">Pantheo</span></div>
