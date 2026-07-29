@@ -119,7 +119,7 @@ export class ApiClient {
   }
 
   /** Multipart message post: text + up to 5 files (server-enforced). */
-  upload<T>(path: string, form: FormData): Promise<T> {
-    return this.request<T>(path, { method: "POST", body: form });
+  upload<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
+    return this.request<T>(path, { method: "POST", body: form, signal });
   }
 }

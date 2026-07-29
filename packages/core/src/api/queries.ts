@@ -290,6 +290,8 @@ export function useSendMessage(channelId: string) {
       text: string;
       threadId: number | null;
       files?: OutgoingFile[];
+      /** Cancels an attachment upload; text-only sends do not need one. */
+      signal?: AbortSignal;
       /** Ask agents to answer in a thread under this (top-level) message. */
       replyInThread?: boolean;
     }) => {
@@ -304,7 +306,11 @@ export function useSendMessage(channelId: string) {
         for (const f of v.files) {
           appendFile(form, "files", f);
         }
-        return api.upload<Message>(`/api/channels/${channelId}/messages/upload`, form);
+        return api.upload<Message>(
+          `/api/channels/${channelId}/messages/upload`,
+          form,
+          v.signal,
+        );
       }
       return api.post<Message>(`/api/channels/${channelId}/messages`, {
         text: v.text,

@@ -36,6 +36,20 @@ describe("materializeDroppedFile", () => {
       .resolves.toMatchObject({ name: "promised.png", size: 8 });
   });
 
+  it("starts reading synchronously", () => {
+    const source = new File(["x"], "shot.png");
+    let started = false;
+    Object.defineProperty(source, "arrayBuffer", {
+      value: () => {
+        started = true;
+        return Promise.resolve(new Uint8Array([1]).buffer);
+      },
+    });
+
+    void materializeDroppedFile(source);
+    expect(started).toBe(true);
+  });
+
   it("enforces the byte limit again after reading", async () => {
     const source = new File([], "misreported.png");
     Object.defineProperty(source, "arrayBuffer", {

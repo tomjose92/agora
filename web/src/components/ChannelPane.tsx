@@ -264,7 +264,7 @@ export function ChannelPane() {
       <Composer channelId={channel.id} channelName={channel.name} threadId={null}
         agents={agents} candidates={candidates} voiceOK={!!me?.voice}
         replyInThread={replyInThread}
-        onToggleReplyInThread={() => setReplyInThread(!replyInThread)} />
+        onSetReplyInThread={setReplyInThread} />
     </div>
   );
 }

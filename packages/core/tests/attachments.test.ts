@@ -61,7 +61,7 @@ describe("attachment drafts", () => {
     store.stage("c:a", [file("new")], "ready", 5);
 
     const ids = sent.map((entry) => entry.id);
-    expect(store.beginSend("c:a", ids)).toBe(true);
+    expect(store.beginSend("c:a", ids, () => {})).toBe(true);
     store.sendSucceeded("c:a", ids);
 
     expect(useAttachmentDrafts.getState().byDraft["c:a"].map((entry) => entry.name))
@@ -72,7 +72,7 @@ describe("attachment drafts", () => {
     const store = useAttachmentDrafts.getState();
     const [entry] = store.stage("c:a", [file("sent")], "ready", 5).accepted;
 
-    expect(store.beginSend("c:a", [entry.id])).toBe(true);
+    expect(store.beginSend("c:a", [entry.id], () => {})).toBe(true);
     expect(store.remove("c:a", entry.id)).toBe(false);
     expect(useAttachmentDrafts.getState().byDraft["c:a"][0].status).toBe("sending");
 
@@ -83,11 +83,25 @@ describe("attachment drafts", () => {
   it("ignores late send completion after a session reset", () => {
     const store = useAttachmentDrafts.getState();
     const [entry] = store.stage("c:a", [file("sent")], "ready", 5).accepted;
-    expect(store.beginSend("c:a", [entry.id])).toBe(true);
+    expect(store.beginSend("c:a", [entry.id], () => {})).toBe(true);
 
     store.reset();
     store.sendSucceeded("c:a", [entry.id]);
 
     expect(useAttachmentDrafts.getState().byDraft).toEqual({});
+  });
+
+  it("keeps cancellation available through the draft transaction", () => {
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("sent")], "ready", 5).accepted;
+    let aborted = false;
+    expect(store.beginSend("c:a", [entry.id], () => { aborted = true; })).toBe(true);
+
+    expect(store.cancelSend("c:a", entry.id)).toBe(true);
+    expect(aborted).toBe(true);
+    expect(store.cancelSend("c:a", "other")).toBe(false);
+
+    store.sendFailed("c:a", [entry.id]);
+    expect(useAttachmentDrafts.getState().byDraft["c:a"][0].status).toBe("ready");
   });
 });

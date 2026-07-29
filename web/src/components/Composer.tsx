@@ -17,6 +17,7 @@ import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
 
 const MAX_FILES = 5;
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 120_000;
 const NO_ATTACHMENTS: DraftAttachment[] = [];
 
 export interface MentionCandidate {
@@ -79,7 +80,7 @@ function AgentAv({ a, cls }: { a: { id: string; avatar?: string }; cls: string }
   return <span className={`ago-av ${cls}`}><Icon name="bot" /></span>;
 }
 
-export function Composer({ channelId, channelName, threadId, agents = [], candidates = [], voiceOK, replyInThread, onToggleReplyInThread }: {
+export function Composer({ channelId, channelName, threadId, agents = [], candidates = [], voiceOK, replyInThread, onSetReplyInThread }: {
   channelId: string;
   channelName: string;
   threadId: number | null;
@@ -90,7 +91,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   /** Server has STT/TTS (me.voice): show the mic. */
   voiceOK?: boolean;
   replyInThread?: boolean;
-  onToggleReplyInThread?: () => void;
+  onSetReplyInThread?: (value: boolean) => void;
 }) {
   const send = useSendMessage(channelId);
   const me = useMe().data;
@@ -266,30 +267,46 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
     }));
     const sentIds = readyAttachments.map(entry => entry.id);
     const sentText = text;
-    if (sentIds.length && !useAttachmentDrafts.getState().beginSend(draftKey, sentIds)) {
+    const controller = sentIds.length ? new AbortController() : null;
+    if (controller && !useAttachmentDrafts.getState().beginSend(
+      draftKey,
+      sentIds,
+      () => controller.abort(),
+    )) {
+      toast("Attachments changed — please try Send again", { variant: "warn" });
       return;
     }
+    const uploadTimer = controller
+      ? setTimeout(() => controller.abort(), ATTACHMENT_UPLOAD_TIMEOUT_MS)
+      : undefined;
     void send.mutateAsync({
       text: outText,
       threadId,
       files: outgoing.length ? outgoing : undefined,
       replyInThread,
+      signal: controller?.signal,
     }).then(() => {
       if (!sentIds.length) return;
       useAttachmentDrafts.getState().sendSucceeded(draftKey, sentIds);
       if ((useDrafts.getState().drafts[draftKey] ?? "") === sentText) {
         setText(draftKey, "");
       }
-      if (replyInThread && onToggleReplyInThread) onToggleReplyInThread();
+      if (replyInThread && onSetReplyInThread) onSetReplyInThread(false);
     }).catch((error) => {
       if (sentIds.length) useAttachmentDrafts.getState().sendFailed(draftKey, sentIds);
-      toast("Send failed: " + (error as Error).message, { variant: "warn" });
+      const aborted = controller?.signal.aborted;
+      toast(
+        aborted ? "Attachment upload cancelled or timed out" : "Send failed: " + (error as Error).message,
+        { variant: "warn" },
+      );
+    }).finally(() => {
+      if (uploadTimer !== undefined) clearTimeout(uploadTimer);
     });
     // Preserve attachment-bearing drafts until the upload succeeds. Plain text
     // keeps the existing fast optimistic composer behavior.
     if (!sentIds.length) {
       setText(draftKey, "");
-      if (replyInThread && onToggleReplyInThread) onToggleReplyInThread();
+      if (replyInThread && onSetReplyInThread) onSetReplyInThread(false);
     }
     if (taRef.current) { autoGrow(taRef.current); taRef.current.focus(); }
   };
@@ -347,13 +364,15 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
                     : entry.name}
               </span>
               {entry.status === "ready" && <span className="fsize">{humanSize(entry.size)}</span>}
-              {entry.status !== "sending" && (
-                <button className="ago-x"
-                  title={entry.status === "preparing" ? "Cancel" : "Remove"}
-                  onClick={() => useAttachmentDrafts.getState().remove(draftKey, entry.id)}>
-                  <Icon name="x" />
-                </button>
-              )}
+              <button className="ago-x"
+                title={entry.status === "sending"
+                  ? "Cancel upload"
+                  : entry.status === "preparing" ? "Cancel" : "Remove"}
+                onClick={() => entry.status === "sending"
+                  ? useAttachmentDrafts.getState().cancelSend(draftKey, entry.id)
+                  : useAttachmentDrafts.getState().remove(draftKey, entry.id)}>
+                <Icon name="x" />
+              </button>
             </span>
           ))}
         </div>
@@ -408,10 +427,10 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           <Icon name="paperclip" />
         </button>
         {voiceOK && <MicButton channelId={channelId} threadId={threadId} />}
-        {!inThread && onToggleReplyInThread && (
+        {!inThread && onSetReplyInThread && (
           <button className={`btn ago-thread-ask ${replyInThread ? "active" : ""}`} id="ago-thread-ask"
             title="Agents answer this message in a thread under it"
-            onClick={onToggleReplyInThread}>
+            onClick={() => onSetReplyInThread(!replyInThread)}>
             <Icon name="messages-square" />
           </button>
         )}

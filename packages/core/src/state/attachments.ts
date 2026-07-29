@@ -4,7 +4,7 @@
 import { create } from "zustand";
 
 export type DraftAttachmentStatus = "preparing" | "ready" | "sending" | "failed";
-type StageAttachmentStatus = Exclude<DraftAttachmentStatus, "failed">;
+type StageAttachmentStatus = "preparing" | "ready";
 
 export interface DraftAttachment {
   id: string;
@@ -31,7 +31,8 @@ interface AttachmentDraftState {
   ) => StageResult;
   complete: (draftKey: string, id: string, file: File) => boolean;
   fail: (draftKey: string, id: string, error: string) => boolean;
-  beginSend: (draftKey: string, ids: string[]) => boolean;
+  beginSend: (draftKey: string, ids: string[], abort: () => void) => boolean;
+  cancelSend: (draftKey: string, id: string) => boolean;
   sendSucceeded: (draftKey: string, ids: string[]) => void;
   sendFailed: (draftKey: string, ids: string[]) => void;
   remove: (draftKey: string, id: string) => boolean;
@@ -39,6 +40,7 @@ interface AttachmentDraftState {
 }
 
 let sequence = 0;
+const sendingTransactions = new Map<string, { ids: Set<string>; abort: () => void }>();
 
 function nextAttachmentId(): string {
   sequence += 1;
@@ -109,13 +111,14 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
     return failed;
   },
 
-  beginSend: (draftKey, ids) => {
+  beginSend: (draftKey, ids, abort) => {
     const selected = new Set(ids);
     const current = get().byDraft[draftKey] ?? [];
-    if (!ids.length || ids.some((id) =>
+    if (sendingTransactions.has(draftKey) || !ids.length || ids.some((id) =>
       !current.some((entry) => entry.id === id && entry.status === "ready"))) {
       return false;
     }
+    sendingTransactions.set(draftKey, { ids: selected, abort });
     set((state) => ({
       byDraft: {
         ...state.byDraft,
@@ -126,7 +129,15 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
     return true;
   },
 
+  cancelSend: (draftKey, id) => {
+    const transaction = sendingTransactions.get(draftKey);
+    if (!transaction?.ids.has(id)) return false;
+    transaction.abort();
+    return true;
+  },
+
   sendSucceeded: (draftKey, ids) => {
+    sendingTransactions.delete(draftKey);
     const sent = new Set(ids);
     set((state) => {
       const current = state.byDraft[draftKey] ?? [];
@@ -141,6 +152,7 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
   },
 
   sendFailed: (draftKey, ids) => {
+    sendingTransactions.delete(draftKey);
     const sent = new Set(ids);
     set((state) => {
       const current = state.byDraft[draftKey] ?? [];
@@ -175,5 +187,9 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
     return removed;
   },
 
-  reset: () => set({ byDraft: {} }),
+  reset: () => {
+    for (const transaction of sendingTransactions.values()) transaction.abort();
+    sendingTransactions.clear();
+    set({ byDraft: {} });
+  },
 }));
