@@ -16,12 +16,11 @@ import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
 
 type Tab = "list" | "add";
-type AddKind = "pantheo" | PairingKind;
-type AgentCategory = "coding" | "other";
+type AddKind = "pantheo" | "coding" | PairingKind;
+type ConnectableKind = Exclude<AddKind, "coding">;
 
 interface AddDefinition {
-  kind: AddKind;
-  category: AgentCategory;
+  kind: ConnectableKind;
   icon?: string;
   logo?: string;
   title: string;
@@ -34,32 +33,32 @@ interface AddDefinition {
 
 const ADD_DEFINITIONS: AddDefinition[] = [
   {
-    kind: "codex", category: "coding", logo: codexLogo, title: "Codex CLI", shortTitle: "Codex",
+    kind: "codex", logo: codexLogo, title: "Codex CLI", shortTitle: "Codex",
     desc: "Continue Codex sessions and work on repositories from Agora.",
     defaultLabel: "Codex", local: true, directory: "codex-cli",
   },
   {
-    kind: "cursor", category: "coding", logo: cursorLogo, title: "Cursor CLI", shortTitle: "Cursor",
+    kind: "cursor", logo: cursorLogo, title: "Cursor CLI", shortTitle: "Cursor",
     desc: "Run Cursor CLI against projects on your computer.",
     defaultLabel: "Cursor", local: true, directory: "cursor-cli",
   },
   {
-    kind: "claude", category: "coding", logo: claudeLogo, title: "Claude Code", shortTitle: "Claude",
+    kind: "claude", logo: claudeLogo, title: "Claude Code", shortTitle: "Claude",
     desc: "Continue Claude Code sessions from any Agora channel.",
     defaultLabel: "Claude", local: true, directory: "claude-cli",
   },
   {
-    kind: "hermes", category: "other", icon: "sparkles", title: "Hermes", shortTitle: "Hermes",
+    kind: "hermes", icon: "sparkles", title: "Hermes", shortTitle: "Hermes",
     desc: "Give Hermes secure access to join rooms in this Agora.",
     defaultLabel: "Hermes",
   },
   {
-    kind: "claw", category: "other", icon: "bot", title: "OpenClaw", shortTitle: "OpenClaw",
+    kind: "claw", icon: "bot", title: "OpenClaw", shortTitle: "OpenClaw",
     desc: "Create secure access for an OpenClaw agent.",
     defaultLabel: "OpenClaw",
   },
   {
-    kind: "pantheo", category: "other", icon: "link", title: "Pantheo instance", shortTitle: "Pantheo",
+    kind: "pantheo", icon: "link", title: "Pantheo instance", shortTitle: "Pantheo",
     desc: "Link another server and make all of its Agora-enabled agents available.",
     defaultLabel: "",
   },
@@ -67,7 +66,7 @@ const ADD_DEFINITIONS: AddDefinition[] = [
 
 const DEFINITION_BY_KIND = Object.fromEntries(
   ADD_DEFINITIONS.map(definition => [definition.kind, definition]),
-) as Record<AddKind, AddDefinition>;
+) as Record<ConnectableKind, AddDefinition>;
 
 function copyText(text: string, what = "Copied") {
   void navigator.clipboard.writeText(text).then(
@@ -118,6 +117,29 @@ function CommandBlock({ text, label }: { text: string; label: string }) {
   );
 }
 
+function AgentCard({ definition, onSelect }: { definition: AddDefinition; onSelect: () => void }) {
+  const guide = guidePath(definition);
+  return (
+    <article className="conn-card">
+      <button className="conn-card-select" onClick={onSelect}>
+        <div className="conn-card-top">
+          <AgentMark definition={definition} />
+          {definition.local && <span className="conn-local-badge">Runs on your computer</span>}
+        </div>
+        <div className="conn-card-title">
+          {definition.title}<Icon name="chevron-right" />
+        </div>
+        <div className="conn-card-desc">{definition.desc}</div>
+      </button>
+      {guide && (
+        <a className="conn-guide-link" href={guide} target="_blank" rel="noopener noreferrer">
+          Setup guide <Icon name="external-link" />
+        </a>
+      )}
+    </article>
+  );
+}
+
 export function ConnectionsPane() {
   const ui = useUiState();
   const open = ui.panel === "connections";
@@ -150,7 +172,9 @@ export function ConnectionsPane() {
 
   const goAdd = (kind?: AddKind) => {
     setAddKind(kind ?? null); setIssued(null); setTab("add");
-    setPairName(kind && kind !== "pantheo" ? DEFINITION_BY_KIND[kind].defaultLabel : "");
+    setPairName(kind && kind !== "pantheo" && kind !== "coding"
+      ? DEFINITION_BY_KIND[kind].defaultLabel
+      : "");
   };
 
   const listTab = (
@@ -244,37 +268,43 @@ export function ConnectionsPane() {
     <div className="conn-catalog">
       <div className="conn-intro">
         <span className="conn-kicker">Bring your agents into the conversation</span>
-        <h3>Choose an agent to connect</h3>
-        <p>Keep coding sessions moving from any Agora channel, or link another agent service.</p>
+        <h3>What would you like to connect?</h3>
+        <p>Link an agent service or choose a coding agent that runs on your computer.</p>
       </div>
-      {(["coding", "other"] as const).map(category => (
-        <section key={category} className="conn-catalog-section">
-          <h4>{category === "coding" ? "Coding agents" : "Other connections"}</h4>
-          <div className="conn-cards">
-            {ADD_DEFINITIONS.filter(definition => definition.category === category).map(definition => (
-              <article key={definition.kind} className="conn-card">
-                <button className="conn-card-select" onClick={() => goAdd(definition.kind)}>
-                  <div className="conn-card-top">
-                    <AgentMark definition={definition} />
-                    {definition.local && <span className="conn-local-badge">Runs on your computer</span>}
-                  </div>
-                  <div className="conn-card-title">
-                    {definition.title}<Icon name="chevron-right" />
-                  </div>
-                  <div className="conn-card-desc">{definition.desc}</div>
-                </button>
-                {guidePath(definition) && (
-                  <a className="conn-guide-link" href={guidePath(definition)!} target="_blank"
-                    rel="noopener noreferrer">
-                    Setup guide <Icon name="external-link" />
-                  </a>
-                )}
-              </article>
-            ))}
-          </div>
-        </section>
-      ))}
+      <div className="conn-cards top-level">
+        <AgentCard definition={DEFINITION_BY_KIND.pantheo} onSelect={() => goAdd("pantheo")} />
+        <article className="conn-card">
+          <button className="conn-card-select" onClick={() => goAdd("coding")}>
+            <div className="conn-card-top">
+              <span className="conn-logo-stack" aria-hidden>
+                <img src={codexLogo} alt="" /><img src={cursorLogo} alt="" /><img src={claudeLogo} alt="" />
+              </span>
+              <span className="conn-local-badge">Runs on your computer</span>
+            </div>
+            <div className="conn-card-title">Coding agents <Icon name="chevron-right" /></div>
+            <div className="conn-card-desc">Connect Codex CLI, Cursor CLI, or Claude Code.</div>
+          </button>
+        </article>
+        <AgentCard definition={DEFINITION_BY_KIND.hermes} onSelect={() => goAdd("hermes")} />
+        <AgentCard definition={DEFINITION_BY_KIND.claw} onSelect={() => goAdd("claw")} />
+      </div>
     </div>
+  );
+
+  const codingPicker = (
+    <>
+      <BackButton onClick={() => setAddKind(null)} label="All connection types" />
+      <div className="conn-intro conn-coding-intro">
+        <span className="conn-kicker">Runs on your computer</span>
+        <h3>Choose a coding agent</h3>
+        <p>Continue local coding sessions and repository work from Agora.</p>
+      </div>
+      <div className="conn-cards">
+        {(["codex", "cursor", "claude"] as const).map(kind => (
+          <AgentCard key={kind} definition={DEFINITION_BY_KIND[kind]} onSelect={() => goAdd(kind)} />
+        ))}
+      </div>
+    </>
   );
 
   const addPantheo = (
@@ -403,6 +433,7 @@ export function ConnectionsPane() {
         <div className="conn-body">
           {tab === "list" ? listTab
             : addKind === null ? addPicker
+            : addKind === "coding" ? codingPicker
             : addKind === "pantheo" ? addPantheo
             : addAgent(addKind)}
         </div>
@@ -411,10 +442,10 @@ export function ConnectionsPane() {
   );
 }
 
-function BackButton({ onClick }: { onClick: () => void }) {
+function BackButton({ onClick, label = "All agent types" }: { onClick: () => void; label?: string }) {
   return (
     <button className="btn sm conn-back" onClick={onClick}>
-      <Icon name="chevron-left" /> All agent types
+      <Icon name="chevron-left" /> {label}
     </button>
   );
 }
