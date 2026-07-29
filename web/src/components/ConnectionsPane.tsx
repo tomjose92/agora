@@ -1,8 +1,9 @@
 /* Connections overlay (#conn-panel): two tabs — "Connections" lists the instance
    name, linked Pantheo instances (4s status poll while open) and dial-in pairing
-   tokens; "Add agent" is a guided flow (pick Pantheo / OpenClaw / Hermes, then
-   link or issue a token). Admin only. React-query's refetch keeps typed input
-   intact while the poll refreshes. */
+   tokens (live status polled on the same cadence);
+   "Add agent" is a guided flow (pick Pantheo / OpenClaw / Hermes, then link or
+   issue a token). Admin only. React-query's refetch keeps typed input intact
+   while the poll refreshes. */
 
 import { useEffect, useState } from "react";
 import {
@@ -61,7 +62,7 @@ export function ConnectionsPane() {
   const ui = useUiState();
   const open = ui.panel === "connections";
   const info = useConnectionsInfo(open, open).data;
-  const tokens = usePairingTokens(open).data || [];
+  const tokens = usePairingTokens(open, open).data || [];
   const connMut = useConnectionMutations();
   const pairMut = usePairingMutations();
   const [tab, setTab] = useState<Tab>("list");
@@ -148,20 +149,27 @@ export function ConnectionsPane() {
         </div>
       )}
       <h4>Dial-in agents <span className="dim">— pairing tokens for OpenClaw, Hermes, bridges</span></h4>
-      {tokens.length ? tokens.map(t => (
-        <div key={t.token} className="conn-row">
-          <span className="conn-dot off"></span>
-          <div className="conn-row-main">
-            <div className="conn-name">{t.name} <span className="conn-badge">{tokenBadge(t.name)}</span></div>
-            <div className="conn-url mono">{t.token.slice(0, 10)}…{t.token.slice(-4)}</div>
+      {tokens.length ? tokens.map(t => {
+        const liveNames = (t.agents || []).map(a => a.name || a.id).join(", ");
+        const detail = t.connected
+          ? (liveNames ? `live: ${liveNames}` : "connected, no agents registered")
+          : "offline";
+        return (
+          <div key={t.token} className="conn-row">
+            <span className={`conn-dot ${t.connected ? "on" : "off"}`}></span>
+            <div className="conn-row-main">
+              <div className="conn-name">{t.name} <span className="conn-badge">{tokenBadge(t.name)}</span></div>
+              <div className="conn-url mono">{t.token.slice(0, 10)}…{t.token.slice(-4)}</div>
+              <div className="conn-url">{detail}</div>
+            </div>
+            <button className="btn sm" onClick={() => copyText(t.token, "Token copied")}>Copy</button>
+            <button className="btn sm danger"
+              onClick={() => pairMut.revoke.mutate(t.token, { onError: err("Revoke failed") })}>
+              Revoke
+            </button>
           </div>
-          <button className="btn sm" onClick={() => copyText(t.token, "Token copied")}>Copy</button>
-          <button className="btn sm danger"
-            onClick={() => pairMut.revoke.mutate(t.token, { onError: err("Revoke failed") })}>
-            Revoke
-          </button>
-        </div>
-      )) : (
+        );
+      }) : (
         <div className="dim conn-empty">
           No pairing tokens issued. <button className="btn sm" onClick={() => goAdd()}>Add an agent</button>
         </div>

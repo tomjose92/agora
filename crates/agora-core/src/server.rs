@@ -2525,6 +2525,20 @@ async fn remove_connection(
     Ok(Json(json!({"ok": true})))
 }
 
+#[derive(serde::Serialize)]
+struct PairingAgentStatus<'a> {
+    id: &'a str,
+    name: &'a str,
+}
+
+#[derive(serde::Serialize)]
+struct PairingTokenStatus<'a> {
+    #[serde(flatten)]
+    token: &'a PairingToken,
+    connected: bool,
+    agents: Vec<PairingAgentStatus<'a>>,
+}
+
 async fn list_pairing(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
@@ -2532,7 +2546,27 @@ async fn list_pairing(
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     require_instance_admin(&user)?;
-    Ok(Json(json!({"tokens": state.config.snapshot().pairing_tokens})))
+    // Live status rides on the response only — the config on disk keeps
+    // just the token itself.
+    let live = state.hub.pairing_status();
+    let snapshot = state.config.snapshot();
+    let tokens: Vec<PairingTokenStatus<'_>> = snapshot
+        .pairing_tokens
+        .iter()
+        .map(|t| {
+            let agents = live.get(&t.token);
+            PairingTokenStatus {
+                token: t,
+                connected: agents.is_some(),
+                agents: agents
+                    .into_iter()
+                    .flatten()
+                    .map(|(id, name)| PairingAgentStatus { id, name })
+                    .collect(),
+            }
+        })
+        .collect();
+    Ok(Json(json!({"tokens": tokens})))
 }
 
 async fn create_pairing(
@@ -2564,6 +2598,7 @@ async fn revoke_pairing(
     let user = require_user(&state, &headers, &q)?;
     require_instance_admin(&user)?;
     state.config.update(|c| c.pairing_tokens.retain(|t| t.token != token));
+    state.hub.close_pairing_conns(&token);
     Ok(Json(json!({"ok": true})))
 }
 
@@ -3005,19 +3040,38 @@ async fn agent_ws(
     let Some(source) = state.config.valid_pairing_token(&token) else {
         return (StatusCode::UNAUTHORIZED, "bad pairing token").into_response();
     };
-    ws.on_upgrade(move |socket| handle_agent_socket(state, socket, source))
+    ws.on_upgrade(move |socket| handle_agent_socket(state, socket, source, token))
+}
+
+fn register_pairing_socket(
+    state: &AppState,
+    conn_id: u64,
+    token: &str,
+) -> Option<Arc<tokio::sync::Notify>> {
+    let close = state.hub.register_pairing_conn(conn_id, token);
+    // Revoke may have landed after the upgrade check but before registration.
+    // Re-check only after close_pairing_conns can see this connection.
+    if state.config.valid_pairing_token(token).is_none() {
+        state.hub.unregister_connection(conn_id);
+        return None;
+    }
+    Some(close)
 }
 
 /// Dial-in bridge: the agent speaks first with `hello {agents: [...]}`,
 /// then the same frame protocol as an outbound connection.
-async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String) {
+async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String, token: String) {
     let (sink, mut stream) = socket.split();
     let (tx, rx) = unbounded_channel::<Value>();
     let conn_id = state.hub.next_conn_id();
+    let Some(close) = register_pairing_socket(&state, conn_id, &token) else {
+        return;
+    };
     let mut registered = false;
     let mut writer = tokio::spawn(pump_ws_writer(sink, rx));
     loop {
         tokio::select! {
+            _ = close.notified() => break,
             // Writer stopped (send failed / channel closed): tear the reader down.
             _ = &mut writer => break,
             incoming = stream.next() => {
@@ -3395,6 +3449,188 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("authorization", format!("Bearer {token}").parse().unwrap());
         h
+    }
+
+    #[tokio::test]
+    async fn pairing_list_reports_live_agents_and_revoke_closes_the_socket() {
+        let (state, _dir) = test_state();
+        state
+            .hub
+            .store
+            .create_user("boss", "Boss", None, "admin")
+            .unwrap();
+        state.config.update(|c| {
+            c.pairing_tokens.push(PairingToken {
+                token: "tok-a".into(),
+                name: "duplicate".into(),
+                created_at: 123.0,
+            });
+            c.pairing_tokens.push(PairingToken {
+                token: "tok-b".into(),
+                name: "duplicate".into(),
+                created_at: 456.0,
+            });
+        });
+        let headers = session_headers(&state, "boss");
+        let q = || Query(HashMap::new());
+
+        let initial = list_pairing(State(state.clone()), q(), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(
+            initial["tokens"][0],
+            json!({
+                "token": "tok-a",
+                "name": "duplicate",
+                "created_at": 123.0,
+                "connected": false,
+                "agents": [],
+            })
+        );
+
+        let conn_id = state.hub.next_conn_id();
+        let close = state.hub.register_pairing_conn(conn_id, "tok-a");
+        let connected = list_pairing(State(state.clone()), q(), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(connected["tokens"][0]["connected"], true);
+        assert_eq!(connected["tokens"][0]["agents"], json!([]));
+        assert_eq!(connected["tokens"][1]["connected"], false);
+
+        let (tx, _rx) = unbounded_channel();
+        state.hub.register_agent(AgentHandle {
+            agent_id: "bridge-agent".into(),
+            agent_name: "Bridge Agent".into(),
+            requires_mention: false,
+            wants_context_feed: false,
+            has_avatar: false,
+            avatar_v: 0,
+            source: "pairing:duplicate".into(),
+            conn_id,
+            tx,
+        });
+        let with_agent = list_pairing(State(state.clone()), q(), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(
+            with_agent["tokens"][0]["agents"],
+            json!([{"id": "bridge-agent", "name": "Bridge Agent"}])
+        );
+        assert_eq!(with_agent["tokens"][1]["agents"], json!([]));
+
+        let _ = revoke_pairing(
+            State(state.clone()),
+            Path("tok-a".into()),
+            q(),
+            headers.clone(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), close.notified())
+                .await
+                .is_ok()
+        );
+        state.hub.unregister_connection(conn_id);
+
+        // Simulate an upgrade that passed its first token check immediately
+        // before revoke but did not register in the hub until afterward.
+        let late_conn = state.hub.next_conn_id();
+        assert!(register_pairing_socket(&state, late_conn, "tok-a").is_none());
+        assert!(!state.hub.pairing_status().contains_key("tok-a"));
+
+        let revoked = list_pairing(State(state), q(), headers).await.unwrap().0;
+        assert_eq!(revoked["tokens"].as_array().unwrap().len(), 1);
+        assert_eq!(revoked["tokens"][0]["token"], "tok-b");
+    }
+
+    #[tokio::test]
+    async fn revoking_pairing_token_closes_the_real_agent_socket() {
+        let (state, _dir) = test_state();
+        state
+            .hub
+            .store
+            .create_user("boss", "Boss", None, "admin")
+            .unwrap();
+        state.config.update(|c| {
+            c.pairing_tokens.push(PairingToken {
+                token: "socket-token".into(),
+                name: "socket-test".into(),
+                created_at: 123.0,
+            });
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let service = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, service).await.unwrap();
+        });
+
+        let url = format!("ws://{addr}/agent/ws?token=socket-token");
+        let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                json!({
+                    "type": "hello",
+                    "agents": [{"id": "socket-agent", "name": "Socket Agent"}],
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let status = state.hub.pairing_status();
+                if status
+                    .get("socket-token")
+                    .is_some_and(|agents| agents.iter().any(|(id, _)| id == "socket-agent"))
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("agent hello should register");
+
+        let _ = revoke_pairing(
+            State(state.clone()),
+            Path("socket-token".into()),
+            Query(HashMap::new()),
+            session_headers(&state, "boss"),
+        )
+        .await
+        .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                match socket.next().await {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(_))) => continue,
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Pong(_))) => continue,
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))
+                    | Some(Err(_))
+                    | None => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        })
+        .await
+        .expect("revoked socket should close");
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while state.hub.pairing_status().contains_key("socket-token") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("closed socket should unregister");
+        server.abort();
     }
 
     #[tokio::test]

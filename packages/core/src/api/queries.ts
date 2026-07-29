@@ -737,12 +737,13 @@ export function useConnectionMutations() {
   };
 }
 
-export function usePairingTokens(enabled = true) {
+export function usePairingTokens(enabled = true, poll = false) {
   const api = useApi();
   return useQuery({
     queryKey: keys.pairing,
     queryFn: async () =>
       (await api.get<{ tokens: PairingToken[] }>("/api/pairing")).tokens,
+    refetchInterval: poll ? 4000 : false,
     enabled,
   });
 }
