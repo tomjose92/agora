@@ -14,6 +14,18 @@ import { MicButton } from "./VoiceControls";
 
 const MAX_FILES = 5;
 
+/* WKWebView may expose an unsaved macOS screenshot as a file promise whose
+   backing data only lives for the drop operation. Read it immediately and
+   keep an independent in-memory File for the later multipart upload. */
+export async function materializeDroppedFile(source: File): Promise<File> {
+  const bytes = await source.arrayBuffer();
+  if (!bytes.byteLength) throw new Error("Dropped file was empty");
+  return new File([bytes], source.name || "image", {
+    type: source.type,
+    lastModified: source.lastModified,
+  });
+}
+
 export interface MentionCandidate {
   type: "agent" | "user";
   id: string;
@@ -92,6 +104,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const text = useDrafts(s => s.drafts[draftKey] ?? "");
   const setText = useDrafts(s => s.set);
   const [files, setFiles] = useState<File[]>([]);
+  const [preparingFiles, setPreparingFiles] = useState(0);
   const [mention, setMention] = useState<{ items: MentionCandidate[]; active: number; start: number } | null>(null);
   const [addrOpen, setAddrOpen] = useState(false);
   const addrSel = useAddressing(s => s.addr[draftKey] ?? NO_ADDR);
@@ -99,6 +112,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const addrClear = useAddressing(s => s.clear);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dropReservationsRef = useRef(0);
 
   const inThread = threadId != null;
   const inputId = inThread ? "ago-thread-msg" : "ago-msg";
@@ -128,6 +142,39 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       next.push(f);
     }
     setFiles(next);
+  };
+
+  const addDroppedFiles = async (list: FileList) => {
+    const dropped = Array.from(list);
+    const available = Math.max(0, MAX_FILES - files.length - dropReservationsRef.current);
+    const accepted = dropped.slice(0, available);
+    if (accepted.length < dropped.length) {
+      toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
+    }
+    if (!accepted.length) return;
+
+    dropReservationsRef.current += accepted.length;
+    setPreparingFiles(n => n + accepted.length);
+    try {
+      // Start every read while the drop's promised-file providers are alive.
+      const settled = await Promise.allSettled(accepted.map(materializeDroppedFile));
+      const ready = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+      if (ready.length) {
+        setFiles(current => [...current, ...ready].slice(0, MAX_FILES));
+      }
+      const failed = settled.length - ready.length;
+      if (failed) {
+        toast(
+          failed === 1
+            ? "Could not read the dropped file"
+            : `Could not read ${failed} dropped files`,
+          { variant: "warn" },
+        );
+      }
+    } finally {
+      dropReservationsRef.current = Math.max(0, dropReservationsRef.current - accepted.length);
+      setPreparingFiles(n => Math.max(0, n - accepted.length));
+    }
   };
 
   /* Mention autocomplete: a live "@token" ending at the caret. */
@@ -163,6 +210,10 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   };
 
   const doSend = () => {
+    if (preparingFiles) {
+      toast("Please wait while the dropped file is prepared", { variant: "warn" });
+      return;
+    }
     const t = text.trim();
     if (!t && !files.length) return;
     // "Talk to" prefix: the chosen agents' mentions route the message.
@@ -232,11 +283,21 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           ))}
         </div>
       )}
+      {preparingFiles > 0 && (
+        <div className="ago-pending">
+          <span className="ago-pending-chip">
+            <Icon name="image" />
+            <span className="fname">
+              Preparing {preparingFiles === 1 ? "dropped file…" : `${preparingFiles} dropped files…`}
+            </span>
+          </span>
+        </div>
+      )}
       <div className="chat-input"
         onDragOver={e => e.preventDefault()}
         onDrop={e => {
           e.preventDefault();
-          if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+          if (e.dataTransfer?.files?.length) void addDroppedFiles(e.dataTransfer.files);
         }}>
         {agents.length > 0 && (
           <button className={`btn ago-addr-btn ${addrSel.length ? "active" : ""}`}
@@ -289,7 +350,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
             <Icon name="messages-square" />
           </button>
         )}
-        <button className="btn primary" onClick={doSend}>Send</button>
+        <button className="btn primary" disabled={preparingFiles > 0} onClick={doSend}>Send</button>
         {addrOpen && (
           <div className="ago-addr-pop" id="ago-addr-pop">
             <div className="ago-addr-pop-head">
