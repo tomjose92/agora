@@ -4,7 +4,7 @@
    this stays out of the way. */
 
 import { create } from "zustand";
-import { fetchSpeechUrl, playSpeech, stopAudio, unlockPlayback } from "../lib/voice";
+import { playMessageSpeech, stopAudio, unlockPlayback } from "../lib/voice";
 import { toast } from "../lib/toast";
 
 interface SpeakState {
@@ -15,15 +15,33 @@ interface SpeakState {
 
 let queue: number[] = [];
 let current: HTMLAudioElement | null = null;
+let loading = false;
+let runId = 0;
 let warned = false;
 
 async function next(): Promise<void> {
+  if (loading || current) return;
   const id = queue.shift();
   if (id == null || !useSpeak.getState().on) { current = null; return; }
-  let url: string;
+  loading = true;
+  const run = runId;
+  let finished = false;
   try {
-    url = await fetchSpeechUrl(id);
+    const done = () => {
+      if (run !== runId || finished) return;
+      finished = true;
+      loading = false;
+      current = null;
+      void next();
+    };
+    const playing = await playMessageSpeech(id, done);
+    if (run !== runId || finished) return;
+    loading = false;
+    if (playing) current = playing;
+    else void next();
   } catch (e) {
+    if (run !== runId) return;
+    loading = false;
     // Surface "TTS not configured" once instead of failing silently forever.
     const status = (e as Error & { status?: number }).status;
     if (status === 400 && !warned) {
@@ -33,23 +51,17 @@ async function next(): Promise<void> {
     void next();
     return;
   }
-  const done = () => {
-    URL.revokeObjectURL(url);
-    current = null;
-    void next();
-  };
-  const playing = await playSpeech(url, done);
-  if (playing) current = playing;
-  else done();
 }
 
 export function speakEnqueue(messageId: number): void {
   queue.push(messageId);
-  if (!current) void next();
+  if (!current && !loading) void next();
 }
 
 export function speakStop(): void {
+  runId++;
   queue = [];
+  loading = false;
   const audio = current;
   current = null;
   stopAudio(audio);

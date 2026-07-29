@@ -13,7 +13,7 @@
 import { create } from "zustand";
 import type { Message } from "@agora/core";
 import {
-  fetchSpeechUrl, playSpeech, recMime, stopAudio, unlockPlayback, voiceSupported,
+  playMessageSpeech, recMime, stopAudio, unlockPlayback, voiceSupported,
 } from "../lib/voice";
 import { uploadVoice } from "../lib/voice";
 import { toast } from "../lib/toast";
@@ -62,6 +62,8 @@ interface LiveSession {
   queue: Blob[];
   playQueue: number[];
   audio: HTMLAudioElement | null;
+  playLoading: boolean;
+  playSerial: number;
 }
 
 let session: LiveSession | null = null;
@@ -208,7 +210,7 @@ export function liveOnAgentMessage(m: Message): void {
   live.turnBusy = false;
   if (useSpeak.getState().on) {
     live.playQueue.push(m.id);
-    if (!live.audio) void playNext(live);
+    if (!live.audio && !live.playLoading) void playNext(live);
   } else {
     setState(live, "listening");
   }
@@ -216,35 +218,44 @@ export function liveOnAgentMessage(m: Message): void {
 }
 
 async function playNext(live: LiveSession): Promise<void> {
-  if (session !== live) return;
+  if (session !== live || live.audio || live.playLoading) return;
   const id = live.playQueue.shift();
   if (id == null) {
     live.audio = null;
     setState(live, live.turnBusy ? "thinking" : "listening");
     return;
   }
-  let url: string;
-  try {
-    url = await fetchSpeechUrl(id);
-  } catch {
-    void playNext(live); // unspeakable message — keep the queue moving
-    return;
-  }
-  if (session !== live) { URL.revokeObjectURL(url); return; }
+  live.playLoading = true;
+  const serial = ++live.playSerial;
   live.voicedMs = 0;
   setState(live, "speaking");
   const done = () => {
-    URL.revokeObjectURL(url);
-    if (live.audio) { live.audio = null; void playNext(live); }
+    if (session === live && serial === live.playSerial) {
+      live.playLoading = false;
+      live.audio = null;
+      void playNext(live);
+    }
   };
-  live.audio = await playSpeech(url, done);
-  if (!live.audio) done();
+  try {
+    const audio = await playMessageSpeech(id, done);
+    if (session !== live || serial !== live.playSerial) return;
+    live.playLoading = false;
+    live.audio = audio;
+    if (!audio) void playNext(live);
+  } catch {
+    if (serial !== live.playSerial) return;
+    live.playLoading = false;
+    live.audio = null;
+    void playNext(live); // unspeakable message — keep the queue moving
+  }
 }
 
 export function stopPlayback(live?: LiveSession | null): void {
   const l = live ?? session;
   if (!l) return;
   l.playQueue = [];
+  l.playLoading = false;
+  l.playSerial++;
   const audio = l.audio;
   l.audio = null;
   stopAudio(audio);
@@ -302,7 +313,7 @@ export async function liveToggle(channelId: string, threadId: number | null): Pr
     recorder: null, chunks: [], utterStart: 0, lastVoice: 0,
     voicedMs: 0,
     turnBusy: false, turnTimer: null, queue: [],
-    playQueue: [], audio: null,
+    playQueue: [], audio: null, playLoading: false, playSerial: 0,
   };
   session.timer = setInterval(tick, TICK_MS);
   useLiveVoice.setState({ scope: { channelId, threadId }, state: "listening" });
