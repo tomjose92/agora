@@ -17,10 +17,10 @@ const MAX_FILES = 5;
 /* WKWebView may expose an unsaved macOS screenshot as a file promise whose
    backing data only lives for the drop operation. Read it immediately and
    keep an independent in-memory File for the later multipart upload. */
-export async function materializeDroppedFile(source: File): Promise<File> {
+async function materializeDroppedFile(source: File): Promise<File> {
   const bytes = await source.arrayBuffer();
   if (!bytes.byteLength) throw new Error("Dropped file was empty");
-  return new File([bytes], source.name || "image", {
+  return new File([bytes], source.name || "file", {
     type: source.type,
     lastModified: source.lastModified,
   });
@@ -135,7 +135,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const addFiles = (list: FileList | File[]) => {
     const next = [...files];
     for (const f of Array.from(list)) {
-      if (next.length >= MAX_FILES) {
+      if (next.length + dropReservationsRef.current >= MAX_FILES) {
         toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
         break;
       }
@@ -211,7 +211,12 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
 
   const doSend = () => {
     if (preparingFiles) {
-      toast("Please wait while the dropped file is prepared", { variant: "warn" });
+      toast(
+        preparingFiles === 1
+          ? "Please wait while the dropped file is prepared"
+          : "Please wait while the dropped files are prepared",
+        { variant: "warn" },
+      );
       return;
     }
     const t = text.trim();
@@ -286,7 +291,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       {preparingFiles > 0 && (
         <div className="ago-pending">
           <span className="ago-pending-chip">
-            <Icon name="image" />
+            <Icon name="file-text" />
             <span className="fname">
               Preparing {preparingFiles === 1 ? "dropped file…" : `${preparingFiles} dropped files…`}
             </span>
