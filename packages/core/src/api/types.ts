@@ -436,8 +436,8 @@ export interface PairingToken {
   created_at: number;
   /* Live dial-in status, merged from the hub at request time: a socket for
      this token is up, and the agents it registered (empty until its hello). */
-  connected: boolean;
-  agents: { id: string; name: string }[];
+  connected?: boolean;
+  agents?: { id: string; name: string }[];
 }
 
 export interface InstanceInfo {

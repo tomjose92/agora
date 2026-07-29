@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use serde_json::{json, Value};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{mpsc::UnboundedSender, Notify};
 
 use crate::store::{slugify, NewAttachment, Store};
 
@@ -209,13 +209,18 @@ struct UiSocket {
     tx: UnboundedSender<Value>,
 }
 
+struct PairingConn {
+    token: String,
+    close: Arc<Notify>,
+}
+
 #[derive(Default)]
 struct HubState {
     agents: HashMap<String, AgentHandle>,
     sockets: Vec<UiSocket>,
     /// Live dial-in bridge sockets: conn_id -> pairing token. Keyed by the
     /// token (not its label) so tokens sharing a label stay distinct.
-    pairing_conns: HashMap<u64, String>,
+    pairing_conns: HashMap<u64, PairingConn>,
     next_id: u64,
     /// Consecutive agent-authored messages per (channel_id, thread_id or 0).
     bot_streak: HashMap<(String, i64), i64>,
@@ -398,8 +403,28 @@ impl Hub {
 
     /// A dial-in bridge socket authenticated with `token`; up from the WS
     /// upgrade (before any hello), gone when `unregister_connection` runs.
-    pub fn register_pairing_conn(&self, conn_id: u64, token: &str) {
-        self.state.lock().unwrap().pairing_conns.insert(conn_id, token.to_string());
+    pub fn register_pairing_conn(&self, conn_id: u64, token: &str) -> Arc<Notify> {
+        let close = Arc::new(Notify::new());
+        self.state.lock().unwrap().pairing_conns.insert(
+            conn_id,
+            PairingConn {
+                token: token.to_string(),
+                close: Arc::clone(&close),
+            },
+        );
+        close
+    }
+
+    /// Ask every live socket authenticated by `token` to use its normal exit
+    /// path. `notify_one` stores a permit if the socket is between loop polls.
+    pub fn close_pairing_conns(&self, token: &str) -> usize {
+        let st = self.state.lock().unwrap();
+        let mut count = 0;
+        for conn in st.pairing_conns.values().filter(|conn| conn.token == token) {
+            conn.close.notify_one();
+            count += 1;
+        }
+        count
     }
 
     /// Live dial-in status per pairing token: a key is present iff some
@@ -407,15 +432,21 @@ impl Hub {
     /// agents it registered (empty until its hello arrives).
     pub fn pairing_status(&self) -> HashMap<String, Vec<(String, String)>> {
         let st = self.state.lock().unwrap();
-        let mut out: HashMap<String, Vec<(String, String)>> = HashMap::new();
-        for (conn_id, token) in &st.pairing_conns {
-            let agents = out.entry(token.clone()).or_default();
-            agents.extend(
-                st.agents
-                    .values()
-                    .filter(|h| h.conn_id == *conn_id)
-                    .map(|h| (h.agent_id.clone(), h.agent_name.clone())),
-            );
+        let conn_tokens: HashMap<u64, &str> = st
+            .pairing_conns
+            .iter()
+            .map(|(conn_id, conn)| (*conn_id, conn.token.as_str()))
+            .collect();
+        let mut out: HashMap<String, Vec<(String, String)>> = conn_tokens
+            .values()
+            .map(|token| ((*token).to_string(), Vec::new()))
+            .collect();
+        for agent in st.agents.values() {
+            if let Some(token) = conn_tokens.get(&agent.conn_id) {
+                out.entry((*token).to_string())
+                    .or_default()
+                    .push((agent.agent_id.clone(), agent.agent_name.clone()));
+            }
         }
         out
     }
@@ -2601,5 +2632,25 @@ mod tests {
         let st = h.pairing_status();
         assert!(!st.contains_key("tok-a"));
         assert!(st.contains_key("tok-b"));
+    }
+
+    #[tokio::test]
+    async fn closing_pairing_connections_targets_only_the_revoked_token() {
+        let h = hub();
+        let close_a = h.register_pairing_conn(h.next_conn_id(), "tok-a");
+        let close_b = h.register_pairing_conn(h.next_conn_id(), "tok-b");
+
+        assert_eq!(h.close_pairing_conns("tok-a"), 1);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), close_a.notified())
+                .await
+                .is_ok()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), close_b.notified())
+                .await
+                .is_err()
+        );
+        assert_eq!(h.close_pairing_conns("missing"), 0);
     }
 }

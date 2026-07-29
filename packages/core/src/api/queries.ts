@@ -667,13 +667,12 @@ export function useSeedActivity(channelId: string) {
   }, [channelId, query.data, seed]);
 }
 
-export function useAgents(poll = false) {
+export function useAgents() {
   const api = useApi();
   return useQuery({
     queryKey: keys.agents,
     queryFn: async () =>
       (await api.get<{ agents: AgentInfo[] }>("/api/agents")).agents,
-    refetchInterval: poll ? 4000 : false,
   });
 }
 

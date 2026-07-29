@@ -1,13 +1,13 @@
 /* Connections overlay (#conn-panel): two tabs — "Connections" lists the instance
    name, linked Pantheo instances (4s status poll while open) and dial-in pairing
-   tokens (liveness joined from the agents roster, polled on the same cadence);
+   tokens (live status polled on the same cadence);
    "Add agent" is a guided flow (pick Pantheo / OpenClaw / Hermes, then link or
    issue a token). Admin only. React-query's refetch keeps typed input intact
    while the poll refreshes. */
 
 import { useEffect, useState } from "react";
 import {
-  useAgents, useConnectionMutations, useConnectionsInfo, usePairingMutations, usePairingTokens,
+  useConnectionMutations, useConnectionsInfo, usePairingMutations, usePairingTokens,
   useRenameInstance,
 } from "@agora/core";
 import { Icon } from "../lib/icons";
@@ -63,7 +63,6 @@ export function ConnectionsPane() {
   const open = ui.panel === "connections";
   const info = useConnectionsInfo(open, open).data;
   const tokens = usePairingTokens(open, open).data || [];
-  const agents = useAgents(open).data || [];
   const connMut = useConnectionMutations();
   const pairMut = usePairingMutations();
   const [tab, setTab] = useState<Tab>("list");
@@ -151,15 +150,10 @@ export function ConnectionsPane() {
       )}
       <h4>Dial-in agents <span className="dim">— pairing tokens for OpenClaw, Hermes, bridges</span></h4>
       {tokens.length ? tokens.map(t => {
-        /* connected + live agent names come from the server, exact per token.
-           The roster join below only tells "offline" from "never connected" —
-           dial-in agents register with source "pairing:{label}", so it is
-           best-effort when several tokens share a label. */
-        const known = agents.some(a => a.source === `pairing:${t.name}`);
         const liveNames = (t.agents || []).map(a => a.name || a.id).join(", ");
         const detail = t.connected
           ? (liveNames ? `live: ${liveNames}` : "connected, no agents registered")
-          : known ? "offline" : "never connected";
+          : "offline";
         return (
           <div key={t.token} className="conn-row">
             <span className={`conn-dot ${t.connected ? "on" : "off"}`}></span>

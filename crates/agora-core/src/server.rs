@@ -2542,19 +2542,21 @@ async fn list_pairing(
         .iter()
         .map(|t| {
             let agents = live.get(&t.token);
-            json!({
-                "token": t.token,
-                "name": t.name,
-                "created_at": t.created_at,
-                "connected": agents.is_some(),
-                "agents": agents
-                    .map(|a| {
-                        a.iter()
-                            .map(|(id, name)| json!({"id": id, "name": name}))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default(),
-            })
+            let mut value = serde_json::to_value(t).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("connected".into(), json!(agents.is_some()));
+                obj.insert(
+                    "agents".into(),
+                    json!(agents
+                        .map(|a| {
+                            a.iter()
+                                .map(|(id, name)| json!({"id": id, "name": name}))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()),
+                );
+            }
+            value
         })
         .collect();
     Ok(Json(json!({"tokens": tokens})))
@@ -2589,6 +2591,7 @@ async fn revoke_pairing(
     let user = require_user(&state, &headers, &q)?;
     require_instance_admin(&user)?;
     state.config.update(|c| c.pairing_tokens.retain(|t| t.token != token));
+    state.hub.close_pairing_conns(&token);
     Ok(Json(json!({"ok": true})))
 }
 
@@ -3039,11 +3042,12 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String,
     let (sink, mut stream) = socket.split();
     let (tx, rx) = unbounded_channel::<Value>();
     let conn_id = state.hub.next_conn_id();
-    state.hub.register_pairing_conn(conn_id, &token);
+    let close = state.hub.register_pairing_conn(conn_id, &token);
     let mut registered = false;
     let mut writer = tokio::spawn(pump_ws_writer(sink, rx));
     loop {
         tokio::select! {
+            _ = close.notified() => break,
             // Writer stopped (send failed / channel closed): tear the reader down.
             _ = &mut writer => break,
             incoming = stream.next() => {
@@ -3421,6 +3425,96 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("authorization", format!("Bearer {token}").parse().unwrap());
         h
+    }
+
+    #[tokio::test]
+    async fn pairing_list_reports_live_agents_and_revoke_closes_the_socket() {
+        let (state, _dir) = test_state();
+        state
+            .hub
+            .store
+            .create_user("boss", "Boss", None, "admin")
+            .unwrap();
+        state.config.update(|c| {
+            c.pairing_tokens.push(PairingToken {
+                token: "tok-a".into(),
+                name: "duplicate".into(),
+                created_at: 123.0,
+            });
+            c.pairing_tokens.push(PairingToken {
+                token: "tok-b".into(),
+                name: "duplicate".into(),
+                created_at: 456.0,
+            });
+        });
+        let headers = session_headers(&state, "boss");
+        let q = || Query(HashMap::new());
+
+        let initial = list_pairing(State(state.clone()), q(), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(
+            initial["tokens"][0],
+            json!({
+                "token": "tok-a",
+                "name": "duplicate",
+                "created_at": 123.0,
+                "connected": false,
+                "agents": [],
+            })
+        );
+
+        let conn_id = state.hub.next_conn_id();
+        let close = state.hub.register_pairing_conn(conn_id, "tok-a");
+        let connected = list_pairing(State(state.clone()), q(), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(connected["tokens"][0]["connected"], true);
+        assert_eq!(connected["tokens"][0]["agents"], json!([]));
+        assert_eq!(connected["tokens"][1]["connected"], false);
+
+        let (tx, _rx) = unbounded_channel();
+        state.hub.register_agent(AgentHandle {
+            agent_id: "bridge-agent".into(),
+            agent_name: "Bridge Agent".into(),
+            requires_mention: false,
+            wants_context_feed: false,
+            has_avatar: false,
+            avatar_v: 0,
+            source: "pairing:duplicate".into(),
+            conn_id,
+            tx,
+        });
+        let with_agent = list_pairing(State(state.clone()), q(), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(
+            with_agent["tokens"][0]["agents"],
+            json!([{"id": "bridge-agent", "name": "Bridge Agent"}])
+        );
+        assert_eq!(with_agent["tokens"][1]["agents"], json!([]));
+
+        let _ = revoke_pairing(
+            State(state.clone()),
+            Path("tok-a".into()),
+            q(),
+            headers.clone(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), close.notified())
+                .await
+                .is_ok()
+        );
+        state.hub.unregister_connection(conn_id);
+
+        let revoked = list_pairing(State(state), q(), headers).await.unwrap().0;
+        assert_eq!(revoked["tokens"].as_array().unwrap().len(), 1);
+        assert_eq!(revoked["tokens"][0]["token"], "tok-b");
     }
 
     #[tokio::test]
