@@ -3,7 +3,10 @@
    (paste/drag/pick, 5-file cap), and the thread-ask toggle. */
 
 import { useEffect, useRef, useState } from "react";
-import { useAgents, useSendMessage, type ChannelAgent, type OutgoingFile } from "@agora/core";
+import {
+  materializeDroppedFile, useAgents, useSendMessage,
+  type ChannelAgent, type OutgoingFile,
+} from "@agora/core";
 import { create } from "zustand";
 import { Icon } from "../lib/icons";
 import { autoGrow } from "../lib/autoGrow";
@@ -13,39 +16,6 @@ import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
 
 const MAX_FILES = 5;
-const DROP_READ_TIMEOUT_MS = 30_000;
-const DROP_MATERIALIZE_MAX_BYTES = 32 * 1024 * 1024;
-
-/* WKWebView may expose an unsaved macOS screenshot as a file promise whose
-   backing data only lives for the drop operation. Read it immediately and
-   keep an independent in-memory File for the later multipart upload. Large
-   files are already durable disk-backed handles; copying those into the
-   webview heap would add substantial memory pressure for no benefit. */
-async function materializeDroppedFile(source: File): Promise<File> {
-  if (source.size > DROP_MATERIALIZE_MAX_BYTES) return source;
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error("Dropped file read timed out")),
-      DROP_READ_TIMEOUT_MS,
-    );
-  });
-  let bytes: ArrayBuffer;
-  try {
-    // Start the read before yielding so macOS's promised-file provider is live.
-    bytes = await Promise.race([source.arrayBuffer(), timeout]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-  if (!bytes.byteLength && source.size > 0) {
-    throw new Error("Dropped file lost its data");
-  }
-  return new File([bytes], source.name || "file", {
-    type: source.type,
-    lastModified: source.lastModified,
-  });
-}
 
 export interface MentionCandidate {
   type: "agent" | "user";
@@ -162,12 +132,16 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
 
   const addFiles = (list: FileList | File[]) => {
     const incoming = Array.from(list);
+    const nonEmpty = incoming.filter(file => file.size > 0);
+    if (nonEmpty.length < incoming.length) {
+      toast("Empty files cannot be uploaded", { variant: "warn" });
+    }
     const available = Math.max(
       0,
       MAX_FILES - filesRef.current.length - dropReservationsRef.current,
     );
-    const accepted = incoming.slice(0, available);
-    if (accepted.length < incoming.length) {
+    const accepted = nonEmpty.slice(0, available);
+    if (accepted.length < nonEmpty.length) {
       toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
     }
     if (accepted.length) replaceFiles(current => [...current, ...accepted]);
@@ -175,12 +149,16 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
 
   const addDroppedFiles = async (list: FileList) => {
     const dropped = Array.from(list);
+    const nonEmpty = dropped.filter(file => file.size > 0);
+    if (nonEmpty.length < dropped.length) {
+      toast("Empty files cannot be uploaded", { variant: "warn" });
+    }
     const available = Math.max(
       0,
       MAX_FILES - filesRef.current.length - dropReservationsRef.current,
     );
-    const accepted = dropped.slice(0, available);
-    if (accepted.length < dropped.length) {
+    const accepted = nonEmpty.slice(0, available);
+    if (accepted.length < nonEmpty.length) {
       toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
     }
     if (!accepted.length) return;
@@ -189,7 +167,9 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
     setPreparingFiles(n => n + accepted.length);
     try {
       // Start every read while the drop's promised-file providers are alive.
-      const settled = await Promise.allSettled(accepted.map(materializeDroppedFile));
+      const settled = await Promise.allSettled(
+        accepted.map(file => materializeDroppedFile(file)),
+      );
       const ready = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
       if (ready.length) {
         // These slots were reserved synchronously before any file read yielded.

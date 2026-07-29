@@ -196,7 +196,8 @@ export function ThreadPane() {
       <ThreadLog key={rootId} root={root} replies={replies} isAdmin={isAdmin} mentions={mentions} />
       <LiveRows channelId={channel.id} threadId={rootId} />
       <LiveStrip channelId={channel.id} threadId={rootId} />
-      <Composer channelId={channel.id} channelName={channel.name} threadId={rootId}
+      <Composer key={`thread:${rootId}`}
+        channelId={channel.id} channelName={channel.name} threadId={rootId}
         agents={agents} candidates={candidates} voiceOK={!!me?.voice} />
     </div>
   );

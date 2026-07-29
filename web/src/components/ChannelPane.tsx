@@ -261,7 +261,8 @@ export function ChannelPane() {
         onOpenThread={rootId => ui.openThread(rootId)} />
       <LiveRows channelId={channel.id} threadId={null} />
       <LiveStrip channelId={channel.id} threadId={null} />
-      <Composer channelId={channel.id} channelName={channel.name} threadId={null}
+      <Composer key={`channel:${channel.id}`}
+        channelId={channel.id} channelName={channel.name} threadId={null}
         agents={agents} candidates={candidates} voiceOK={!!me?.voice}
         replyInThread={replyInThread}
         onToggleReplyInThread={() => setReplyInThread(!replyInThread)} />

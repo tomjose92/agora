@@ -19,3 +19,4 @@ export * from "./lib/unread";
 export * from "./lib/emoji";
 export * from "./lib/artifacts";
 export * from "./lib/deepLinks";
+export * from "./lib/dropFiles";
