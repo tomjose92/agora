@@ -29,7 +29,7 @@
 <body>
 <main>
   <h1>Agora Privacy Policy</h1>
-  <p class="updated">Last updated: July 16, 2026</p>
+  <p class="updated">Last updated: July 29, 2026</p>
 
   <p>
     Agora is a self-hosted chat application. The short version:
@@ -72,6 +72,39 @@
     <li><strong>Microphone</strong> access is used only when you record a voice message or use live voice; audio is sent to your server.</li>
     <li><strong>Photo library and camera</strong> access is used only when you attach an image to a message.</li>
   </ul>
+
+  <h2>AI agents and AI features</h2>
+  <p>
+    The Agora apps contain <strong>no AI models and no third-party AI
+    SDKs</strong>, and the apps never send your data to any AI service. All AI
+    functionality lives on the server side and is configured by the operator of
+    the server you sign in to:
+  </p>
+  <ul>
+    <li><strong>Agents</strong> are separate programs that the server operator
+      runs and connects to the server. They appear in channels with a
+      distinctive agent avatar and an "agent" label, so it is always visible
+      when you are messaging an AI agent rather than a person. Messages you
+      send in a channel an agent listens to are delivered to that agent, which
+      may process them with the AI provider its operator configured.</li>
+    <li><strong>Voice transcription and speech.</strong> If the server operator
+      has configured an OpenAI API key, voice messages you record are
+      transcribed by OpenAI's speech-to-text API, and agent replies can be
+      spoken aloud using OpenAI's text-to-speech API. Audio is sent by
+      <strong>your server</strong> to OpenAI for this processing; OpenAI states
+      that API data is not used to train its models. If no key is configured,
+      these features are unavailable and no audio leaves your server.</li>
+    <li><strong>Search answers.</strong> If the operator has configured an
+      Anthropic API key, the search screen can generate an AI summary of your
+      own messages using Anthropic's Claude API. The matching message text is
+      sent by your server to Anthropic only when you use this feature.</li>
+  </ul>
+  <p>
+    In every case the data flow is: your app sends content only to the Agora
+    server you chose; that server (run by you or someone you trust) may then
+    use the AI providers its operator configured. The developer of the app
+    receives nothing and configures nothing on your behalf.
+  </p>
 
   <h2>Deleting your account and data</h2>
   <p>
