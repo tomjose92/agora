@@ -232,6 +232,11 @@ async function main() {
   });
 
   await check("threads: pin from pane; pin bar appears in channel", async () => {
+    // Be independent of the preceding history check, which intentionally
+    // leaves the UI in the inbox after navigating Back.
+    await page.locator(".ago-inbox-item", { hasText: "Threads" }).click();
+    await page.locator(".ago-inbox-row", { hasText: "seed thread root alpha" }).first().click();
+    await page.waitForSelector("#ago-thread-log .bubble", { timeout: 5000 });
     await page.locator('button[title="Pin this thread for quick access"]').first().click();
     await page.locator('.ago-pinbar .ago-pin-count', { hasText: "pinned" }).waitFor({ timeout: 8000 })
       .catch(async () => {
