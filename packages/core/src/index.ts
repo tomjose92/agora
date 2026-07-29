@@ -21,3 +21,4 @@ export * from "./lib/emoji";
 export * from "./lib/artifacts";
 export * from "./lib/deepLinks";
 export * from "./lib/dropFiles";
+export * from "./lib/agentKinds";

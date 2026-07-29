@@ -1,6 +1,7 @@
 # Claude CLI bridge
 
-Agora also bundles a responsive [Claude Code setup and configuration guide](../../web/public/docs/coding-agents/claude.html).
+Agora also bundles a responsive Claude Code setup and configuration guide at
+`/docs/coding-agents/claude.html` in every running Agora.
 Open **Connections → Add agent → Claude Code → Setup guide** in a running Agora
 for the rendered version matching that installation.
 

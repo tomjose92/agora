@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   type PairingKind,
   type PairingToken,
+  inferPairingKind,
   useConnectionMutations, useConnectionsInfo, usePairingMutations, usePairingTokens,
   useRenameInstance,
 } from "@agora/core";
@@ -24,7 +25,6 @@ type ConnectableKind = Exclude<AddKind, "coding">;
 
 interface AddDefinition {
   kind: ConnectableKind;
-  icon?: string;
   logo?: string;
   title: string;
   shortTitle: string;
@@ -71,25 +71,19 @@ const DEFINITION_BY_KIND = Object.fromEntries(
 ) as Record<ConnectableKind, AddDefinition>;
 
 function copyText(text: string, what = "Copied") {
-  void navigator.clipboard.writeText(text).then(
-    () => toast(what, { variant: "ok" }),
-    () => toast("Couldn't copy", { variant: "warn" }),
-  );
-}
-
-function inferredKind(token: PairingToken): PairingKind | null {
-  if (token.kind && token.kind in DEFINITION_BY_KIND) return token.kind;
-  const value = token.name.trim().toLowerCase();
-  if (value === "codex" || value.startsWith("codex-") || value.startsWith("codex_")) return "codex";
-  if (value === "cursor" || value.startsWith("cursor-") || value.startsWith("cursor_")) return "cursor";
-  if (value === "claude" || value.startsWith("claude-") || value.startsWith("claude_")) return "claude";
-  if (value === "openclaw" || value.startsWith("openclaw-") || value.startsWith("openclaw_")) return "claw";
-  if (value === "hermes" || value.startsWith("hermes-") || value.startsWith("hermes_")) return "hermes";
-  return null;
+  void (async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(text);
+      toast(what, { variant: "ok" });
+    } catch {
+      toast("Couldn't copy — select the text and copy it manually", { variant: "warn" });
+    }
+  })();
 }
 
 function displayDefinition(token: PairingToken): AddDefinition | null {
-  const kind = inferredKind(token);
+  const kind = inferPairingKind(token);
   return kind ? DEFINITION_BY_KIND[kind] : null;
 }
 
@@ -103,7 +97,7 @@ function AgentMark({ definition, small = false }: { definition: AddDefinition | 
   }
   return (
     <span className={`conn-agent-glyph${small ? " small" : ""}`}>
-      <Icon name={definition?.icon || "bot"} />
+      <Icon name="bot" />
     </span>
   );
 }
@@ -151,7 +145,7 @@ export function ConnectionsPane() {
   const pairMut = usePairingMutations();
   const [tab, setTab] = useState<Tab>("list");
   const [addKind, setAddKind] = useState<AddKind | null>(null);
-  const [issued, setIssued] = useState<{ token: string; name: string } | null>(null);
+  const [issued, setIssued] = useState<{ token: string } | null>(null);
   const [instName, setInstName] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -247,7 +241,7 @@ export function ConnectionsPane() {
             <div className="conn-row-main">
               <div className="conn-name">
                 {pairing.name}
-                <span className="conn-badge">{definition?.shortTitle || "Agent CLI"}</span>
+                <span className="conn-badge">{definition?.shortTitle || "Agent"}</span>
               </div>
               <div className="conn-url mono">{pairing.token.slice(0, 10)}…{pairing.token.slice(-4)}</div>
               <div className="conn-url">{detail}</div>
@@ -399,7 +393,7 @@ export function ConnectionsPane() {
             const label = pairName.trim() || definition.defaultLabel;
             pairMut.create.mutate({ name: label, kind }, {
               onSuccess: result => {
-                setIssued({ token: result.token, name: label });
+                setIssued({ token: result.token });
                 setPairName("");
               },
               onError: err("Couldn't create access"),

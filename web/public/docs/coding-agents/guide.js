@@ -2,7 +2,12 @@ import { guides, sharedEnv } from "./guide-data.js";
 
 const key = document.body.dataset.agent;
 const guide = guides[key];
-if (!guide) throw new Error(`Unknown coding agent: ${key}`);
+if (!guide) {
+  document.querySelector("#docs-root").innerHTML = `
+    <main class="docs-main"><h1>Guide not found</h1>
+    <p>Choose a coding-agent guide from the <a href="./">documentation index</a>.</p></main>`;
+  throw new Error(`Unknown coding agent: ${key}`);
+}
 
 const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -91,8 +96,22 @@ document.querySelector("#docs-root").innerHTML = `
 document.querySelectorAll(".docs-copy").forEach(button => {
   button.addEventListener("click", async () => {
     const text = button.previousElementSibling.textContent;
-    await navigator.clipboard.writeText(text);
-    button.textContent = "Copied";
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(button.previousElementSibling);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        if (!document.execCommand("copy")) throw new Error("Copy unavailable");
+        selection.removeAllRanges();
+      }
+      button.textContent = "Copied";
+    } catch {
+      button.textContent = "Select and copy";
+    }
     setTimeout(() => { button.textContent = "Copy"; }, 1200);
   });
 });

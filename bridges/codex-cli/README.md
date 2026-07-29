@@ -1,6 +1,7 @@
 # Codex CLI bridge
 
-Agora also bundles a responsive [Codex CLI setup and configuration guide](../../web/public/docs/coding-agents/codex.html).
+Agora also bundles a responsive Codex CLI setup and configuration guide at
+`/docs/coding-agents/codex.html` in every running Agora.
 Open **Connections → Add agent → Codex CLI → Setup guide** in a running Agora
 for the rendered version matching that installation.
 

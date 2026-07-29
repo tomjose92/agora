@@ -2577,7 +2577,12 @@ async fn create_pairing(
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     require_instance_admin(&user)?;
-    let name = payload["name"].as_str().unwrap_or("agent").trim().to_string();
+    let name = payload["name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("agent")
+        .to_string();
     let kind = payload["kind"]
         .as_str()
         .map(str::trim)
@@ -3577,8 +3582,16 @@ mod tests {
         let _ = create_pairing(
             State(state.clone()),
             Query(HashMap::new()),
-            headers,
+            headers.clone(),
             Json(json!({"name": "Custom", "kind": "untrusted-value"})),
+        )
+        .await
+        .unwrap();
+        let _ = create_pairing(
+            State(state.clone()),
+            Query(HashMap::new()),
+            headers,
+            Json(json!({"name": "   "})),
         )
         .await
         .unwrap();
@@ -3586,6 +3599,7 @@ mod tests {
         let snapshot = state.config.snapshot();
         assert_eq!(snapshot.pairing_tokens[0].kind.as_deref(), Some("codex"));
         assert!(snapshot.pairing_tokens[1].kind.is_none());
+        assert_eq!(snapshot.pairing_tokens[2].name, "agent");
     }
 
     #[tokio::test]

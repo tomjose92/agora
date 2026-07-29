@@ -9,20 +9,51 @@ const agents = {
   "claude-cli": "claude",
 };
 const sharedVariables = sharedEnv.map(([name]) => name);
-const envRead = /os\.(?:environ\.get|getenv)\(\s*(["'])([A-Z0-9_]+)\1/g;
+const envRead = /os\.(?:environ\.get|getenv)\(\s*(["'])([A-Z0-9_]+)\1(?:\s*,\s*(["'])(.*?)\3)?/g;
+const indexedEnvRead = /os\.environ\s*\[\s*(["'])([A-Z0-9_]+)\1\s*\]/g;
+const ignoredLiteralDefaults = new Set([
+  "AGORA_URL", "AGORA_PAIRING_TOKEN", "AGENT_ID", "AGENT_NAME", "AGENT_AVATAR", "STATE_FILE",
+]);
+const falseFromEmpty = new Set([
+  "CODEX_AUTO_WORKTREE", "CODEX_ALLOW_SANDBOX_ESCALATION", "CODEX_TLDR",
+  "CURSOR_AUTO_WORKTREE", "CURSOR_ALLOW_FORCE", "CURSOR_DISABLE_SANDBOX", "CURSOR_TLDR",
+  "CLAUDE_AUTO_WORKTREE", "CLAUDE_ALLOW_PERMISSION_ESCALATION", "CLAUDE_TLDR",
+]);
+const displayedDefault = value => {
+  const normalized = value.replace(/^Empty(?: \(.*\))?$/, "");
+  return normalized === "—" ? null : normalized;
+};
 let failed = false;
 
 for (const [directory, guideKey] of Object.entries(agents)) {
   const source = fs.readFileSync(path.join(root, "bridges", directory, "bridge.py"), "utf8");
-  const implemented = new Set([...source.matchAll(envRead)].map(match => match[2]));
-  const documented = new Set([
-    ...sharedVariables,
-    ...guides[guideKey].env.map(([name]) => name),
+  const reads = [...source.matchAll(envRead)];
+  const indexedReads = [...source.matchAll(indexedEnvRead)];
+  const implemented = new Set([
+    ...reads.map(match => match[2]),
+    ...indexedReads.map(match => match[2]),
   ]);
+  const documentedRows = [...sharedEnv, ...guides[guideKey].env];
+  const documented = new Set(documentedRows.map(([name]) => name));
   const missing = [...implemented].filter(variable => !documented.has(variable));
   const stale = [...documented].filter(variable => !implemented.has(variable));
+  const invalidRequirements = documentedRows
+    .filter(([, requirement]) => !["Required", "Required*", "Recommended", "Optional"].includes(requirement))
+    .map(([name]) => name);
+  const documentedDefaults = new Map(
+    documentedRows.map(([name, , fallback]) => [name, displayedDefault(fallback)]),
+  );
+  const wrongDefaults = reads.flatMap(match => {
+    const [, , variable, , literalDefault] = match;
+    if (literalDefault === undefined || ignoredLiteralDefaults.has(variable)) return [];
+    const documentedDefault = documentedDefaults.get(variable);
+    const effectiveDefault = falseFromEmpty.has(variable) && literalDefault === "" ? "0" : literalDefault;
+    return documentedDefault === effectiveDefault
+      ? []
+      : [`${variable} (code: ${JSON.stringify(effectiveDefault)}, guide: ${JSON.stringify(documentedDefault)})`];
+  });
 
-  if (missing.length || stale.length) {
+  if (missing.length || stale.length || invalidRequirements.length || wrongDefaults.length) {
     failed = true;
     if (missing.length) {
       console.error(`${directory}: undocumented environment variables: ${missing.join(", ")}`);
@@ -30,8 +61,14 @@ for (const [directory, guideKey] of Object.entries(agents)) {
     if (stale.length) {
       console.error(`${directory}: documented but unused environment variables: ${stale.join(", ")}`);
     }
+    if (invalidRequirements.length) {
+      console.error(`${directory}: invalid requirement labels: ${invalidRequirements.join(", ")}`);
+    }
+    if (wrongDefaults.length) {
+      console.error(`${directory}: documented defaults differ from code: ${wrongDefaults.join(", ")}`);
+    }
   } else {
-    console.log(`${directory}: ${implemented.size} environment variables documented exactly`);
+    console.log(`${directory}: ${implemented.size} environment variables and literal defaults documented exactly`);
   }
 }
 
