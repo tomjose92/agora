@@ -214,6 +214,21 @@ async function main() {
       { timeout: 5000 },
     );
     if (new URL(page.url()).pathname !== path) throw new Error(`path changed: ${page.url()}`);
+    await page.waitForTimeout(1900);
+    await api(`/api/channels/${SEED.channel}/messages`, { text: `deep-link latch ${Date.now()}` });
+    await page.waitForTimeout(500);
+    if (await target.evaluate(el => el.classList.contains("ago-flash"))) {
+      throw new Error("deep-link target flashed again after a live group update");
+    }
+  });
+
+  await check("history: Back restores the threads inbox", async () => {
+    await page.locator(".ago-inbox-item", { hasText: "Threads" }).click();
+    await page.waitForURL(/\/threads$/);
+    await page.locator(".ago-chan", { hasText: "general" }).first().click();
+    await page.goBack();
+    await page.waitForURL(/\/threads$/);
+    await page.waitForSelector(".ago-inbox-list .ago-inbox-row", { timeout: 5000 });
   });
 
   await check("threads: pin from pane; pin bar appears in channel", async () => {

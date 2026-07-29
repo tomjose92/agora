@@ -86,7 +86,8 @@ export function ThreadPane() {
   const topQ = useMessages(channel?.id || "", null);
   const topLevel = useMemo(() => flattenMessages(topQ.data), [topQ.data]);
   const cachedRoot = topLevel.find(m => m.id === rootId);
-  const fetchedRoot = useMessage(rootId, !cachedRoot).data;
+  const fetchedRootQ = useMessage(rootId, !cachedRoot);
+  const fetchedRoot = fetchedRootQ.data;
   const root = cachedRoot || fetchedRoot;
 
   const threads = useThreads().data || [];
@@ -101,7 +102,8 @@ export function ThreadPane() {
   useEffect(() => {
     if (!jumpTarget || jumpTarget.container !== "thread") return;
     if (jumpTarget.mid === rootId || replies.some(m => m.id === jumpTarget.mid)) return;
-    if (q.hasNextPage && !q.isFetchingNextPage) void q.fetchNextPage();
+    if (replies.length && replies[0].id <= jumpTarget.mid) clearJump();
+    else if (q.hasNextPage && !q.isFetchingNextPage) void q.fetchNextPage();
     else if (!q.hasNextPage && !q.isLoading) clearJump();
   }, [jumpTarget, replies.length, q.hasNextPage, q.isFetchingNextPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -130,8 +132,21 @@ export function ThreadPane() {
     }
   }, [unread, rootId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!channel || !root || root.channel_id !== channel.id) {
+  if (!channel || (!root && !fetchedRootQ.isError)) {
     return <div className="agora-thread" id="agora-thread" style={{ display: "none" }}></div>;
+  }
+  if (!root || root.channel_id !== channel.id) {
+    return (
+      <div className="agora-thread" id="agora-thread">
+        <div className="ago-head">
+          <div className="ago-head-text"><span className="ago-chan-name">Thread unavailable</span></div>
+          <button className="btn sm ago-thread-close" onClick={() => ui.closeThread()}>
+            <Icon name="x" />
+          </button>
+        </div>
+        <div className="empty">This thread doesn't exist here, or you don't have access to it.</div>
+      </div>
+    );
   }
 
   return (

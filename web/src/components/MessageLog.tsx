@@ -87,6 +87,10 @@ export function MessageLog({ channelId, isAdmin, mentions, onOpenThread }: {
     if (flashMessage(boxRef.current, jumpTarget.mid)) {
       stickRef.current = false;
       jumpClear();
+    } else if (messages.length && messages[0].id <= jumpTarget.mid) {
+      // IDs are globally monotonic. Once the oldest loaded row is below the
+      // target, another older page cannot contain an absent target.
+      jumpClear();
     } else if (q.hasNextPage && !q.isFetchingNextPage) {
       void q.fetchNextPage();
     } else if (!q.hasNextPage) {

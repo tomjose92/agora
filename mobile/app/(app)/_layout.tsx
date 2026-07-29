@@ -3,7 +3,7 @@
    notification-tap routing plus the unread app badge. */
 
 import React, { useEffect, useMemo, useRef } from "react";
-import { Redirect, Stack, router, type Href } from "expo-router";
+import { Redirect, Stack, router, type Href, usePathname } from "expo-router";
 import * as Notifications from "expo-notifications";
 import { ApiClient, ApiProvider } from "@agora/core";
 import { useSession } from "../../src/state/session";
@@ -65,6 +65,7 @@ function NotificationTapRouter() {
 }
 
 export default function AppLayout() {
+  const pathname = usePathname();
   const status = useSession((s) => s.status);
   const session = useSession((s) => s.session);
   useEffect(() => {
@@ -88,7 +89,9 @@ export default function AppLayout() {
   }, [status, session]);
 
   if (status === "loading") return null;
-  if (status !== "signedIn" || !session) return <Redirect href="/connect" />;
+  if (status !== "signedIn" || !session) {
+    return <Redirect href={{ pathname: "/connect", params: { next: pathname } }} />;
+  }
 
   return (
     <ApiWrapped session={session}>

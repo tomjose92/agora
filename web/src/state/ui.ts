@@ -43,7 +43,7 @@ interface UiState {
   membersOpen: boolean;
   searchOpen: boolean;
   selectChannel: (g: string, c: string, history?: "push" | "replace" | "none") => void;
-  openInbox: () => void;
+  openInbox: (history?: "push" | "replace" | "none") => void;
   openGroupPage: (g: string, history?: "push" | "replace" | "none") => void;
   backToGroups: () => void;
   isExpanded: (g: string) => boolean;
@@ -87,8 +87,8 @@ export const useUiState = create<UiState>((set, get) => ({
     writeHistory(deepLinkPath({ kind: "channel", groupId: g, channelId: c }), history);
     return { sel: { g, c }, view: { kind: "channel" }, threadRoot: null, mobileView: "main" as const };
   }),
-  openInbox: () => {
-    writeHistory("/", "push");
+  openInbox: (history = "push") => {
+    writeHistory("/threads", history);
     set({ view: { kind: "inbox" }, threadRoot: null, mobileView: "main" });
   },
   openGroupPage: (g, history = "push") => set((s) => {
@@ -132,7 +132,7 @@ export const useUiState = create<UiState>((set, get) => ({
     }
     return { threadRoot: rootId, mobileView: "thread" as const };
   }),
-  closeThread: (history = "push") => set((s) => {
+  closeThread: (history = "replace") => set((s) => {
     const scope = useLiveVoice.getState().scope;
     if (scope && scope.threadId != null) liveStop();
     if (s.sel.g && s.sel.c) {

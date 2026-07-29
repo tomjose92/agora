@@ -4,7 +4,7 @@
    defaults the selection to the first visible group/channel like
    agoLoadGroups. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { parseDeepLink, useGroups, useMe } from "@agora/core";
 import { useAgoraSocket } from "../hooks/useAgoraSocket";
 import { useUiState } from "../state/ui";
@@ -31,6 +31,7 @@ export function AgoraLayout() {
   const ui = useUiState();
   const requestJump = useJump(s => s.request);
   const [locationKey, setLocationKey] = useState(0);
+  const resolvedLocation = useRef<string | null>(null);
   useAgoraSocket(me?.username || "", (m) => {
     // Live voice: an agent reply in the session's scope closes the turn and
     // gets spoken; the 🔊 toggle reads out other agent replies unless a live
@@ -53,8 +54,20 @@ export function AgoraLayout() {
   // fall through to the ordinary first-visible selection.
   useEffect(() => {
     if (!groups || !groups.length) return;
+    const location = `${locationKey}:${window.location.pathname}`;
+    if (window.location.pathname === "/threads") {
+      if (resolvedLocation.current !== location) {
+        resolvedLocation.current = location;
+        ui.openInbox("none");
+      }
+      return;
+    }
     const target = parseDeepLink(window.location.pathname);
     if (target) {
+      // Group rows are patched by live/read events. Resolve a location once,
+      // rather than re-selecting and re-jumping whenever those rows change.
+      if (resolvedLocation.current === location) return;
+      resolvedLocation.current = location;
       const group = groups.find(g => g.id === target.groupId);
       if (group) {
         if (target.kind === "group") {
@@ -64,9 +77,10 @@ export function AgoraLayout() {
         const channel = (group.channels || []).find(c => c.id === target.channelId);
         if (channel) {
           ui.selectChannel(group.id, channel.id, "none");
-          if (target.kind === "thread" || (target.kind === "message" && target.threadId != null)) {
-            const rootId = target.kind === "thread" ? target.threadId : target.threadId as number;
-            ui.openThread(rootId, "none");
+          if (target.kind === "thread") {
+            ui.openThread(target.threadId, "none");
+          } else if (target.kind === "message" && target.threadId != null) {
+            ui.openThread(target.threadId, "none");
           }
           if (target.kind === "message") {
             requestJump({

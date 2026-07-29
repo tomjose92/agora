@@ -2,7 +2,9 @@
    always available. */
 
 import { useEffect, useRef, useState } from "react";
-import { AUTH_ERROR, AUTH_ERROR_TEXT, JOIN_TOKEN, setSessionToken } from "../lib/auth";
+import {
+  AUTH_ERROR, AUTH_ERROR_TEXT, JOIN_TOKEN, rememberAuthPath, setSessionToken,
+} from "../lib/auth";
 import { toast } from "../lib/toast";
 
 export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
@@ -46,6 +48,7 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
         {googleEnabled && (
           <button className="btn google" id="auth-google"
             onClick={() => {
+              rememberAuthPath();
               location.href = "/api/auth/google/start"
                 + (JOIN_TOKEN ? "?invite=" + encodeURIComponent(JOIN_TOKEN) : "");
             }}>

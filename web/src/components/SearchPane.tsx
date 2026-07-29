@@ -122,7 +122,7 @@ export function SearchPane() {
     ui.setSearchOpen(false);
     ui.selectChannel(m.group_id, m.channel_id);
     if (m.thread_id != null) {
-      ui.openThread(m.thread_id);
+      ui.openThread(m.thread_id, "replace");
       requestJump({ mid: m.id, container: "thread" });
     } else {
       requestJump({ mid: m.id, container: "log" });

@@ -35,11 +35,22 @@ describe("deep links", () => {
     });
   });
 
+  it("preserves encoded slashes inside ids", () => {
+    expect(parseDeepLink("/g/team%2Fwest/c/general%2Fchat")).toEqual({
+      kind: "channel",
+      groupId: "team/west",
+      channelId: "general/chat",
+    });
+  });
+
   it.each([
     "/",
     "/g",
+    "/g//c/general",
     "/g/team/c",
+    "/g/team/c//m/1",
     "/g/team/c/general/m/0",
+    `/g/team/c/general/m/${Number.MAX_SAFE_INTEGER + 1}`,
     "/g/team/c/general/t/nope",
     "/g/team/c/general/t/1/extra",
   ])("rejects malformed path %s", (path) => {

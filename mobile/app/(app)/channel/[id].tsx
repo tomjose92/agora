@@ -276,6 +276,9 @@ export default function ChannelScreen() {
     return null;
   }, [groups.data, channelId]);
   const channelName = params.name || channelMeta?.channel.name || "channel";
+  // Treat the visibility-scoped groups payload as authoritative. Even normal
+  // in-app navigation waits for it so a crafted groupId cannot drive members
+  // or admin UI for a channel owned by another group.
   const groupId = channelMeta?.group.id;
   const groupMismatch =
     !!params.groupId && !!channelMeta && params.groupId !== channelMeta.group.id;
@@ -355,10 +358,19 @@ export default function ChannelScreen() {
       setTimeout(() => {
         listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
       }, 300);
+    } else if (
+      chronological.length &&
+      chronological[0].id <= targetMessageId
+    ) {
+      landedOnMessage.current = targetMessageId;
     } else if (messages.hasNextPage && !messages.isFetchingNextPage) {
       void messages.fetchNextPage();
+    } else if (!messages.hasNextPage) {
+      landedOnMessage.current = targetMessageId;
     }
-  }, [targetMessageId, rows, messages.hasNextPage, messages.isFetchingNextPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    targetMessageId, rows, chronological, messages.hasNextPage, messages.isFetchingNextPage,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Land on the "New" divider instead of the bottom when there's a backlog
      (Slack behavior) — once, on the first page load. */

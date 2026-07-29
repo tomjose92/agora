@@ -256,10 +256,16 @@ export default function ThreadScreen() {
       setTimeout(() => {
         listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
       }, 300);
+    } else if (thread.length && thread[0].id <= targetMessageId) {
+      landedOnMessage.current = targetMessageId;
     } else if (replies.hasNextPage && !replies.isFetchingNextPage) {
       void replies.fetchNextPage();
+    } else if (!replies.hasNextPage) {
+      landedOnMessage.current = targetMessageId;
     }
-  }, [targetMessageId, rows, replies.hasNextPage, replies.isFetchingNextPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    targetMessageId, rows, thread, replies.hasNextPage, replies.isFetchingNextPage,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderRow = useCallback(
     ({ item }: { item: Row }) => (

@@ -4,6 +4,7 @@
 
 export let AUTH_ERROR = "";
 export let JOIN_TOKEN = "";
+const AUTH_PATH_KEY = "agora_auth_path";
 
 export function initToken(): void {
   const params = new URLSearchParams(location.search);
@@ -20,9 +21,20 @@ export function initToken(): void {
     AUTH_ERROR = frag.get("auth_error") || "";
     const join = frag.get("join");
     if (join) sessionStorage.setItem("agora_join", join);
-    if (session || AUTH_ERROR || join) history.replaceState(null, "", location.pathname);
+    if (session || AUTH_ERROR || join) {
+      const pendingPath = sessionStorage.getItem(AUTH_PATH_KEY);
+      history.replaceState(null, "", pendingPath || location.pathname);
+      if (session) sessionStorage.removeItem(AUTH_PATH_KEY);
+    }
   }
   JOIN_TOKEN = sessionStorage.getItem("agora_join") || "";
+}
+
+/** Preserve a conversation path across the full-page Google OAuth trip. */
+export function rememberAuthPath(): void {
+  if (location.pathname.startsWith("/g/") || location.pathname === "/threads") {
+    sessionStorage.setItem(AUTH_PATH_KEY, location.pathname);
+  }
 }
 
 export function sessionToken(): string {
