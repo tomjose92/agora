@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { materializeDroppedFile } from "../src";
+import {
+  DROP_HEAP_MAX_BYTES,
+  dropMaterializationLimit,
+  materializeDroppedFile,
+} from "../src";
 
 describe("materializeDroppedFile", () => {
   it("copies bytes and file metadata", async () => {
@@ -22,18 +26,39 @@ describe("materializeDroppedFile", () => {
     await expect(materializeDroppedFile(source)).rejects.toThrow("Dropped file was empty");
   });
 
+  it("reads a promised file even when its initial size is zero", async () => {
+    const source = new File([], "promised.png", { type: "image/png" });
+    Object.defineProperty(source, "arrayBuffer", {
+      value: () => Promise.resolve(new TextEncoder().encode("resolved").buffer),
+    });
+
+    await expect(materializeDroppedFile(source))
+      .resolves.toMatchObject({ name: "promised.png", size: 8 });
+  });
+
+  it("enforces the byte limit again after reading", async () => {
+    const source = new File([], "misreported.png");
+    Object.defineProperty(source, "arrayBuffer", {
+      value: () => Promise.resolve(new Uint8Array([1, 2]).buffer),
+    });
+
+    await expect(materializeDroppedFile(source, { maxBytes: 1 }))
+      .rejects.toMatchObject({ code: "too_large" });
+  });
+
   it("supplies a fallback name", async () => {
     const result = await materializeDroppedFile(new File(["data"], ""));
     expect(result.name).toBe("file");
   });
 
-  it("returns oversized files without reading them", async () => {
+  it("rejects oversized files without reading them", async () => {
     const source = new File(["large"], "large.mov");
     Object.defineProperty(source, "arrayBuffer", {
       value: () => Promise.reject(new Error("should not read")),
     });
 
-    await expect(materializeDroppedFile(source, { maxBytes: 1 })).resolves.toBe(source);
+    await expect(materializeDroppedFile(source, { maxBytes: 1 }))
+      .rejects.toMatchObject({ code: "too_large" });
   });
 
   it("bounds a read that never settles", async () => {
@@ -44,5 +69,11 @@ describe("materializeDroppedFile", () => {
 
     await expect(materializeDroppedFile(source, { timeoutMs: 5 }))
       .rejects.toThrow("Dropped file read timed out");
+  });
+
+  it("uses the lower of the server limit and heap ceiling", () => {
+    expect(dropMaterializationLimit(10)).toBe(10 * 1024 * 1024);
+    expect(dropMaterializationLimit(500)).toBe(DROP_HEAP_MAX_BYTES);
+    expect(dropMaterializationLimit()).toBe(DROP_HEAP_MAX_BYTES);
   });
 });

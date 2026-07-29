@@ -4,8 +4,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  materializeDroppedFile, useAgents, useSendMessage,
-  type ChannelAgent, type OutgoingFile,
+  DROP_HEAP_MAX_BYTES, DroppedFileError, dropMaterializationLimit,
+  materializeDroppedFile, useAgents, useAttachmentDrafts, useMe, useSendMessage,
+  type ChannelAgent, type DraftAttachment, type OutgoingFile,
 } from "@agora/core";
 import { create } from "zustand";
 import { Icon } from "../lib/icons";
@@ -16,6 +17,7 @@ import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
 
 const MAX_FILES = 5;
+const NO_ATTACHMENTS: DraftAttachment[] = [];
 
 export interface MentionCandidate {
   type: "agent" | "user";
@@ -91,11 +93,11 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   onToggleReplyInThread?: () => void;
 }) {
   const send = useSendMessage(channelId);
+  const me = useMe().data;
   const draftKey = threadId != null ? `t:${threadId}` : `c:${channelId}`;
   const text = useDrafts(s => s.drafts[draftKey] ?? "");
   const setText = useDrafts(s => s.set);
-  const [files, setFiles] = useState<File[]>([]);
-  const [preparingFiles, setPreparingFiles] = useState(0);
+  const attachments = useAttachmentDrafts(s => s.byDraft[draftKey] ?? NO_ATTACHMENTS);
   const [mention, setMention] = useState<{ items: MentionCandidate[]; active: number; start: number } | null>(null);
   const [addrOpen, setAddrOpen] = useState(false);
   const addrSel = useAddressing(s => s.addr[draftKey] ?? NO_ADDR);
@@ -103,10 +105,17 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const addrClear = useAddressing(s => s.clear);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const filesRef = useRef<File[]>([]);
-  const dropReservationsRef = useRef(0);
 
   const inThread = threadId != null;
+  const readyAttachments = attachments.filter(
+    (entry): entry is DraftAttachment & { status: "ready"; file: File } =>
+      entry.status === "ready" && !!entry.file,
+  );
+  const preparingAttachments = attachments.filter(entry => entry.status === "preparing");
+  const serverMaxBytes = typeof me?.max_file_mb === "number" && me.max_file_mb > 0
+    ? me.max_file_mb * 1024 * 1024
+    : undefined;
+  const dropMaxBytes = dropMaterializationLimit(me?.max_file_mb);
   const inputId = inThread ? "ago-thread-msg" : "ago-msg";
   const selectedAgents = addrSel
     .map(id => agents.find(a => a.id === id))
@@ -124,70 +133,79 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
     return () => document.removeEventListener("click", onClick);
   }, [addrOpen]);
 
-  const replaceFiles = (update: (current: File[]) => File[]) => {
-    const next = update(filesRef.current);
-    filesRef.current = next;
-    setFiles(next);
-  };
-
   const addFiles = (list: FileList | File[]) => {
     const incoming = Array.from(list);
-    const nonEmpty = incoming.filter(file => file.size > 0);
+    const nonEmpty = incoming.filter((file) => file.size > 0);
+    const allowed = nonEmpty.filter(
+      (file) => serverMaxBytes === undefined || file.size <= serverMaxBytes,
+    );
     if (nonEmpty.length < incoming.length) {
       toast("Empty files cannot be uploaded", { variant: "warn" });
     }
-    const available = Math.max(
-      0,
-      MAX_FILES - filesRef.current.length - dropReservationsRef.current,
+    if (allowed.length < nonEmpty.length) {
+      toast(`File too large (max ${me!.max_file_mb} MB)`, { variant: "warn" });
+    }
+    const result = useAttachmentDrafts.getState().stage(
+      draftKey,
+      allowed,
+      "ready",
+      MAX_FILES,
     );
-    const accepted = nonEmpty.slice(0, available);
-    if (accepted.length < nonEmpty.length) {
+    if (result.rejectedForCap) {
       toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
     }
-    if (accepted.length) replaceFiles(current => [...current, ...accepted]);
   };
 
-  const addDroppedFiles = async (list: FileList) => {
-    const dropped = Array.from(list);
-    const nonEmpty = dropped.filter(file => file.size > 0);
-    if (nonEmpty.length < dropped.length) {
-      toast("Empty files cannot be uploaded", { variant: "warn" });
+  const prepareDroppedFile = async (
+    entry: DraftAttachment,
+    source: File,
+  ) => {
+    try {
+      const file = await materializeDroppedFile(source, { maxBytes: dropMaxBytes });
+      useAttachmentDrafts.getState().complete(draftKey, entry.id, file);
+    } catch (error) {
+      const message = error instanceof DroppedFileError && error.code === "too_large"
+        ? serverMaxBytes !== undefined && serverMaxBytes <= DROP_HEAP_MAX_BYTES
+          ? `File too large (max ${me!.max_file_mb} MB)`
+          : "Large files must be attached with the paperclip"
+        : error instanceof DroppedFileError && error.code === "empty"
+          ? "Empty files cannot be uploaded"
+          : "Could not read the dropped file";
+      // Cancellation removes the entry. A late failure then cannot surface in
+      // whichever channel the user has navigated to.
+      useAttachmentDrafts.getState().fail(draftKey, entry.id, message);
     }
-    const available = Math.max(
-      0,
-      MAX_FILES - filesRef.current.length - dropReservationsRef.current,
+  };
+
+  const addDroppedFiles = (list: FileList) => {
+    const dropped = Array.from(list);
+    // A promised file may report size 0 before its provider resolves, so only
+    // reject metadata that already proves the drop cannot be materialized.
+    const allowed = dropped.filter((file) => file.size <= dropMaxBytes);
+    if (allowed.length < dropped.length) {
+      const serverBound = serverMaxBytes !== undefined
+        && serverMaxBytes <= DROP_HEAP_MAX_BYTES;
+      toast(
+        serverBound
+          ? `File too large (max ${me!.max_file_mb} MB)`
+          : "Large files must be attached with the paperclip",
+        { variant: "warn" },
+      );
+    }
+    const result = useAttachmentDrafts.getState().stage(
+      draftKey,
+      allowed,
+      "preparing",
+      MAX_FILES,
     );
-    const accepted = nonEmpty.slice(0, available);
-    if (accepted.length < nonEmpty.length) {
+    if (result.rejectedForCap) {
       toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
     }
-    if (!accepted.length) return;
-
-    dropReservationsRef.current += accepted.length;
-    setPreparingFiles(n => n + accepted.length);
-    try {
-      // Start every read while the drop's promised-file providers are alive.
-      const settled = await Promise.allSettled(
-        accepted.map(file => materializeDroppedFile(file)),
-      );
-      const ready = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
-      if (ready.length) {
-        // These slots were reserved synchronously before any file read yielded.
-        replaceFiles(current => [...current, ...ready]);
-      }
-      const failed = settled.length - ready.length;
-      if (failed) {
-        toast(
-          failed === 1
-            ? "Could not read the dropped file"
-            : `Could not read ${failed} dropped files`,
-          { variant: "warn" },
-        );
-      }
-    } finally {
-      dropReservationsRef.current = Math.max(0, dropReservationsRef.current - accepted.length);
-      setPreparingFiles(n => Math.max(0, n - accepted.length));
-    }
+    // Each call enters materializeDroppedFile before its first await, while the
+    // macOS promised-file provider is still alive for this drop event.
+    result.accepted.forEach((entry, index) => {
+      void prepareDroppedFile(entry, allowed[index]);
+    });
   };
 
   /* Mention autocomplete: a live "@token" ending at the caret. */
@@ -223,9 +241,9 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   };
 
   const doSend = () => {
-    if (preparingFiles) {
+    if (preparingAttachments.length) {
       toast(
-        preparingFiles === 1
+        preparingAttachments.length === 1
           ? "Please wait while the dropped file is prepared"
           : "Please wait while the dropped files are prepared",
         { variant: "warn" },
@@ -233,17 +251,33 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       return;
     }
     const t = text.trim();
-    if (!t && !files.length) return;
+    if (!t && !readyAttachments.length) return;
+    if (readyAttachments.length && send.isPending) return;
     // "Talk to" prefix: the chosen agents' mentions route the message.
     const addr = selectedAgents.map(a => "@" + slugify(a.name)).join(", ");
     const outText = addr ? (t ? `${addr}, ${t}` : addr) : t;
-    const outgoing: OutgoingFile[] = files.map(f => ({ part: f, name: f.name }));
+    const outgoing: OutgoingFile[] = readyAttachments.map(entry => ({
+      part: entry.file,
+      name: entry.name,
+    }));
+    const sentIds = readyAttachments.map(entry => entry.id);
+    const sentText = text;
     send.mutate(
       { text: outText, threadId, files: outgoing.length ? outgoing : undefined, replyInThread },
-      { onError: e => toast("Send failed: " + (e as Error).message, { variant: "warn" }) },
+      {
+        onSuccess: () => {
+          if (!sentIds.length) return;
+          useAttachmentDrafts.getState().removeMany(draftKey, sentIds);
+          if ((useDrafts.getState().drafts[draftKey] ?? "") === sentText) {
+            setText(draftKey, "");
+          }
+        },
+        onError: e => toast("Send failed: " + (e as Error).message, { variant: "warn" }),
+      },
     );
-    setText(draftKey, "");
-    replaceFiles(() => []);
+    // Preserve attachment-bearing drafts until the upload succeeds. Plain text
+    // keeps the existing fast optimistic composer behavior.
+    if (!sentIds.length) setText(draftKey, "");
     if (replyInThread && onToggleReplyInThread) onToggleReplyInThread(); // an ask covers one message
     if (taRef.current) { autoGrow(taRef.current); taRef.current.focus(); }
   };
@@ -286,34 +320,33 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
             onClick={() => addrClear(draftKey)}>Clear</button>
         </div>
       )}
-      {(files.length > 0 || preparingFiles > 0) && (
+      {attachments.length > 0 && (
         <div className="ago-pending">
-          {files.map((f, i) => (
-            <span key={i} className="ago-pending-chip" title={f.name}>
-              <Icon name={(f.type || "").startsWith("image/") ? "image" : "file-text"} />
-              <span className="fname">{f.name}</span>
-              <span className="fsize">{humanSize(f.size)}</span>
-              <button className="ago-x" title="Remove"
-                onClick={() => replaceFiles(current => current.filter((_, j) => j !== i))}>
+          {attachments.map(entry => (
+            <span key={entry.id} className="ago-pending-chip" title={entry.name}>
+              <Icon name={(entry.type || "").startsWith("image/") ? "image" : "file-text"} />
+              <span className="fname">
+                {entry.status === "preparing"
+                  ? `Preparing ${entry.name}…`
+                  : entry.status === "failed"
+                    ? entry.error || `Could not read ${entry.name}`
+                    : entry.name}
+              </span>
+              {entry.status === "ready" && <span className="fsize">{humanSize(entry.size)}</span>}
+              <button className="ago-x"
+                title={entry.status === "preparing" ? "Cancel" : "Remove"}
+                onClick={() => useAttachmentDrafts.getState().remove(draftKey, entry.id)}>
                 <Icon name="x" />
               </button>
             </span>
           ))}
-          {preparingFiles > 0 && (
-            <span className="ago-pending-chip">
-              <Icon name="file-text" />
-              <span className="fname">
-                Preparing {preparingFiles === 1 ? "dropped file…" : `${preparingFiles} dropped files…`}
-              </span>
-            </span>
-          )}
         </div>
       )}
       <div className="chat-input"
         onDragOver={e => e.preventDefault()}
         onDrop={e => {
           e.preventDefault();
-          if (e.dataTransfer?.files?.length) void addDroppedFiles(e.dataTransfer.files);
+          if (e.dataTransfer?.files?.length) addDroppedFiles(e.dataTransfer.files);
         }}>
         {agents.length > 0 && (
           <button className={`btn ago-addr-btn ${addrSel.length ? "active" : ""}`}
@@ -366,7 +399,9 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
             <Icon name="messages-square" />
           </button>
         )}
-        <button className="btn primary" disabled={preparingFiles > 0} onClick={doSend}>Send</button>
+        <button className="btn primary"
+          disabled={preparingAttachments.length > 0 || (readyAttachments.length > 0 && send.isPending)}
+          onClick={doSend}>Send</button>
         {addrOpen && (
           <div className="ago-addr-pop" id="ago-addr-pop">
             <div className="ago-addr-pop-head">
