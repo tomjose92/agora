@@ -8,6 +8,8 @@ export interface Me {
   /** Operator powers: connections, pairing tokens, users & invites. */
   instance_admin?: boolean;
   version: string;
+  /** Per-file upload limit advertised by current servers; older servers omit it. */
+  max_file_mb?: number;
   /** Server has OPENAI_API_KEY: voice notes / speak-aloud / live voice work. */
   voice?: boolean;
   /** Server has ANTHROPIC_API_KEY: /api/search/ask (Ask AI) works. */

@@ -555,6 +555,9 @@ async fn me(
         "display_name": user.display_name,
         "instance_admin": user.instance_admin,
         "version": env!("CARGO_PKG_VERSION"),
+        // Clients use the real server limit to reject impossible uploads before
+        // copying a promised file into the webview heap.
+        "max_file_mb": state.config.snapshot().max_file_mb,
         // Voice features (voice notes, speak-aloud, live voice) need an
         // OPENAI_API_KEY in the server env; clients hide the controls without it.
         "voice": crate::voice::api_key().is_some(),
@@ -3806,6 +3809,25 @@ mod tests {
         assert_eq!(res.0["is_public"], false);
         let mine = list_groups(State(state.clone()), q(), rex).await.unwrap();
         assert!(mine.0["groups"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn me_advertises_the_upload_limit() {
+        let (state, _dir) = test_state();
+        state.hub.store.create_user("ana", "Ana", None, "member").unwrap();
+
+        let res = me(
+            State(state.clone()),
+            Query(HashMap::new()),
+            session_headers(&state, "ana"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            res.0["max_file_mb"],
+            state.config.snapshot().max_file_mb,
+        );
     }
 
     #[tokio::test]

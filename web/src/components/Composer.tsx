@@ -3,7 +3,11 @@
    (paste/drag/pick, 5-file cap), and the thread-ask toggle. */
 
 import { useEffect, useRef, useState } from "react";
-import { useAgents, useSendMessage, type ChannelAgent, type OutgoingFile } from "@agora/core";
+import {
+  DROP_HEAP_MAX_BYTES, DroppedFileError, dropMaterializationLimit,
+  materializeDroppedFile, useAgents, useAttachmentDrafts, useMe, useSendMessage,
+  type ChannelAgent, type DraftAttachment, type OutgoingFile,
+} from "@agora/core";
 import { create } from "zustand";
 import { Icon } from "../lib/icons";
 import { autoGrow } from "../lib/autoGrow";
@@ -13,6 +17,8 @@ import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
 
 const MAX_FILES = 5;
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 120_000;
+const NO_ATTACHMENTS: DraftAttachment[] = [];
 
 export interface MentionCandidate {
   type: "agent" | "user";
@@ -74,7 +80,7 @@ function AgentAv({ a, cls }: { a: { id: string; avatar?: string }; cls: string }
   return <span className={`ago-av ${cls}`}><Icon name="bot" /></span>;
 }
 
-export function Composer({ channelId, channelName, threadId, agents = [], candidates = [], voiceOK, replyInThread, onToggleReplyInThread }: {
+export function Composer({ channelId, channelName, threadId, agents = [], candidates = [], voiceOK, replyInThread, onSetReplyInThread }: {
   channelId: string;
   channelName: string;
   threadId: number | null;
@@ -85,13 +91,14 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   /** Server has STT/TTS (me.voice): show the mic. */
   voiceOK?: boolean;
   replyInThread?: boolean;
-  onToggleReplyInThread?: () => void;
+  onSetReplyInThread?: (value: boolean) => void;
 }) {
   const send = useSendMessage(channelId);
+  const me = useMe().data;
   const draftKey = threadId != null ? `t:${threadId}` : `c:${channelId}`;
   const text = useDrafts(s => s.drafts[draftKey] ?? "");
   const setText = useDrafts(s => s.set);
-  const [files, setFiles] = useState<File[]>([]);
+  const attachments = useAttachmentDrafts(s => s.byDraft[draftKey] ?? NO_ATTACHMENTS);
   const [mention, setMention] = useState<{ items: MentionCandidate[]; active: number; start: number } | null>(null);
   const [addrOpen, setAddrOpen] = useState(false);
   const addrSel = useAddressing(s => s.addr[draftKey] ?? NO_ADDR);
@@ -101,6 +108,16 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const fileRef = useRef<HTMLInputElement>(null);
 
   const inThread = threadId != null;
+  const readyAttachments = attachments.filter(
+    (entry): entry is DraftAttachment & { status: "ready"; file: File } =>
+      entry.status === "ready" && !!entry.file,
+  );
+  const preparingAttachments = attachments.filter(entry => entry.status === "preparing");
+  const sendingAttachments = attachments.filter(entry => entry.status === "sending");
+  const serverMaxBytes = typeof me?.max_file_mb === "number" && me.max_file_mb > 0
+    ? me.max_file_mb * 1024 * 1024
+    : undefined;
+  const dropMaxBytes = dropMaterializationLimit(me?.max_file_mb);
   const inputId = inThread ? "ago-thread-msg" : "ago-msg";
   const selectedAgents = addrSel
     .map(id => agents.find(a => a.id === id))
@@ -119,15 +136,78 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   }, [addrOpen]);
 
   const addFiles = (list: FileList | File[]) => {
-    const next = [...files];
-    for (const f of Array.from(list)) {
-      if (next.length >= MAX_FILES) {
-        toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
-        break;
-      }
-      next.push(f);
+    const incoming = Array.from(list);
+    const nonEmpty = incoming.filter((file) => file.size > 0);
+    const allowed = nonEmpty.filter(
+      (file) => serverMaxBytes === undefined || file.size <= serverMaxBytes,
+    );
+    if (nonEmpty.length < incoming.length) {
+      toast("Empty files cannot be uploaded", { variant: "warn" });
     }
-    setFiles(next);
+    if (allowed.length < nonEmpty.length) {
+      toast(`File too large (max ${me!.max_file_mb} MB)`, { variant: "warn" });
+    }
+    const result = useAttachmentDrafts.getState().stage(
+      draftKey,
+      allowed,
+      "ready",
+      MAX_FILES,
+    );
+    if (result.rejectedForCap) {
+      toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
+    }
+  };
+
+  const prepareDroppedFile = async (
+    entry: DraftAttachment,
+    source: File,
+  ) => {
+    try {
+      const file = await materializeDroppedFile(source, { maxBytes: dropMaxBytes });
+      useAttachmentDrafts.getState().complete(draftKey, entry.id, file);
+    } catch (error) {
+      const message = error instanceof DroppedFileError && error.code === "too_large"
+        ? serverMaxBytes !== undefined && serverMaxBytes <= DROP_HEAP_MAX_BYTES
+          ? `File too large (max ${me!.max_file_mb} MB)`
+          : "Large files must be attached with the paperclip"
+        : error instanceof DroppedFileError && error.code === "empty"
+          ? "Empty files cannot be uploaded"
+          : "Could not read the dropped file";
+      // Cancellation removes the entry. A late failure then cannot surface in
+      // whichever channel the user has navigated to.
+      useAttachmentDrafts.getState().fail(draftKey, entry.id, message);
+    }
+  };
+
+  const addDroppedFiles = (list: FileList) => {
+    const dropped = Array.from(list);
+    // A promised file may report size 0 before its provider resolves, so only
+    // reject metadata that already proves the drop cannot be materialized.
+    const allowed = dropped.filter((file) => file.size <= dropMaxBytes);
+    if (allowed.length < dropped.length) {
+      const serverBound = serverMaxBytes !== undefined
+        && serverMaxBytes <= DROP_HEAP_MAX_BYTES;
+      toast(
+        serverBound
+          ? `File too large (max ${me!.max_file_mb} MB)`
+          : "Large files must be attached with the paperclip",
+        { variant: "warn" },
+      );
+    }
+    const result = useAttachmentDrafts.getState().stage(
+      draftKey,
+      allowed,
+      "preparing",
+      MAX_FILES,
+    );
+    if (result.rejectedForCap) {
+      toast(`Up to ${MAX_FILES} files per message`, { variant: "warn" });
+    }
+    // Each call enters materializeDroppedFile before its first await, while the
+    // macOS promised-file provider is still alive for this drop event.
+    result.accepted.forEach((entry, index) => {
+      void prepareDroppedFile(entry, allowed[index]);
+    });
   };
 
   /* Mention autocomplete: a live "@token" ending at the caret. */
@@ -163,19 +243,71 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   };
 
   const doSend = () => {
+    if (preparingAttachments.length) {
+      toast(
+        preparingAttachments.length === 1
+          ? "Please wait while the dropped file is prepared"
+          : "Please wait while the dropped files are prepared",
+        { variant: "warn" },
+      );
+      return;
+    }
     const t = text.trim();
-    if (!t && !files.length) return;
+    if (!t && !readyAttachments.length) return;
+    if (sendingAttachments.length) {
+      toast("Please wait while the attachment is sent", { variant: "warn" });
+      return;
+    }
     // "Talk to" prefix: the chosen agents' mentions route the message.
     const addr = selectedAgents.map(a => "@" + slugify(a.name)).join(", ");
     const outText = addr ? (t ? `${addr}, ${t}` : addr) : t;
-    const outgoing: OutgoingFile[] = files.map(f => ({ part: f, name: f.name }));
-    send.mutate(
-      { text: outText, threadId, files: outgoing.length ? outgoing : undefined, replyInThread },
-      { onError: e => toast("Send failed: " + (e as Error).message, { variant: "warn" }) },
-    );
-    setText(draftKey, "");
-    setFiles([]);
-    if (replyInThread && onToggleReplyInThread) onToggleReplyInThread(); // an ask covers one message
+    const outgoing: OutgoingFile[] = readyAttachments.map(entry => ({
+      part: entry.file,
+      name: entry.name,
+    }));
+    const sentIds = readyAttachments.map(entry => entry.id);
+    const sentText = text;
+    const controller = sentIds.length ? new AbortController() : null;
+    if (controller && !useAttachmentDrafts.getState().beginSend(
+      draftKey,
+      sentIds,
+      () => controller.abort(),
+    )) {
+      toast("Attachments changed — please try Send again", { variant: "warn" });
+      return;
+    }
+    const uploadTimer = controller
+      ? setTimeout(() => controller.abort(), ATTACHMENT_UPLOAD_TIMEOUT_MS)
+      : undefined;
+    void send.mutateAsync({
+      text: outText,
+      threadId,
+      files: outgoing.length ? outgoing : undefined,
+      replyInThread,
+      signal: controller?.signal,
+    }).then(() => {
+      if (!sentIds.length) return;
+      useAttachmentDrafts.getState().sendSucceeded(draftKey, sentIds);
+      if ((useDrafts.getState().drafts[draftKey] ?? "") === sentText) {
+        setText(draftKey, "");
+      }
+      if (replyInThread && onSetReplyInThread) onSetReplyInThread(false);
+    }).catch((error) => {
+      if (sentIds.length) useAttachmentDrafts.getState().sendFailed(draftKey, sentIds);
+      const aborted = controller?.signal.aborted;
+      toast(
+        aborted ? "Attachment upload cancelled or timed out" : "Send failed: " + (error as Error).message,
+        { variant: "warn" },
+      );
+    }).finally(() => {
+      if (uploadTimer !== undefined) clearTimeout(uploadTimer);
+    });
+    // Preserve attachment-bearing drafts until the upload succeeds. Plain text
+    // keeps the existing fast optimistic composer behavior.
+    if (!sentIds.length) {
+      setText(draftKey, "");
+      if (replyInThread && onSetReplyInThread) onSetReplyInThread(false);
+    }
     if (taRef.current) { autoGrow(taRef.current); taRef.current.focus(); }
   };
 
@@ -217,15 +349,28 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
             onClick={() => addrClear(draftKey)}>Clear</button>
         </div>
       )}
-      {files.length > 0 && (
+      {attachments.length > 0 && (
         <div className="ago-pending">
-          {files.map((f, i) => (
-            <span key={i} className="ago-pending-chip" title={f.name}>
-              <Icon name={(f.type || "").startsWith("image/") ? "image" : "file-text"} />
-              <span className="fname">{f.name}</span>
-              <span className="fsize">{humanSize(f.size)}</span>
-              <button className="ago-x" title="Remove"
-                onClick={() => setFiles(files.filter((_, j) => j !== i))}>
+          {attachments.map(entry => (
+            <span key={entry.id} className="ago-pending-chip" title={entry.name}>
+              <Icon name={(entry.type || "").startsWith("image/") ? "image" : "file-text"} />
+              <span className="fname">
+                {entry.status === "preparing"
+                  ? `Preparing ${entry.name}…`
+                  : entry.status === "sending"
+                    ? `Sending ${entry.name}…`
+                  : entry.status === "failed"
+                    ? entry.error || `Could not read ${entry.name}`
+                    : entry.name}
+              </span>
+              {entry.status === "ready" && <span className="fsize">{humanSize(entry.size)}</span>}
+              <button className="ago-x"
+                title={entry.status === "sending"
+                  ? "Cancel upload"
+                  : entry.status === "preparing" ? "Cancel" : "Remove"}
+                onClick={() => entry.status === "sending"
+                  ? useAttachmentDrafts.getState().cancelSend(draftKey, entry.id)
+                  : useAttachmentDrafts.getState().remove(draftKey, entry.id)}>
                 <Icon name="x" />
               </button>
             </span>
@@ -236,7 +381,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
         onDragOver={e => e.preventDefault()}
         onDrop={e => {
           e.preventDefault();
-          if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+          if (e.dataTransfer?.files?.length) addDroppedFiles(e.dataTransfer.files);
         }}>
         {agents.length > 0 && (
           <button className={`btn ago-addr-btn ${addrSel.length ? "active" : ""}`}
@@ -282,14 +427,16 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           <Icon name="paperclip" />
         </button>
         {voiceOK && <MicButton channelId={channelId} threadId={threadId} />}
-        {!inThread && onToggleReplyInThread && (
+        {!inThread && onSetReplyInThread && (
           <button className={`btn ago-thread-ask ${replyInThread ? "active" : ""}`} id="ago-thread-ask"
             title="Agents answer this message in a thread under it"
-            onClick={onToggleReplyInThread}>
+            onClick={() => onSetReplyInThread(!replyInThread)}>
             <Icon name="messages-square" />
           </button>
         )}
-        <button className="btn primary" onClick={doSend}>Send</button>
+        <button className="btn primary"
+          disabled={preparingAttachments.length > 0 || sendingAttachments.length > 0}
+          onClick={doSend}>Send</button>
         {addrOpen && (
           <div className="ago-addr-pop" id="ago-addr-pop">
             <div className="ago-addr-pop-head">
