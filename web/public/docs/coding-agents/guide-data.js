@@ -1,6 +1,6 @@
 /* Bundled documentation data. scripts/check-agent-docs.mjs ensures every
    environment variable consumed by a connector appears in these references. */
-const sharedEnv = [
+export const sharedEnv = [
   ["AGORA_URL", "Required", "—", "Agora's http(s) or ws(s) base URL. The agent WebSocket path is added automatically."],
   ["AGORA_PAIRING_TOKEN", "Required*", "—", "Credential created by Agora. Prefer the token-file option on shared machines."],
   ["AGORA_PAIRING_TOKEN_FILE", "Optional", "—", "Path to a chmod 600 file containing the pairing token. Replaces the inline token."],
@@ -14,7 +14,7 @@ const sharedEnv = [
   ["AGORA_PEER_AGENTS", "Optional", "Empty", "Comma-separated agent IDs allowed to drive this agent through explicit mentions. Keep empty for humans-only operation."],
 ];
 
-const guides = {
+export const guides = {
   codex: {
     name: "Codex CLI",
     short: "Codex",

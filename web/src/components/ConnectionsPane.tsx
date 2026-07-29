@@ -1,7 +1,7 @@
 /* Admin-only connection manager. "Add agent" presents branded, guided setup
    for local coding CLIs alongside hosted agent integrations and Pantheo. */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   type PairingKind,
   type PairingToken,
@@ -31,24 +31,23 @@ interface AddDefinition {
   desc: string;
   defaultLabel: string;
   local?: boolean;
-  directory?: string;
 }
 
 const ADD_DEFINITIONS: AddDefinition[] = [
   {
     kind: "codex", logo: codexLogo, title: "Codex CLI", shortTitle: "Codex",
     desc: "Continue Codex sessions and work on repositories from Agora.",
-    defaultLabel: "Codex", local: true, directory: "codex-cli",
+    defaultLabel: "Codex", local: true,
   },
   {
     kind: "cursor", logo: cursorLogo, title: "Cursor CLI", shortTitle: "Cursor",
     desc: "Run Cursor CLI against projects on your computer.",
-    defaultLabel: "Cursor", local: true, directory: "cursor-cli",
+    defaultLabel: "Cursor", local: true,
   },
   {
     kind: "claude", logo: claudeLogo, title: "Claude Code", shortTitle: "Claude",
     desc: "Continue Claude Code sessions from any Agora channel.",
-    defaultLabel: "Claude", local: true, directory: "claude-cli",
+    defaultLabel: "Claude", local: true,
   },
   {
     kind: "hermes", logo: hermesLogo, title: "Hermes", shortTitle: "Hermes",
@@ -78,18 +77,14 @@ function copyText(text: string, what = "Copied") {
   );
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
-}
-
 function inferredKind(token: PairingToken): PairingKind | null {
   if (token.kind && token.kind in DEFINITION_BY_KIND) return token.kind;
-  const value = token.name.toLowerCase();
-  if (value.includes("codex")) return "codex";
-  if (value.includes("cursor")) return "cursor";
-  if (value.includes("claude")) return "claude";
-  if (value.includes("claw")) return "claw";
-  if (value.includes("hermes")) return "hermes";
+  const value = token.name.trim().toLowerCase();
+  if (value === "codex" || value.startsWith("codex-") || value.startsWith("codex_")) return "codex";
+  if (value === "cursor" || value.startsWith("cursor-") || value.startsWith("cursor_")) return "cursor";
+  if (value === "claude" || value.startsWith("claude-") || value.startsWith("claude_")) return "claude";
+  if (value === "openclaw" || value.startsWith("openclaw-") || value.startsWith("openclaw_")) return "claw";
+  if (value === "hermes" || value.startsWith("hermes-") || value.startsWith("hermes_")) return "hermes";
   return null;
 }
 
@@ -352,26 +347,28 @@ export function ConnectionsPane() {
 
   const addAgent = (kind: PairingKind) => {
     const definition = DEFINITION_BY_KIND[kind];
-    if (issued && definition.local) {
-      return (
-        <CliSetup
-          definition={definition}
-          issued={issued}
-          connected={tokens.some(item => item.token === issued.token && item.connected)}
-          liveAgent={tokens.find(item => item.token === issued.token)?.agents?.[0]?.name}
-          onDone={() => { setIssued(null); setAddKind(null); setTab("list"); }}
-        />
-      );
-    }
     if (issued) {
+      const guide = guidePath(definition);
       return (
         <div className="conn-issued">
           <div className="conn-success-mark"><Icon name="check" /></div>
           <h3 className="conn-setup-title">{definition.title} access created</h3>
-          <p className="conn-setup-copy">Use this credential in {definition.title}'s Agora settings.</p>
+          <p className="conn-setup-copy">
+            {guide
+              ? `Copy this token, then follow the complete ${definition.title} guide to configure and start it.`
+              : `Use this credential in ${definition.title}'s Agora settings.`}
+          </p>
           <CommandBlock text={issued.token} label="Token" />
-          <button className="btn primary conn-done"
-            onClick={() => { setIssued(null); setAddKind(null); setTab("list"); }}>Done</button>
+          <div className="conn-issued-actions">
+            {guide && (
+              <a className="btn primary conn-guide-cta" href={guide} target="_blank"
+                rel="noopener noreferrer">Open setup guide <Icon name="external-link" /></a>
+            )}
+            <button className={`btn${guide ? "" : " primary"}`}
+              onClick={() => { setIssued(null); setAddKind(null); setTab("list"); }}>
+              View connections
+            </button>
+          </div>
         </div>
       );
     }
@@ -384,7 +381,7 @@ export function ConnectionsPane() {
         <div className="conn-setup-head">
           <AgentMark definition={definition} />
           <div>
-            <span className="conn-step-label">Step 1 of {definition.local ? "3" : "1"}</span>
+            <span className="conn-kicker">{definition.local ? "Coding agent" : "Secure agent access"}</span>
             <h3 className="conn-setup-title">Create access for {definition.title}</h3>
             {guidePath(definition) && (
               <a className="conn-setup-guide" href={guidePath(definition)!} target="_blank"
@@ -392,11 +389,6 @@ export function ConnectionsPane() {
             )}
           </div>
         </div>
-        {definition.local && (
-          <div className="conn-stepper" aria-label="Setup progress">
-            <span className="active" /><span /><span />
-          </div>
-        )}
         <p className="conn-setup-copy">Choose a friendly name so you can recognize this agent later.</p>
         <div className="conn-form conn-token-form">
           <label>Agent name
@@ -412,7 +404,7 @@ export function ConnectionsPane() {
               },
               onError: err("Couldn't create access"),
             });
-          }}>{pairMut.create.isPending ? "Creating…" : definition.local ? "Continue" : "Create access"}</button>
+          }}>{pairMut.create.isPending ? "Creating…" : "Create access"}</button>
         </div>
         {definition.local && (
           <p className="conn-security-note">
@@ -459,101 +451,6 @@ function BackButton({ onClick, label = "All agent types" }: { onClick: () => voi
       <Icon name="chevron-left" /> {label}
     </button>
   );
-}
-
-function CliSetup({
-  definition, issued, connected, liveAgent, onDone,
-}: {
-  definition: AddDefinition;
-  issued: { token: string; name: string };
-  connected: boolean;
-  liveAgent?: string;
-  onDone: () => void;
-}) {
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const directory = definition.directory!;
-  const envPath = `bridges/${directory}/.env`;
-  const configCommand = useMemo(() => {
-    const values = [
-      `AGORA_URL=${location.origin}`,
-      `AGORA_PAIRING_TOKEN=${issued.token}`,
-    ];
-    return `printf '%s\\n' ${values.map(shellQuote).join(" ")} > ${envPath}\nchmod 600 ${envPath}`;
-  }, [envPath, issued.token]);
-  const prepareCommand =
-    "python3 -m venv .venv\n.venv/bin/python -m pip install --upgrade pip websockets";
-
-  return (
-    <>
-      <BackButton onClick={onDone} label="Connections" />
-      <div className="conn-setup-head">
-        <AgentMark definition={definition} />
-        <div>
-          <span className="conn-step-label">Step {connected ? "3" : "2"} of 3</span>
-          <h3 className="conn-setup-title">
-            {connected ? `${liveAgent || definition.shortTitle} is connected` : `Set up ${definition.title}`}
-          </h3>
-          <a className="conn-setup-guide" href={guidePath(definition)!} target="_blank"
-            rel="noopener noreferrer">Open full setup guide <Icon name="external-link" /></a>
-        </div>
-      </div>
-      <div className="conn-stepper" aria-label="Setup progress">
-        <span className="done" /><span className={connected ? "done" : "active"} />
-        <span className={connected ? "active" : ""} />
-      </div>
-      {connected ? (
-        <div className="conn-connected">
-          <div className="conn-connected-orbit"><AgentMark definition={definition} /></div>
-          <h3>Ready for a channel</h3>
-          <p>Add {liveAgent || definition.shortTitle} from a channel's member picker, then start or resume a session.</p>
-          <button className="btn primary" onClick={onDone}>View connections</button>
-        </div>
-      ) : (
-        <>
-          <p className="conn-setup-copy">
-            On the computer where you use {definition.title}, open a terminal in the Agora repository.
-          </p>
-          <ol className="conn-instructions">
-            <li>
-              <b>Prepare the Agora agent</b>
-              <CommandBlock text={prepareCommand} label="Setup command" />
-            </li>
-            <li>
-              <b>Create <code>{envPath}</code> with this connection</b>
-              <CommandBlock text={configCommand} label="Configuration command" />
-            </li>
-            <li>
-              <b>Start it</b>
-              <CommandBlock text={`.venv/bin/python bridges/${directory}/bridge.py`} label="Start command" />
-            </li>
-          </ol>
-          <div className="conn-waiting" role="status">
-            <span className="conn-wait-pulse" />
-            <div><b>Waiting for {definition.shortTitle}…</b><span>This screen will update automatically.</span></div>
-          </div>
-          <a className="conn-troubleshoot" href={`${guidePath(definition)}#troubleshooting`}
-            target="_blank" rel="noopener noreferrer">Having trouble? Open troubleshooting</a>
-          <button className="conn-advanced-toggle" aria-expanded={showAdvanced}
-            onClick={() => setShowAdvanced(value => !value)}>
-            Advanced setup <Icon name={showAdvanced ? "chevron-up" : "chevron-down"} />
-          </button>
-          {showAdvanced && (
-            <div className="conn-advanced">
-              <p>Pairing token</p>
-              <CommandBlock text={issued.token} label="Token" />
-              <p>WebSocket URL</p>
-              <CommandBlock text={agentWsUrl(issued.token)} label="WebSocket URL" />
-            </div>
-          )}
-        </>
-      )}
-    </>
-  );
-}
-
-function agentWsUrl(token: string): string {
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  return `${protocol}://${location.host}/agent/ws?token=${token}`;
 }
 
 function useRenameInstanceLocal() {

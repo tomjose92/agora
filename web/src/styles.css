@@ -1288,8 +1288,6 @@ a.btn { text-decoration: none; }
 .conn-intro p, .conn-setup-copy {
   margin: 0; max-width: 540px; color: var(--dim); font-size: 12.5px; line-height: 1.55;
 }
-.conn-catalog-section { margin-top: 10px; }
-.conn-catalog-section > h4 { margin-bottom: 9px; }
 .conn-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .conn-cards.top-level { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 14px; }
 .conn-card {
@@ -1367,31 +1365,18 @@ a.btn { text-decoration: none; }
   border: 1px solid var(--border-strong); border-radius: 12px; padding: 14px;
   background: rgba(0,0,0,.22);
 }
-.conn-issued-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.conn-issued-label {
-  flex: 0 0 90px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--dim);
-}
-.conn-issued-field code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conn-issued > .btn { align-self: flex-start; }
+.conn-issued-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.conn-guide-cta { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
+.conn-guide-cta .ico { width: 13px; height: 13px; }
 .conn-empty .btn { margin-left: 6px; }
 .conn-setup-head { display: flex; align-items: center; gap: 12px; margin: 10px 0 4px; }
-.conn-step-label {
-  color: var(--a1); font-size: 9.5px; font-weight: 700; letter-spacing: .08em;
-  text-transform: uppercase;
-}
 .conn-setup-head .conn-setup-title { margin-top: 2px; }
 .conn-setup-guide {
   display: inline-flex; align-items: center; gap: 4px; margin-top: 3px;
   color: var(--a1); font-size: 10.5px; text-decoration: none;
 }
 .conn-setup-guide:hover { text-decoration: underline; }
-.conn-stepper { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 14px 0 16px; }
-.conn-stepper span { height: 3px; border-radius: 99px; background: rgba(255,255,255,.08); }
-.conn-stepper span.active {
-  background: var(--a1); box-shadow: 0 0 12px color-mix(in srgb, var(--a1) 55%, transparent);
-}
-.conn-stepper span.done { background: color-mix(in srgb, var(--a1) 45%, var(--border)); }
 .conn-token-form { margin-top: 16px; }
 .conn-token-form .btn { padding: 8px 16px; }
 .conn-security-note {
@@ -1399,19 +1384,6 @@ a.btn { text-decoration: none; }
   margin: 14px 0 0; color: var(--faint); font-size: 11px; line-height: 1.45;
 }
 .conn-security-note .ico { flex: none; width: 14px; height: 14px; margin-top: 1px; }
-.conn-instructions { margin: 18px 0 0; padding: 0; list-style: none; counter-reset: steps; }
-.conn-instructions > li {
-  position: relative; padding: 0 0 16px 34px; counter-increment: steps;
-}
-.conn-instructions > li::before {
-  content: counter(steps); position: absolute; left: 0; top: -2px; width: 22px; height: 22px;
-  display: grid; place-items: center; border-radius: 50%; color: var(--a1);
-  border: 1px solid color-mix(in srgb, var(--a1) 45%, var(--border)); font-size: 10px; font-weight: 700;
-}
-.conn-instructions > li:not(:last-child)::after {
-  content: ""; position: absolute; left: 11px; top: 23px; bottom: 1px; width: 1px; background: var(--border);
-}
-.conn-instructions b { display: block; margin-bottom: 7px; font-size: 12px; font-weight: 600; }
 .conn-command {
   display: flex; align-items: stretch; min-width: 0; border: 1px solid var(--border);
   border-radius: 9px; background: rgba(0,0,0,.28); overflow: hidden;
@@ -1423,52 +1395,11 @@ a.btn { text-decoration: none; }
 }
 .conn-command .btn { border: 0; border-left: 1px solid var(--border); border-radius: 0; }
 .conn-command .btn .ico { width: 12px; height: 12px; }
-.conn-waiting {
-  display: flex; align-items: center; gap: 11px; margin-top: 2px; padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, var(--a1) 25%, var(--border));
-  border-radius: 10px; background: color-mix(in srgb, var(--a1) 6%, transparent);
-}
-.conn-waiting b, .conn-waiting span { display: block; }
-.conn-waiting b { font-size: 11.5px; }
-.conn-waiting div > span { margin-top: 2px; color: var(--faint); font-size: 10.5px; }
-.conn-wait-pulse {
-  width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--a1);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--a1) 55%, transparent);
-  animation: conn-pulse 1.7s ease-out infinite;
-}
-.conn-troubleshoot {
-  display: block; width: fit-content; margin: 9px 0 0; color: var(--dim);
-  font-size: 10.5px; text-decoration: none;
-}
-.conn-troubleshoot:hover { color: var(--text); text-decoration: underline; }
-@keyframes conn-pulse {
-  70%, 100% { box-shadow: 0 0 0 8px transparent; }
-}
-.conn-advanced-toggle {
-  display: inline-flex; align-items: center; gap: 4px; margin-top: 14px; padding: 0;
-  border: 0; background: none; color: var(--dim); font: inherit; font-size: 11px; cursor: pointer;
-}
-.conn-advanced-toggle:hover { color: var(--text); }
-.conn-advanced-toggle .ico { width: 13px; height: 13px; }
-.conn-advanced { margin-top: 9px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
-.conn-advanced p { margin: 8px 0 5px; color: var(--faint); font-size: 10px; text-transform: uppercase; }
-.conn-advanced p:first-child { margin-top: 0; }
-.conn-connected { padding: 18px 0 4px; text-align: center; }
-.conn-connected-orbit {
-  width: 74px; height: 74px; display: grid; place-items: center; margin: 0 auto 12px;
-  border-radius: 50%; border: 1px solid color-mix(in srgb, var(--a1) 35%, var(--border));
-  background: radial-gradient(circle, color-mix(in srgb, var(--a1) 16%, transparent), transparent 68%);
-  box-shadow: 0 0 32px color-mix(in srgb, var(--a1) 10%, transparent);
-}
-.conn-connected h3 { margin: 0 0 6px; font-size: 18px; }
-.conn-connected p { max-width: 430px; margin: 0 auto 16px; color: var(--dim); font-size: 12px; line-height: 1.5; }
 .conn-success-mark {
   width: 44px; height: 44px; display: grid; place-items: center; margin: 8px 0 12px;
   border-radius: 50%; color: var(--a1); background: color-mix(in srgb, var(--a1) 13%, transparent);
   border: 1px solid color-mix(in srgb, var(--a1) 35%, transparent);
 }
-.conn-done { margin-top: 14px; }
-
 @media (max-width: 640px) {
   .conn-overlay { padding: 12px; }
   .conn-panel { max-height: 92vh; border-radius: 15px; }
@@ -1480,12 +1411,10 @@ a.btn { text-decoration: none; }
   .conn-row > .btn { flex: 1 1 90px; }
   .conn-setup-head { align-items: flex-start; }
   .conn-command code { font-size: 10.5px; }
-  .conn-issued-field { align-items: stretch; flex-direction: column; }
-  .conn-issued-label { flex-basis: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .conn-panel, .conn-card, .conn-card-title .ico, .conn-wait-pulse { animation: none; transition: none; }
+  .conn-panel, .conn-card, .conn-card-title .ico { animation: none; transition: none; }
   .conn-card:hover { transform: none; }
 }
 
