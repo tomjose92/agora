@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiClient, ApiProvider, useMe } from "@agora/core";
+import { ApiClient, ApiProvider, useAttachmentDrafts, useMe } from "@agora/core";
 import { sessionToken, clearJoinToken } from "./lib/auth";
 import { AuthGate } from "./components/AuthGate";
 import { Topbar } from "./components/Topbar";
@@ -41,6 +41,7 @@ export function App() {
 
   const signedIn = () => {
     qc.clear();
+    useAttachmentDrafts.getState().reset();
     setToken(sessionToken());
     setGateVisible(false);
   };
@@ -55,7 +56,10 @@ export function App() {
   }
   return (
     <ApiProvider client={client}>
-      <AuthedApp onAuthFailed={() => setGateVisible(true)} />
+      <AuthedApp onAuthFailed={() => {
+        useAttachmentDrafts.getState().reset();
+        setGateVisible(true);
+      }} />
     </ApiProvider>
   );
 }

@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 
-export type DraftAttachmentStatus = "preparing" | "ready" | "failed";
+export type DraftAttachmentStatus = "preparing" | "ready" | "sending" | "failed";
 type StageAttachmentStatus = Exclude<DraftAttachmentStatus, "failed">;
 
 export interface DraftAttachment {
@@ -31,8 +31,10 @@ interface AttachmentDraftState {
   ) => StageResult;
   complete: (draftKey: string, id: string, file: File) => boolean;
   fail: (draftKey: string, id: string, error: string) => boolean;
+  beginSend: (draftKey: string, ids: string[]) => boolean;
+  sendSucceeded: (draftKey: string, ids: string[]) => void;
+  sendFailed: (draftKey: string, ids: string[]) => void;
   remove: (draftKey: string, id: string) => boolean;
-  removeMany: (draftKey: string, ids: string[]) => void;
   reset: () => void;
 }
 
@@ -107,12 +109,60 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
     return failed;
   },
 
+  beginSend: (draftKey, ids) => {
+    const selected = new Set(ids);
+    const current = get().byDraft[draftKey] ?? [];
+    if (!ids.length || ids.some((id) =>
+      !current.some((entry) => entry.id === id && entry.status === "ready"))) {
+      return false;
+    }
+    set((state) => ({
+      byDraft: {
+        ...state.byDraft,
+        [draftKey]: (state.byDraft[draftKey] ?? []).map((entry) =>
+          selected.has(entry.id) ? { ...entry, status: "sending" as const } : entry),
+      },
+    }));
+    return true;
+  },
+
+  sendSucceeded: (draftKey, ids) => {
+    const sent = new Set(ids);
+    set((state) => {
+      const current = state.byDraft[draftKey] ?? [];
+      const next = current.filter((entry) =>
+        !(sent.has(entry.id) && entry.status === "sending"));
+      if (next.length === current.length) return state;
+      const byDraft = { ...state.byDraft };
+      if (next.length) byDraft[draftKey] = next;
+      else delete byDraft[draftKey];
+      return { byDraft };
+    });
+  },
+
+  sendFailed: (draftKey, ids) => {
+    const sent = new Set(ids);
+    set((state) => {
+      const current = state.byDraft[draftKey] ?? [];
+      let changed = false;
+      const next = current.map((entry) => {
+        if (!sent.has(entry.id) || entry.status !== "sending") return entry;
+        changed = true;
+        return { ...entry, status: "ready" as const };
+      });
+      return changed
+        ? { byDraft: { ...state.byDraft, [draftKey]: next } }
+        : state;
+    });
+  },
+
   remove: (draftKey, id) => {
     let removed = false;
     set((state) => {
       const current = state.byDraft[draftKey] ?? [];
       const next = current.filter((entry) => {
         if (entry.id !== id) return true;
+        if (entry.status === "sending") return true;
         removed = true;
         return false;
       });
@@ -123,19 +173,6 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
       return { byDraft };
     });
     return removed;
-  },
-
-  removeMany: (draftKey, ids) => {
-    const doomed = new Set(ids);
-    set((state) => {
-      const current = state.byDraft[draftKey] ?? [];
-      const next = current.filter((entry) => !doomed.has(entry.id));
-      if (next.length === current.length) return state;
-      const byDraft = { ...state.byDraft };
-      if (next.length) byDraft[draftKey] = next;
-      else delete byDraft[draftKey];
-      return { byDraft };
-    });
   },
 
   reset: () => set({ byDraft: {} }),

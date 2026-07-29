@@ -60,9 +60,34 @@ describe("attachment drafts", () => {
     const sent = store.stage("c:a", [file("sent")], "ready", 5).accepted;
     store.stage("c:a", [file("new")], "ready", 5);
 
-    store.removeMany("c:a", sent.map((entry) => entry.id));
+    const ids = sent.map((entry) => entry.id);
+    expect(store.beginSend("c:a", ids)).toBe(true);
+    store.sendSucceeded("c:a", ids);
 
     expect(useAttachmentDrafts.getState().byDraft["c:a"].map((entry) => entry.name))
       .toEqual(["new"]);
+  });
+
+  it("restores a failed send and prevents removal while sending", () => {
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("sent")], "ready", 5).accepted;
+
+    expect(store.beginSend("c:a", [entry.id])).toBe(true);
+    expect(store.remove("c:a", entry.id)).toBe(false);
+    expect(useAttachmentDrafts.getState().byDraft["c:a"][0].status).toBe("sending");
+
+    store.sendFailed("c:a", [entry.id]);
+    expect(useAttachmentDrafts.getState().byDraft["c:a"][0].status).toBe("ready");
+  });
+
+  it("ignores late send completion after a session reset", () => {
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("sent")], "ready", 5).accepted;
+    expect(store.beginSend("c:a", [entry.id])).toBe(true);
+
+    store.reset();
+    store.sendSucceeded("c:a", [entry.id]);
+
+    expect(useAttachmentDrafts.getState().byDraft).toEqual({});
   });
 });

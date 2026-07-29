@@ -112,6 +112,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       entry.status === "ready" && !!entry.file,
   );
   const preparingAttachments = attachments.filter(entry => entry.status === "preparing");
+  const sendingAttachments = attachments.filter(entry => entry.status === "sending");
   const serverMaxBytes = typeof me?.max_file_mb === "number" && me.max_file_mb > 0
     ? me.max_file_mb * 1024 * 1024
     : undefined;
@@ -252,7 +253,10 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
     }
     const t = text.trim();
     if (!t && !readyAttachments.length) return;
-    if (readyAttachments.length && send.isPending) return;
+    if (sendingAttachments.length) {
+      toast("Please wait while the attachment is sent", { variant: "warn" });
+      return;
+    }
     // "Talk to" prefix: the chosen agents' mentions route the message.
     const addr = selectedAgents.map(a => "@" + slugify(a.name)).join(", ");
     const outText = addr ? (t ? `${addr}, ${t}` : addr) : t;
@@ -262,19 +266,24 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
     }));
     const sentIds = readyAttachments.map(entry => entry.id);
     const sentText = text;
-    send.mutate(
-      { text: outText, threadId, files: outgoing.length ? outgoing : undefined, replyInThread },
-      {
-        onSuccess: () => {
-          if (!sentIds.length) return;
-          useAttachmentDrafts.getState().removeMany(draftKey, sentIds);
-          if ((useDrafts.getState().drafts[draftKey] ?? "") === sentText) {
-            setText(draftKey, "");
-          }
-        },
-        onError: e => toast("Send failed: " + (e as Error).message, { variant: "warn" }),
-      },
-    );
+    if (sentIds.length && !useAttachmentDrafts.getState().beginSend(draftKey, sentIds)) {
+      return;
+    }
+    void send.mutateAsync({
+      text: outText,
+      threadId,
+      files: outgoing.length ? outgoing : undefined,
+      replyInThread,
+    }).then(() => {
+      if (!sentIds.length) return;
+      useAttachmentDrafts.getState().sendSucceeded(draftKey, sentIds);
+      if ((useDrafts.getState().drafts[draftKey] ?? "") === sentText) {
+        setText(draftKey, "");
+      }
+    }).catch((error) => {
+      if (sentIds.length) useAttachmentDrafts.getState().sendFailed(draftKey, sentIds);
+      toast("Send failed: " + (error as Error).message, { variant: "warn" });
+    });
     // Preserve attachment-bearing drafts until the upload succeeds. Plain text
     // keeps the existing fast optimistic composer behavior.
     if (!sentIds.length) setText(draftKey, "");
@@ -328,16 +337,20 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
               <span className="fname">
                 {entry.status === "preparing"
                   ? `Preparing ${entry.name}…`
+                  : entry.status === "sending"
+                    ? `Sending ${entry.name}…`
                   : entry.status === "failed"
                     ? entry.error || `Could not read ${entry.name}`
                     : entry.name}
               </span>
               {entry.status === "ready" && <span className="fsize">{humanSize(entry.size)}</span>}
-              <button className="ago-x"
-                title={entry.status === "preparing" ? "Cancel" : "Remove"}
-                onClick={() => useAttachmentDrafts.getState().remove(draftKey, entry.id)}>
-                <Icon name="x" />
-              </button>
+              {entry.status !== "sending" && (
+                <button className="ago-x"
+                  title={entry.status === "preparing" ? "Cancel" : "Remove"}
+                  onClick={() => useAttachmentDrafts.getState().remove(draftKey, entry.id)}>
+                  <Icon name="x" />
+                </button>
+              )}
             </span>
           ))}
         </div>
@@ -400,7 +413,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           </button>
         )}
         <button className="btn primary"
-          disabled={preparingAttachments.length > 0 || (readyAttachments.length > 0 && send.isPending)}
+          disabled={preparingAttachments.length > 0 || sendingAttachments.length > 0}
           onClick={doSend}>Send</button>
         {addrOpen && (
           <div className="ago-addr-pop" id="ago-addr-pop">
