@@ -78,6 +78,10 @@ function copyText(text: string, what = "Copied") {
   );
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+}
+
 function inferredKind(token: PairingToken): PairingKind | null {
   if (token.kind && token.kind in DEFINITION_BY_KIND) return token.kind;
   const value = token.name.toLowerCase();
@@ -373,7 +377,10 @@ export function ConnectionsPane() {
     }
     return (
       <>
-        <BackButton onClick={() => setAddKind(null)} />
+        <BackButton
+          onClick={() => setAddKind(definition.local ? "coding" : null)}
+          label={definition.local ? "Coding agents" : "All connection types"}
+        />
         <div className="conn-setup-head">
           <AgentMark definition={definition} />
           <div>
@@ -464,15 +471,21 @@ function CliSetup({
   onDone: () => void;
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const envText = useMemo(() => (
-    `AGORA_URL=${location.origin}\nAGORA_PAIRING_TOKEN=${issued.token}`
-  ), [issued.token]);
   const directory = definition.directory!;
-  const startCommand = `python3 -m pip install websockets\ncp -n bridges/${directory}/.env.example bridges/${directory}/.env`;
+  const envPath = `bridges/${directory}/.env`;
+  const configCommand = useMemo(() => {
+    const values = [
+      `AGORA_URL=${location.origin}`,
+      `AGORA_PAIRING_TOKEN=${issued.token}`,
+    ];
+    return `printf '%s\\n' ${values.map(shellQuote).join(" ")} > ${envPath}\nchmod 600 ${envPath}`;
+  }, [envPath, issued.token]);
+  const prepareCommand =
+    "python3 -m venv .venv\n.venv/bin/python -m pip install --upgrade pip websockets";
 
   return (
     <>
-      <BackButton onClick={onDone} />
+      <BackButton onClick={onDone} label="Connections" />
       <div className="conn-setup-head">
         <AgentMark definition={definition} />
         <div>
@@ -503,15 +516,15 @@ function CliSetup({
           <ol className="conn-instructions">
             <li>
               <b>Prepare the Agora agent</b>
-              <CommandBlock text={startCommand} label="Setup command" />
+              <CommandBlock text={prepareCommand} label="Setup command" />
             </li>
             <li>
-              <b>Add these two lines to <code>bridges/{directory}/.env</code></b>
-              <CommandBlock text={envText} label="Configuration" />
+              <b>Create <code>{envPath}</code> with this connection</b>
+              <CommandBlock text={configCommand} label="Configuration command" />
             </li>
             <li>
               <b>Start it</b>
-              <CommandBlock text={`python3 bridges/${directory}/bridge.py`} label="Start command" />
+              <CommandBlock text={`.venv/bin/python bridges/${directory}/bridge.py`} label="Start command" />
             </li>
           </ol>
           <div className="conn-waiting" role="status">

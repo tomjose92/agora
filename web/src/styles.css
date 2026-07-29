@@ -1437,7 +1437,8 @@ a.btn { text-decoration: none; }
   animation: conn-pulse 1.7s ease-out infinite;
 }
 .conn-troubleshoot {
-  display: inline-block; margin: 9px 0 0; color: var(--dim); font-size: 10.5px; text-decoration: none;
+  display: block; width: fit-content; margin: 9px 0 0; color: var(--dim);
+  font-size: 10.5px; text-decoration: none;
 }
 .conn-troubleshoot:hover { color: var(--text); text-decoration: underline; }
 @keyframes conn-pulse {

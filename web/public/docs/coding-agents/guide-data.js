@@ -24,7 +24,7 @@ const guides = {
     requirement: "A signed-in Codex CLI available as codex on the computer containing your repositories.",
     allowedRoots: "CODEX_ALLOWED_ROOTS",
     start: "python3 bridges/codex-cli/bridge.py",
-    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN_FILE=$HOME/.config/agora/codex-token\nCODEX_ALLOWED_ROOTS=$HOME/code:$HOME/work",
+    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCODEX_ALLOWED_ROOTS=$HOME/code:$HOME/work",
     commands: [
       ["/sessions [n]", "List recent local Codex sessions."],
       ["/use <n|id>", "Bind this conversation to a session."],
@@ -39,7 +39,7 @@ const guides = {
     env: [
       ["CODEX_BIN", "Optional", "codex", "Executable name or absolute path."],
       ["CODEX_MODEL", "Optional", "sol", "Default model: sol, terra, or luna. /model overrides it per conversation."],
-      ["CODEX_SANDBOX", "Optional", "workspace-write", "Default sandbox: read-only, workspace-write, workspace-git, danger-full-access, or bypass."],
+      ["CODEX_SANDBOX", "Optional", "Empty (effective: workspace-write)", "Default sandbox: read-only, workspace-write, workspace-git, danger-full-access, or bypass."],
       ["CODEX_ARGS", "Optional", "Empty", "Additional arguments appended to every codex invocation. Avoid conflicting sandbox flags."],
       ["CODEX_ALLOWED_ROOTS", "Recommended", "Empty", "Colon-separated directories allowed for /new and worktrees. /new is disabled while empty."],
       ["CODEX_AUTO_WORKTREE", "Optional", "0", "Create an isolated worktree automatically for new repository sessions."],
@@ -58,7 +58,7 @@ const guides = {
     requirement: "Cursor CLI installed and authenticated with agent login. This connects CLI sessions, not desktop IDE chats.",
     allowedRoots: "CURSOR_ALLOWED_ROOTS",
     start: "python3 bridges/cursor-cli/bridge.py",
-    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN_FILE=$HOME/.config/agora/cursor-token\nCURSOR_ALLOWED_ROOTS=$HOME/code:$HOME/work",
+    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCURSOR_ALLOWED_ROOTS=$HOME/code:$HOME/work",
     commands: [
       ["/sessions [n]", "List discoverable Cursor CLI sessions."],
       ["/use <n|id>", "Bind this conversation to a session."],
@@ -72,7 +72,7 @@ const guides = {
     ],
     env: [
       ["CURSOR_BIN", "Optional", "agent", "Cursor CLI executable name or absolute path."],
-      ["CURSOR_MODEL", "Optional", "Auto", "Default model or alias. /model overrides it per conversation."],
+      ["CURSOR_MODEL", "Optional", "Empty (effective: Cursor Auto)", "Default model or alias. /model overrides it per conversation."],
       ["CURSOR_MODE", "Optional", "agent", "Default mode: plan, ask, agent, or force."],
       ["CURSOR_ARGS", "Optional", "Empty", "Additional arguments passed to each Cursor invocation."],
       ["CURSOR_ALLOWED_ROOTS", "Recommended", "Empty", "Colon-separated directories permitted for /new and worktrees. /new is disabled while empty."],
@@ -93,7 +93,7 @@ const guides = {
     requirement: "A signed-in Claude Code CLI available as claude on the computer containing your repositories.",
     allowedRoots: "CLAUDE_ALLOWED_ROOTS",
     start: "python3 bridges/claude-cli/bridge.py",
-    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN_FILE=$HOME/.config/agora/claude-token\nCLAUDE_ALLOWED_ROOTS=$HOME/code:$HOME/work",
+    exampleEnv: "AGORA_URL=https://your-agora-host\nAGORA_PAIRING_TOKEN=your-pairing-token\nCLAUDE_ALLOWED_ROOTS=$HOME/code:$HOME/work",
     commands: [
       ["/sessions [n]", "List recent Claude Code sessions."],
       ["/use <n|id>", "Bind this conversation to a session."],
@@ -107,8 +107,8 @@ const guides = {
     ],
     env: [
       ["CLAUDE_BIN", "Optional", "claude", "Executable name or absolute path."],
-      ["CLAUDE_MODEL", "Optional", "fable", "Default model or Claude CLI alias. /model overrides it per conversation."],
-      ["CLAUDE_PERMISSION_ARGS", "Optional", "acceptEdits", "Default Claude permission-mode arguments used for every run."],
+      ["CLAUDE_MODEL", "Optional", "Empty (CLI decides)", "Default model or Claude CLI alias. /model overrides it per conversation."],
+      ["CLAUDE_PERMISSION_ARGS", "Optional", "--permission-mode acceptEdits", "Default Claude permission-mode arguments used for every run."],
       ["CLAUDE_ALLOWED_ROOTS", "Recommended", "Empty", "Colon-separated directories permitted for /new and worktrees. /new is disabled while empty."],
       ["CLAUDE_AUTO_WORKTREE", "Optional", "0", "Automatically isolate new repository sessions in worktrees."],
       ["CLAUDE_ALLOW_PERMISSION_ESCALATION", "Optional", "0", "Allow chat commands to raise permissions above the startup default."],
