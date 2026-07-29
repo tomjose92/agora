@@ -354,7 +354,7 @@ export default function SettingsScreen() {
             <Pressable
               style={styles.linkBtn}
               onPress={() =>
-                pairingMut.create.mutate(bridgeName.trim() || "bridge", {
+                pairingMut.create.mutate({ name: bridgeName.trim() || "bridge" }, {
                   onSuccess: (r) => {
                     setBridgeName("");
                     void Share.share({ message: r.token });
