@@ -116,7 +116,11 @@ jobs:
           rm -rf /tmp/agora-parity
           ./target/debug/agora-server --data-dir /tmp/agora-parity --ui-dir web/dist &
           SERVER_PID=$!
-          for i in $(seq 1 50); do [ -f /tmp/agora-parity/config.json ] && break; sleep 0.2; done
+          for i in $(seq 1 50); do
+            curl --fail --silent http://127.0.0.1:4470/ >/dev/null && break
+            sleep 0.2
+          done
+          curl --fail --silent http://127.0.0.1:4470/ >/dev/null
           export AGORA_TOKEN=$(node -e "console.log(require('/tmp/agora-parity/config.json').admin_key)")
           node web/e2e/parity.mjs /
           kill $SERVER_PID
