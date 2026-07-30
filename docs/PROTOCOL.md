@@ -139,7 +139,9 @@ Hermes wrapper, a shell script, whatever:
 {"type": "option_select", "agent_id": "claw-1", "options_id": "deploy-42", "option_id": "yes",
  "message_id": 123, "channel_id": "...", "thread_id": null, "user": {"id": "me", "name": "me"}}
 
-// you → Agora, to mark the buttons resolved yourself (locks them, records the note)
+// you → Agora, to mark the buttons resolved yourself (locks them, records the note).
+// The resolve only matches a message this agent authored in that channel; a
+// miss (wrong channel, wrong author, unknown options_id) is a no-op.
 {"type": "options_resolve", "agent_id": "claw-1", "channel_id": "...", "options_id": "deploy-42", "text": "Deploying…"}
 
 // interactive forms: a post can carry a `form` (text inputs and checkboxes

@@ -1350,18 +1350,16 @@ impl Hub {
             // Posts have a durable side effect the sender expects. Tell the
             // live agent that the write was rejected instead of letting it
             // assume the message landed. Activity frames remain best-effort.
-            if frame_type == "post" {
-                if sender_conn_id.is_some() {
-                    let _ = handle.tx.send(json!({
-                        "type": "error",
-                        "frame_type": "post",
-                        "agent_id": agent_id,
-                        "request_id": frame["request_id"],
-                        "error": "agent is not a member of this channel",
-                        "channel_id": channel_id,
-                        "thread_id": frame["thread_id"],
-                    }));
-                }
+            if frame_type == "post" && sender_conn_id.is_some() {
+                let _ = handle.tx.send(json!({
+                    "type": "error",
+                    "frame_type": "post",
+                    "agent_id": agent_id,
+                    "request_id": frame["request_id"],
+                    "error": "agent is not a member of this channel",
+                    "channel_id": channel_id,
+                    "thread_id": frame["thread_id"],
+                }));
             }
             return;
         }
@@ -2527,6 +2525,32 @@ mod tests {
         assert_eq!(ev["type"], "message");
         assert_eq!(ev["message"]["author_id"], "bot-a");
         assert_eq!(h.store.messages(&cid, None, None, 10).len(), 1);
+    }
+
+    #[test]
+    fn member_agent_frames_are_accepted_through_the_connection_bound_path() {
+        // The accept path must go through the production entry point: if the
+        // conn_id wiring at a call site broke, every frame from every real
+        // bridge would be dropped while helper-based tests stayed green.
+        let h = hub();
+        let mut agent_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let conn_id = h.agent_handle("bot-a").unwrap().conn_id;
+        let cid = setup_channel(&h, &["bot-a"]);
+
+        h.handle_agent_frame_from(conn_id, &json!({
+            "type": "typing", "agent_id": "bot-a", "channel_id": cid,
+            "active": true,
+        }));
+        h.handle_agent_frame_from(conn_id, &json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "request_id": "post-accepted", "text": "hello from the wire",
+        }));
+
+        let messages = h.store.messages(&cid, None, None, 10);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["text"], "hello from the wire");
+        assert!(std::iter::from_fn(|| agent_rx.try_recv().ok())
+            .all(|frame| frame["type"] != "error"));
     }
 
     #[test]
