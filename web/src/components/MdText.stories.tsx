@@ -6,6 +6,13 @@ const meta = {
   title: "Web/Atoms/Markdown",
   component: MdText,
   args: { mentions: {} },
+  // MdText always renders inside a .bubble in production — the bubble carries
+  // the word-break/max-width rules long content depends on.
+  decorators: [(Story) => (
+    <div className="ago-log" style={{ width: "min(760px, 100%)" }}>
+      <div className="bubble assistant ago-bubble"><Story /></div>
+    </div>
+  )],
 } satisfies Meta<typeof MdText>;
 
 export default meta;

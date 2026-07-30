@@ -60,6 +60,9 @@ export const ResultsAndKeyboardNavigation: Story = {
     expect(useUiState.getState().searchOpen).toBe(false);
     useUiState.getState().setSearchOpen(true);
     const reopened = await canvas.findByPlaceholderText("Search messages, channels, groups…");
+    // The pane keeps its query across close/reopen — clear it or the retype
+    // appends and queries a route the fixtures don't define.
+    await userEvent.clear(reopened);
     await userEvent.type(reopened, "fixture");
     await expect(canvas.findByText("Product planning")).resolves.toBeVisible();
   },

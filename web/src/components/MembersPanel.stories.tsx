@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import {
   fixtureAgents,
   fixtureGroups,
@@ -54,9 +54,11 @@ export const AdminRosterAndAdd: Story = {
     await expect(canvas.findByText("Codex")).resolves.toBeVisible();
     useUiState.setState({ membersOpen: false });
     const panel = canvasElement.querySelector("#agora-members-pane");
-    expect(panel).toHaveStyle({ display: "none" });
+    // The store notify re-renders asynchronously — wait for the DOM to settle.
+    await waitFor(() => expect(panel).toHaveStyle({ display: "none" }));
     useUiState.setState({ membersOpen: true });
-    await expect(canvas.findByText("Codex")).resolves.toBeVisible();
+    // "Codex" also appears as an <option> in the add-agent select.
+    await expect(canvas.findByText("Codex", { selector: ".mname" })).resolves.toBeVisible();
     const person = canvasElement.querySelector<HTMLSelectElement>("#ago-add-user");
     if (!person) throw new Error("Missing add-person picker");
     await userEvent.selectOptions(person, "carol");
