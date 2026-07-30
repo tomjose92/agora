@@ -10,7 +10,7 @@ import {
   fixtureReplies,
   fixtureThreads,
   fixtureUsers,
-} from "../../../packages/core/testing/fixtures";
+} from "@agora/core/testing/fixtures";
 import { useUiState } from "../state/ui";
 import { Sidebar } from "./Sidebar";
 import { ChannelPane } from "./ChannelPane";

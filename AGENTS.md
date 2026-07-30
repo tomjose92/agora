@@ -173,6 +173,9 @@ endpoint must not break:
   WS reducer); UI state in small zustand stores persisted to localStorage;
   styling in `web/src/styles.css` (one flat stylesheet, class-based). Keep
   `web/e2e/parity.mjs` green — it's the regression contract CI runs.
+- **Shared UI fixtures**: framework-free Storybook/test fixtures intentionally
+  use the `@agora/core/testing/fixtures` testing-only subpath; production code
+  continues to import from the package barrel.
 - **Mobile**: follow the existing screen patterns — react-query hooks and
   the WS reducer come from `@agora/core` (the client is provided by
   `ApiProvider` in `app/(app)/_layout.tsx`); mobile-only pieces (voice

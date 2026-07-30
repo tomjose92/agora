@@ -154,7 +154,10 @@ export const fixtureAgentMessage: Message = {
   text: "The real panes are now rendered over deterministic fixture data.",
   ts: 1_750_000_120,
   attachments: [],
-  reactions: [{ emoji: "🎉", users: ["alice"] }],
+  reactions: [
+    { emoji: "👍", users: ["tom", "alice"] },
+    { emoji: "🎉", users: ["alice"] },
+  ],
   meta: {
     tldr: "Real panes now use deterministic fixtures.",
     unfurls: [{

@@ -2,7 +2,7 @@ import type { MapArtifactData } from "@agora/core";
 import {
   fixtureAgentMessage,
   fixtureMe,
-} from "../../../../packages/core/testing/fixtures";
+} from "@agora/core/testing/fixtures";
 
 export const me = { ...fixtureMe, voice: true };
 export const message = { ...fixtureAgentMessage, id: 42 };
