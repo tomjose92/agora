@@ -1314,20 +1314,38 @@ impl Hub {
         if channel_id.is_empty() || self.store.channel(&channel_id).is_none() {
             return;
         }
-        // Transient activity and posts are writes to a room, so apply the
-        // same membership boundary as history and reactions. This proves the
-        // claimed agent belongs to the target channel; binding that identity
-        // to the connection that sent the frame is a separate concern.
-        if matches!(
-            frame["type"].as_str(),
-            Some("post" | "typing" | "progress" | "options_resolve")
-        )
-            && !self
-                .store
-                .agents_for_channel(&channel_id)
-                .iter()
-                .any(|id| id == &agent_id)
+        // Everything reaching this point is addressed to a room. Gate it
+        // unconditionally so future write frames fail closed instead of
+        // relying on a second frame-type allowlist being kept in sync with
+        // the match below. This proves the claimed agent belongs to the
+        // channel; binding that identity to the sending connection is a
+        // separate concern.
+        if !self
+            .store
+            .agents_for_channel(&channel_id)
+            .iter()
+            .any(|id| id == &agent_id)
         {
+            let frame_type = frame["type"].as_str().unwrap_or("<missing>");
+            tracing::debug!(
+                agent_id,
+                channel_id,
+                frame_type,
+                "dropping agent frame outside channel membership"
+            );
+            // Posts have a durable side effect the sender expects. Tell the
+            // live agent that the write was rejected instead of letting it
+            // assume the message landed. Activity frames remain best-effort.
+            if frame_type == "post" {
+                if let Some(handle) = self.agent_handle(&agent_id) {
+                    let _ = handle.tx.send(json!({
+                        "type": "error",
+                        "frame_type": "post",
+                        "error": "agent is not a member of this channel",
+                        "channel_id": channel_id,
+                    }));
+                }
+            }
             return;
         }
         let thread_id = frame["thread_id"].as_i64();
@@ -1386,7 +1404,6 @@ impl Hub {
                 if emoji.is_empty()
                     || emoji.len() > 32
                     || emoji.chars().any(|c| c.is_ascii())
-                    || !self.store.agents_for_channel(&channel_id).iter().any(|id| id == &agent_id)
                 {
                     return;
                 }
@@ -2499,7 +2516,7 @@ mod tests {
     fn agent_writes_are_denied_outside_channel_membership() {
         let h = hub();
         let _member_rx = add_agent(&h, "bot-a", "Bot A", false);
-        let _outsider_rx = add_agent(&h, "bot-b", "Bot B", false);
+        let mut outsider_rx = add_agent(&h, "bot-b", "Bot B", false);
         let cid = setup_channel(&h, &["bot-a"]);
         let (tx_ui, mut rx_ui) = unbounded_channel();
         h.attach_socket("tom", false, tx_ui);
@@ -2525,6 +2542,10 @@ mod tests {
         assert!(h.store.messages(&cid, None, None, 10).is_empty());
         assert!(h.channel_activity(&cid)["typing"].as_array().unwrap().is_empty());
         assert!(h.channel_activity(&cid)["progress"].as_array().unwrap().is_empty());
+        let error = last_frame(&mut outsider_rx, "error").unwrap();
+        assert_eq!(error["frame_type"], "post");
+        assert_eq!(error["channel_id"], cid);
+        assert_eq!(error["error"], "agent is not a member of this channel");
     }
 
     #[test]
