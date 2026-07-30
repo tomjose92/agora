@@ -51,8 +51,16 @@ export const Rename: Story = {
     try {
       await userEvent.click(within(canvasElement).getByTitle("Change how your name appears"));
       await expect(rename).toHaveBeenCalledWith({ display_name: "Thomas" });
+      await expect(within(canvasElement).findByText("Thomas")).resolves.toBeVisible();
     } finally {
       window.prompt = oldPrompt;
     }
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: "Renames the signed-in user, verifies the PATCH body, and updates the cached display name to “Thomas”.",
+      },
+    },
   },
 };

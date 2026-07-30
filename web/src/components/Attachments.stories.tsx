@@ -35,6 +35,9 @@ export const ImageLightbox: Story = {
       }],
     },
   },
+  parameters: {
+    docs: { description: { story: "Clicking an inline image opens the full-screen preview. Escape and backdrop clicks close it; this story finishes with the preview open for inspection." } },
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", {
@@ -46,6 +49,12 @@ export const ImageLightbox: Story = {
     })).resolves.toBeVisible();
     await userEvent.keyboard("{Escape}");
     await expect(page.queryByRole("dialog")).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("button", {
+      name: "Preview responsive-layout-preview.svg",
+    }));
+    await expect(page.findByRole("dialog", {
+      name: "Image preview: responsive-layout-preview.svg",
+    })).resolves.toBeVisible();
   },
 };
 
@@ -70,4 +79,7 @@ export const LongAndZeroByteFiles: Story = {
     },
   },
   globals: { viewport: { value: "smallPhone", isRotated: false } },
+  parameters: {
+    docs: { description: { story: "Exercises the edge cases for a zero-byte file (`0 B`) and truncation of a very long filename on a 320px-wide phone." } },
+  },
 };

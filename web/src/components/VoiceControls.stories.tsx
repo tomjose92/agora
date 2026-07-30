@@ -7,16 +7,37 @@ import { LiveButton, LiveStrip, MicButton, SpeakButton } from "./VoiceControls";
 
 type VoiceState = "idle" | "recording" | "transcribing" | "live";
 
-function VoiceSurface({ state }: { state: VoiceState }) {
+function RecordingSurface() {
   return (
-    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-      <MicButton channelId="general" threadId={null} />
-      <SpeakButton />
-      <LiveButton channelId="general" threadId={null} />
-      <LiveStrip channelId="general" threadId={null} />
-      <span hidden>{state}</span>
+    <div className="agora-main" style={{ width: "min(720px, 100%)" }}>
+      <div className="chat-input">
+        <textarea aria-label="Message preview" defaultValue="Voice notes belong in the composer." />
+        <MicButton channelId="general" threadId={null} />
+        <button className="btn primary">Send</button>
+      </div>
     </div>
   );
+}
+
+function HeaderVoiceSurface() {
+  return (
+    <div className="agora-main" style={{ width: "min(720px, 100%)", minHeight: 150 }}>
+      <div className="ago-head">
+        <div className="ago-head-text">
+          <strong># general</strong><span className="dim">Component review</span>
+        </div>
+        <div className="ago-head-actions">
+          <SpeakButton />
+          <LiveButton channelId="general" threadId={null} />
+        </div>
+      </div>
+      <LiveStrip channelId="general" threadId={null} />
+    </div>
+  );
+}
+
+function VoiceSurface({ state }: { state: VoiceState }) {
+  return state === "live" ? <HeaderVoiceSurface /> : <RecordingSurface />;
 }
 
 function setup(state: VoiceState) {
@@ -33,7 +54,7 @@ function setup(state: VoiceState) {
 }
 
 const meta = {
-  title: "Web/Voice/Controls",
+  title: "Web/Voice/Production placement",
   component: VoiceSurface,
   args: { state: "idle" },
   parameters: { setup: () => setup("idle") },
@@ -56,7 +77,14 @@ export const Transcribing: Story = {
 };
 export const LiveThinking: Story = {
   args: { state: "live" },
-  parameters: { setup: () => setup("live") },
+  parameters: {
+    setup: () => setup("live"),
+    docs: {
+      description: {
+        story: "Speak-aloud and live voice appear in the pane header; live status sits directly below that header.",
+      },
+    },
+  },
   play: async ({ canvasElement }) => {
     await expect(within(canvasElement).findByText("Thinking…")).resolves.toBeVisible();
   },

@@ -10,12 +10,26 @@ const formMessage: Message = {
   meta: {
     form: {
       fields: [
-        { id: "owner", kind: "input", label: "Owner", placeholder: "Name" },
-        { id: "approved", kind: "checkbox", label: "Approved" },
+        { id: "owner", kind: "input", label: "Review owner", placeholder: "Name" },
+        { id: "release", kind: "input", label: "Release candidate", placeholder: "Version or build" },
+        { id: "notes", kind: "input", label: "Decision notes", placeholder: "What should the team know?" },
+        { id: "responsive", kind: "checkbox", label: "Phone, tablet, and desktop reviewed" },
+        { id: "accessible", kind: "checkbox", label: "Keyboard and screen-reader checks complete" },
+        { id: "approved", kind: "checkbox", label: "Approved to merge" },
       ],
-      buttons: [{ id: "submit", label: "Submit", style: "primary" }],
+      buttons: [
+        { id: "submit", label: "Approve release", style: "primary" },
+        { id: "changes", label: "Request changes", style: "secondary" },
+      ],
     },
-    form_state: { owner: "Alice", approved: false },
+    form_state: {
+      owner: "Alice",
+      release: "desktop 0.1.0 / mobile 0.1.0",
+      notes: "Verify the tablet overlay before approval.",
+      responsive: true,
+      accessible: false,
+      approved: false,
+    },
   },
 };
 
@@ -38,17 +52,17 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Editable: Story = {
+  decorators: [(Story) => <div style={{ width: "min(680px, 100%)" }}><Story /></div>],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    // The form's .lbl label carries no htmlFor, so target the input directly.
-    const owner = canvas.getByPlaceholderText("Name");
+    const owner = canvas.getByLabelText("Review owner");
     await userEvent.clear(owner);
     await userEvent.type(owner, "Tom{Enter}");
     await expect(saveField).toHaveBeenCalledWith({
       field_id: "owner",
       value: "Tom",
     });
-    await userEvent.click(canvas.getByRole("button", { name: "Approved" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Approved to merge" }));
     await expect(saveField).toHaveBeenCalledWith({
       field_id: "approved",
       value: true,
@@ -57,6 +71,7 @@ export const Editable: Story = {
 };
 
 export const Submitted: Story = {
+  decorators: [(Story) => <div style={{ width: "min(680px, 100%)" }}><Story /></div>],
   args: {
     message: {
       ...formMessage,
@@ -66,7 +81,14 @@ export const Submitted: Story = {
           button_id: "submit",
           by: "tom",
           ts: 1_750_000_200,
-          values: { owner: "Tom", approved: true },
+          values: {
+            owner: "Tom",
+            release: "desktop 0.1.0 / mobile 0.1.0",
+            notes: "All responsive and interaction checks passed.",
+            responsive: true,
+            accessible: true,
+            approved: true,
+          },
         },
       },
     },
@@ -74,7 +96,7 @@ export const Submitted: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     // Button label and attribution render in separate spans (.what / .dim).
-    await expect(canvas.findByText("Submit")).resolves.toBeVisible();
+    await expect(canvas.findByText("Approve release")).resolves.toBeVisible();
     await expect(canvas.findByText(/by tom/)).resolves.toBeVisible();
     expect(canvas.queryByRole("button")).not.toBeInTheDocument();
   },

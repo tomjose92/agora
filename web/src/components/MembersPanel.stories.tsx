@@ -52,6 +52,11 @@ export const AdminRosterAndAdd: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.findByText("Codex")).resolves.toBeVisible();
+    useUiState.setState({ membersOpen: false });
+    const panel = canvasElement.querySelector("#agora-members-pane");
+    expect(panel).toHaveStyle({ display: "none" });
+    useUiState.setState({ membersOpen: true });
+    await expect(canvas.findByText("Codex")).resolves.toBeVisible();
     const person = canvasElement.querySelector<HTMLSelectElement>("#ago-add-user");
     if (!person) throw new Error("Missing add-person picker");
     await userEvent.selectOptions(person, "carol");
@@ -61,13 +66,5 @@ export const AdminRosterAndAdd: Story = {
       member_id: "carol",
       role: "member",
     });
-  },
-};
-
-export const Closed: Story = {
-  parameters: { apiRoutes: routes, setup: () => useUiState.setState({ membersOpen: false }) },
-  play: async ({ canvasElement }) => {
-    const panel = canvasElement.querySelector("#agora-members-pane");
-    expect(panel).toHaveStyle({ display: "none" });
   },
 };

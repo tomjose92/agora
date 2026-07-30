@@ -23,7 +23,10 @@ const meta = {
   title: "Web/Composer/Message composer",
   component: Composer,
   decorators: [(Story) => (
-    <div className="agora-main" style={{ width: "min(760px, 100%)", minHeight: 180 }}>
+    <div
+      className="agora-main"
+      style={{ width: "min(760px, 100%)", minHeight: 320, justifyContent: "flex-end" }}
+    >
       <Story />
     </div>
   )],
@@ -77,6 +80,9 @@ export const SendAddressedMessage: Story = {
 };
 
 export const AddressingPicker: Story = {
+  parameters: {
+    docs: { description: { story: "Opens the upward “Talk to” menu used to address one or more agents before composing a channel message." } },
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(await canvas.findByTitle("Choose which agents you're talking to"));
@@ -89,5 +95,12 @@ export const ThreadReply: Story = {
   args: {
     threadId: 42,
     onSetReplyInThread: undefined,
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: "The composer inside an existing thread. It keeps a thread-scoped draft and omits the channel-level “reply in thread” toggle.",
+      },
+    },
   },
 };

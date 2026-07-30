@@ -13,17 +13,22 @@ import type {
 } from "../src/api/types";
 
 export const fixtureMarkdown = [
-  "## Cross-platform markdown",
+  "## Release readiness",
   "",
-  "Agora renders **bold text**, `inline code`, links, and lists.",
+  "The responsive component catalog is **ready for review**. Run `npm run storybook -w web` and check the [interaction testing guide](https://storybook.js.org/docs/writing-tests/interaction-testing).",
   "",
-  "- Web and desktop",
-  "- iOS and Android",
+  "### Review checklist",
   "",
-  "| Runtime | Renderer |",
+  "- Verify the layout at phone, tablet, and desktop widths",
+  "- Test keyboard navigation and visible error states",
+  "- Compare shared content on web, iOS, and Android",
+  "",
+  "| Surface | Expected result |",
   "| --- | --- |",
-  "| Web | React DOM |",
-  "| Mobile | React Native |",
+  "| Web / desktop | Responsive panes without horizontal overflow |",
+  "| iOS / Android | Native controls with the same fixture content |",
+  "",
+  "> Component stories should finish in the state a reviewer needs to inspect.",
 ].join("\n");
 
 export const fixtureMe: Me = {

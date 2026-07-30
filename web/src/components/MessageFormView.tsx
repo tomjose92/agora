@@ -72,9 +72,9 @@ export function MessageFormView({ message }: { message: Message }) {
         const dirty = draft !== undefined && draft !== server;
         return (
           <div key={f.id} className="ago-form-field">
-            <label className="lbl">{f.label}</label>
+            <label className="lbl" htmlFor={`ago-form-${message.id}-${f.id}`}>{f.label}</label>
             <span className="ago-form-inwrap">
-              <input className="ago-form-input" type="text" maxLength={2000}
+              <input id={`ago-form-${message.id}-${f.id}`} className="ago-form-input" type="text" maxLength={2000}
                 data-mid={message.id} data-fid={f.id}
                 placeholder={f.placeholder || ""}
                 value={dirty || draft !== undefined ? draft : server}

@@ -44,6 +44,9 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const AdminKey: Story = {
+  parameters: {
+    docs: { description: { story: "The expected key-only sign-in screen when Google authentication is unavailable." } },
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const input = await canvas.findByLabelText("Admin key");
@@ -54,6 +57,9 @@ export const AdminKey: Story = {
 
 export const GoogleFirst: Story = {
   args: { mode: "google" },
+  parameters: {
+    docs: { description: { story: "Google is the primary sign-in method; the admin-key form remains available behind “Sign in as admin”." } },
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.findByRole("button", { name: "Continue with Google" })).resolves.toBeVisible();
@@ -65,10 +71,15 @@ export const GoogleFirst: Story = {
 
 export const InvalidAdminKey: Story = {
   args: { mode: "invalid" },
+  parameters: {
+    docs: { description: { story: "Submits a rejected key and finishes with the warning toast visible so the failure treatment can be reviewed." } },
+  },
   play: async ({ canvasElement }) => {
     signedIn.mockClear();
     const canvas = within(canvasElement);
     await userEvent.type(await canvas.findByLabelText("Admin key"), "wrong{Enter}");
+    const page = within(canvasElement.ownerDocument.body);
+    await expect(page.findByText("That token didn't work")).resolves.toBeVisible();
     await expect(signedIn).not.toHaveBeenCalled();
   },
 };

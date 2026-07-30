@@ -27,6 +27,9 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const SearchAndPick: Story = {
+  parameters: {
+    docs: { description: { story: "Searches for and selects 🎉, verifies the reaction callback and automatic close, then reopens the filtered picker for inspection." } },
+  },
   play: async ({ canvasElement }) => {
     await userEvent.click(within(canvasElement).getByText("Open reaction picker"));
     const page = within(canvasElement.ownerDocument.body);
@@ -34,6 +37,9 @@ export const SearchAndPick: Story = {
     await userEvent.click(await page.findByTitle(/party popper celebration/));
     await expect(pick).toHaveBeenCalledWith(42, "🎉");
     expect(page.queryByPlaceholderText("Search emoji…")).not.toBeInTheDocument();
+    await userEvent.click(within(canvasElement).getByText("Open reaction picker"));
+    await userEvent.type(await page.findByPlaceholderText("Search emoji…"), "party");
+    await expect(page.findByTitle(/party popper celebration/)).resolves.toBeVisible();
   },
 };
 

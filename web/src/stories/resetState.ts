@@ -8,6 +8,7 @@ import { useUiState } from "../state/ui";
 import { useVoiceRec } from "../state/voiceRec";
 import { useLiveVoice } from "../state/liveVoice";
 import { useSpeak } from "../state/speak";
+import { useToasts } from "../lib/toast";
 
 const STORAGE_KEYS = [
   "agora_token",
@@ -51,4 +52,5 @@ export function resetStoryState(): void {
   useVoiceRec.setState({ recordingKey: null, startedAt: 0, busyKey: null });
   useLiveVoice.setState({ scope: null, state: "listening" });
   useSpeak.setState({ on: false });
+  useToasts.setState({ toasts: [] });
 }

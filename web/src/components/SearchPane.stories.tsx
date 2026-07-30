@@ -47,6 +47,9 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const ResultsAndKeyboardNavigation: Story = {
+  parameters: {
+    docs: { description: { story: "Searches fixture-backed groups, channels, and messages. Escape-close is tested mid-run, then results are reopened for inspection." } },
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const input = await canvas.findByPlaceholderText("Search messages, channels, groups…");
@@ -55,5 +58,9 @@ export const ResultsAndKeyboardNavigation: Story = {
     await expect(canvas.findByText("fixture")).resolves.toBeVisible();
     await userEvent.keyboard("{Escape}");
     expect(useUiState.getState().searchOpen).toBe(false);
+    useUiState.getState().setSearchOpen(true);
+    const reopened = await canvas.findByPlaceholderText("Search messages, channels, groups…");
+    await userEvent.type(reopened, "fixture");
+    await expect(canvas.findByText("Product planning")).resolves.toBeVisible();
   },
 };

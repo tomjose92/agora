@@ -11,6 +11,7 @@ import {
   FixtureApiClient,
   type FixtureRoutes,
 } from "@agora/core/testing/FixtureApiClient";
+import { ToastHost } from "../src/lib/toast";
 import { resetStoryState } from "../src/stories/resetState";
 import "../src/styles.css";
 import "./preview.css";
@@ -48,6 +49,7 @@ function StoryProviders({ routes, children }: {
           </div>
         )}
         {children}
+        <ToastHost />
       </ApiProvider>
     </QueryClientProvider>
   );
