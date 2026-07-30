@@ -1318,7 +1318,10 @@ impl Hub {
         // same membership boundary as history and reactions. This proves the
         // claimed agent belongs to the target channel; binding that identity
         // to the connection that sent the frame is a separate concern.
-        if matches!(frame["type"].as_str(), Some("post" | "typing" | "progress"))
+        if matches!(
+            frame["type"].as_str(),
+            Some("post" | "typing" | "progress" | "options_resolve")
+        )
             && !self
                 .store
                 .agents_for_channel(&channel_id)
@@ -1417,7 +1420,10 @@ impl Hub {
             Some("options_resolve") => {
                 let options_id = frame["options_id"].as_str().unwrap_or_default();
                 let text = frame["text"].as_str().unwrap_or("Resolved.");
-                if let Some(message_id) = self.store.find_message_by_options_id(options_id) {
+                if let Some(message_id) = self
+                    .store
+                    .find_message_by_options_id(&channel_id, options_id)
+                {
                     let _ = self.resolve_options_by_agent(message_id, text);
                 }
             }
@@ -2519,6 +2525,96 @@ mod tests {
         assert!(h.store.messages(&cid, None, None, 10).is_empty());
         assert!(h.channel_activity(&cid)["typing"].as_array().unwrap().is_empty());
         assert!(h.channel_activity(&cid)["progress"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn channel_scoped_agent_writes_only_to_its_assigned_channel() {
+        let h = hub();
+        let _agent_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let g = h.store.create_group("G", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let allowed = h.store.create_channel(gid, "allowed", "");
+        let denied = h.store.create_channel(gid, "denied", "");
+        let allowed_id = allowed["id"].as_str().unwrap();
+        let denied_id = denied["id"].as_str().unwrap();
+        h.store
+            .add_member(gid, "agent", "bot-a", "member", Some(allowed_id));
+
+        for frame in [
+            json!({
+                "type": "typing", "agent_id": "bot-a", "channel_id": denied_id,
+                "active": true,
+            }),
+            json!({
+                "type": "progress", "agent_id": "bot-a", "channel_id": denied_id,
+                "handle": "outside", "text": "should not appear",
+            }),
+            json!({
+                "type": "post", "agent_id": "bot-a", "channel_id": denied_id,
+                "text": "should not be stored",
+            }),
+        ] {
+            h.handle_agent_frame(&frame);
+        }
+        assert!(h.store.messages(denied_id, None, None, 10).is_empty());
+        assert!(h.channel_activity(denied_id)["typing"].as_array().unwrap().is_empty());
+        assert!(h.channel_activity(denied_id)["progress"].as_array().unwrap().is_empty());
+
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": allowed_id,
+            "text": "allowed",
+        }));
+        assert_eq!(h.store.messages(allowed_id, None, None, 10).len(), 1);
+    }
+
+    #[test]
+    fn options_resolve_is_membership_gated_and_channel_scoped() {
+        let h = hub();
+        let _agent_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let allowed_id = setup_channel(&h, &["bot-a"]);
+        let denied_id = setup_channel(&h, &[]);
+
+        for channel_id in [&allowed_id, &denied_id] {
+            h.post_agent_message_with_options(
+                "seed",
+                "Seed",
+                channel_id,
+                "Choose",
+                None,
+                Some(&json!([{"id": "yes", "label": "Yes"}])),
+                Some("shared-options"),
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+        }
+        let allowed_mid = h.store.messages(&allowed_id, None, None, 10)[0]["id"]
+            .as_i64()
+            .unwrap();
+        let denied_mid = h.store.messages(&denied_id, None, None, 10)[0]["id"]
+            .as_i64()
+            .unwrap();
+
+        // Naming a channel outside membership cannot resolve its options.
+        h.handle_agent_frame(&json!({
+            "type": "options_resolve", "agent_id": "bot-a", "channel_id": denied_id,
+            "options_id": "shared-options", "text": "denied",
+        }));
+        assert!(h.store.message(denied_mid).unwrap()["meta"]["resolved"].is_null());
+
+        // The same options_id in another group does not steal the lookup:
+        // resolution is scoped to the frame's authorized channel.
+        h.handle_agent_frame(&json!({
+            "type": "options_resolve", "agent_id": "bot-a", "channel_id": allowed_id,
+            "options_id": "shared-options", "text": "allowed",
+        }));
+        assert_eq!(
+            h.store.message(allowed_mid).unwrap()["meta"]["resolved"]["label"],
+            "allowed"
+        );
+        assert!(h.store.message(denied_mid).unwrap()["meta"]["resolved"].is_null());
     }
 
     #[test]

@@ -1724,18 +1724,19 @@ impl Store {
         deleted
     }
 
-    /// Find a message whose meta.options_id matches (for agent-side resolve).
-    pub fn find_message_by_options_id(&self, options_id: &str) -> Option<i64> {
-        if options_id.is_empty() {
+    /// Find a message in one channel whose meta.options_id matches (for
+    /// agent-side resolve). Channel scope is the authorization boundary.
+    pub fn find_message_by_options_id(&self, channel_id: &str, options_id: &str) -> Option<i64> {
+        if channel_id.is_empty() || options_id.is_empty() {
             return None;
         }
         let conn = self.conn.lock().unwrap();
         // SQLite json1: meta is a JSON text column.
         conn.query_row(
             "SELECT id FROM messages WHERE meta IS NOT NULL \
-             AND json_extract(meta, '$.options_id') = ?1 \
+             AND channel_id = ?1 AND json_extract(meta, '$.options_id') = ?2 \
              ORDER BY id DESC LIMIT 1",
-            params![options_id],
+            params![channel_id, options_id],
             |r| r.get(0),
         )
         .ok()
