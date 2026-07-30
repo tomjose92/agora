@@ -21,6 +21,7 @@ const STORAGE_KEYS = [
 
 /** Reset module-scoped zustand stores as well as their persisted inputs. */
 export function resetStoryState(): void {
+  history.replaceState(null, "", "/");
   for (const key of STORAGE_KEYS) localStorage.removeItem(key);
   useUiState.setState({
     sel: {},

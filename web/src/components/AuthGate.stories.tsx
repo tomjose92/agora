@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { AuthGate } from "./AuthGate";
@@ -24,9 +24,11 @@ function AuthSurface({ mode }: { mode: AuthMode }) {
     }
     throw new Error(`Unexpected AuthGate fetch: ${path}`);
   })).current;
-  window.fetch = fetchMock;
-  useEffect(() => () => {
-    if (window.fetch === fetchMock) window.fetch = original.current;
+  useLayoutEffect(() => {
+    window.fetch = fetchMock;
+    return () => {
+      if (window.fetch === fetchMock) window.fetch = original.current;
+    };
   }, [fetchMock]);
   return <AuthGate onSignedIn={signedIn} />;
 }

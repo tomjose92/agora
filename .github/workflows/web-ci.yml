@@ -107,6 +107,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Storybook component tests
         run: npm run test-storybook -w web
+      - name: Storybook static build
+        run: npm run build-storybook -w web
 
   parity:
     runs-on: ubuntu-latest

@@ -14,6 +14,8 @@ import {
 import { useUiState } from "../state/ui";
 import { AgoraLayout } from "./AgoraLayout";
 
+// An empty username keeps useAgoraSocket dormant in this full-layout story.
+// Mine/self presentation states are covered by the focused component stories.
 const staticMe = { ...fixtureMe, username: "" };
 const routes = {
   "GET /api/me": staticMe,
@@ -39,9 +41,8 @@ const meta = {
   parameters: {
     layout: "fullscreen",
     apiRoutes: routes,
-    // AgoraLayout resolves window.location against the seeded selection, and
-    // a prior story's replaceState survives in the shared test page — pin the
-    // URL to the state each story seeds or the resolver "corrects" it.
+    // AgoraLayout resolves window.location against the seeded selection, so
+    // pin the URL to the state this story seeds.
     setup: () => {
       history.replaceState(null, "", "/g/product/c/general");
       useUiState.setState({

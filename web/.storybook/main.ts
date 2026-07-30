@@ -7,6 +7,7 @@ const packageRoot = (name: string) => dirname(require.resolve(`${name}/package.j
 
 const config: StorybookConfig = {
   stories: ["../src/**/*.stories.@(ts|tsx)"],
+  staticDirs: [{ from: "./static", to: "/" }],
   addons: [packageRoot("@storybook/addon-a11y"), packageRoot("@storybook/addon-vitest")],
   framework: {
     name: packageRoot("@storybook/react-vite"),
