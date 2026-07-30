@@ -1,9 +1,10 @@
-name: Deploy Storybook to GitHub Pages
+name: Deploy Agora Pages
 
 on:
   push:
     branches: [main]
     paths:
+      - "docs/**"
       - "web/**"
       - "packages/**"
       - "package.json"
@@ -34,10 +35,15 @@ jobs:
       - run: npm ci
       - name: Build Storybook
         run: npm run build-storybook -w web
-      - name: Upload Storybook
+      - name: Assemble support site and Storybook
+        run: |
+          mkdir -p _site/storybook
+          cp -a docs/. _site/
+          cp -a web/storybook-static/. _site/storybook/
+      - name: Upload Pages site
         uses: actions/upload-pages-artifact@v4
         with:
-          path: web/storybook-static
+          path: _site
 
   deploy:
     environment:
@@ -46,6 +52,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Deploy Storybook
+      - name: Deploy Agora Pages
         id: deployment
         uses: actions/deploy-pages@v4
