@@ -2,11 +2,13 @@ import type { Preview } from "@storybook/react-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiProvider } from "@agora/core";
 import { FixtureApiClient } from "../src/stories/fixtures/api";
+import { resetStoryState } from "../src/stories/resetState";
 import "../src/styles.css";
 
 const preview: Preview = {
   decorators: [
     (Story, context) => {
+      resetStoryState(context.id);
       const queryClient = new QueryClient({
         defaultOptions: {
           queries: { retry: false, staleTime: Infinity },
