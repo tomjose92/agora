@@ -45,7 +45,7 @@ npm ci
 npx tsc --noEmit                # typecheck
 npx jest                        # unit tests
 npx expo start                  # dev client
-npm run storybook               # native component catalog
+npm run storybook               # native component catalog (simulator/device, NOT a browser)
 npm run storybook:ios           # open native Storybook on iOS
 npm run storybook:android       # open native Storybook on Android
 
@@ -177,7 +177,12 @@ endpoint must not break:
   `ApiProvider` in `app/(app)/_layout.tsx`); mobile-only pieces (voice
   upload, notifications, session/secure-store) stay under `mobile/src`.
   Admin-only UI gates on `instanceAdmin` from the session store, `toastErr`
-  for mutation failures.
+  for mutation failures. The app entry is `mobile/index.js`, not
+  `expo-router/entry` directly: it picks the router or the on-device Storybook
+  root off `EXPO_PUBLIC_STORYBOOK_ENABLED` (the prefix matters — only
+  `EXPO_PUBLIC_*` is inlined into the bundle, and the literal is what lets
+  Metro drop Storybook from production builds). `metro.config.js` reads the
+  same variable.
 - **No new heavy deps** without good reason, in any of the three stacks.
 - **Secrets** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, OAuth client secret)
   live in the process env or `config.json` — never hardcode, never log.

@@ -28,7 +28,10 @@ config.resolver.extraNodeModules = {
   zustand: path.resolve(projectRoot, "node_modules/zustand"),
 };
 
+/* Same flag index.js switches the root component on — EXPO_PUBLIC_ so the
+   on-device branch there sees it inlined in the bundle. Disabled is the
+   default: withStorybook then stubs every storybook import out. */
 module.exports = withStorybook(config, {
   configPath: path.resolve(projectRoot, ".rnstorybook"),
-  enabled: process.env.STORYBOOK_ENABLED === "true",
+  enabled: process.env.EXPO_PUBLIC_STORYBOOK_ENABLED === "true",
 });
