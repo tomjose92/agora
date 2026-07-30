@@ -65,6 +65,7 @@ export const ChannelAndGlobalOverlays: Story = {
     await expect(canvas.findByPlaceholderText("Search messages, channels, groups…")).resolves.toBeVisible();
     await userEvent.keyboard("{Escape}");
     expect(useUiState.getState().searchOpen).toBe(false);
+    expect(canvas.queryByRole("alert")).not.toBeInTheDocument();
   },
 };
 
@@ -82,6 +83,8 @@ export const ThreadOpen: Story = {
     },
   },
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).findByText("The 820px phone boundary is covered.")).resolves.toBeVisible();
+    const canvas = within(canvasElement);
+    await expect(canvas.findByText("The 820px phone boundary is covered.")).resolves.toBeVisible();
+    expect(canvas.queryByRole("alert")).not.toBeInTheDocument();
   },
 };

@@ -603,6 +603,7 @@ export function usePins(channelId: string) {
     queryKey: keys.pins(channelId),
     queryFn: async () =>
       (await api.get<{ pins: PinnedMessage[] }>(`/api/channels/${channelId}/pins`)).pins,
+    enabled: !!channelId,
   });
 }
 
@@ -624,6 +625,7 @@ export function useStars(channelId: string) {
     queryKey: keys.stars(channelId),
     queryFn: async () =>
       (await api.get<{ stars: StarredMessage[] }>(`/api/channels/${channelId}/stars`)).stars,
+    enabled: !!channelId,
   });
 }
 
