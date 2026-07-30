@@ -1314,6 +1314,19 @@ impl Hub {
         if channel_id.is_empty() || self.store.channel(&channel_id).is_none() {
             return;
         }
+        // Transient activity and posts are writes to a room, so apply the
+        // same membership boundary as history and reactions. This proves the
+        // claimed agent belongs to the target channel; binding that identity
+        // to the connection that sent the frame is a separate concern.
+        if matches!(frame["type"].as_str(), Some("post" | "typing" | "progress"))
+            && !self
+                .store
+                .agents_for_channel(&channel_id)
+                .iter()
+                .any(|id| id == &agent_id)
+        {
+            return;
+        }
         let thread_id = frame["thread_id"].as_i64();
         match frame["type"].as_str() {
             Some("post") => {
@@ -2474,6 +2487,38 @@ mod tests {
         assert_eq!(ev["type"], "message");
         assert_eq!(ev["message"]["author_id"], "bot-a");
         assert_eq!(h.store.messages(&cid, None, None, 10).len(), 1);
+    }
+
+    #[test]
+    fn agent_writes_are_denied_outside_channel_membership() {
+        let h = hub();
+        let _member_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let _outsider_rx = add_agent(&h, "bot-b", "Bot B", false);
+        let cid = setup_channel(&h, &["bot-a"]);
+        let (tx_ui, mut rx_ui) = unbounded_channel();
+        h.attach_socket("tom", false, tx_ui);
+
+        for frame in [
+            json!({
+                "type": "typing", "agent_id": "bot-b", "channel_id": cid,
+                "active": true,
+            }),
+            json!({
+                "type": "progress", "agent_id": "bot-b", "channel_id": cid,
+                "handle": "outside", "text": "should not appear",
+            }),
+            json!({
+                "type": "post", "agent_id": "bot-b", "channel_id": cid,
+                "text": "should not be stored",
+            }),
+        ] {
+            h.handle_agent_frame(&frame);
+        }
+
+        assert!(rx_ui.try_recv().is_err());
+        assert!(h.store.messages(&cid, None, None, 10).is_empty());
+        assert!(h.channel_activity(&cid)["typing"].as_array().unwrap().is_empty());
+        assert!(h.channel_activity(&cid)["progress"].as_array().unwrap().is_empty());
     }
 
     #[test]
