@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-native";
+import { fixtureMarkdown } from "@agora/core/testing/fixtures";
 import { MdText } from "./MdText";
 
 const meta = {
@@ -10,16 +11,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const RichContent: Story = {
-  args: {
-    text: [
-      "## Native markdown",
-      "",
-      "Agora renders **bold text**, `inline code`, links, and lists.",
-      "",
-      "- iOS",
-      "- Android",
-    ].join("\n"),
-  },
+  args: { text: fixtureMarkdown },
 };
 
 export const WideTable: Story = {

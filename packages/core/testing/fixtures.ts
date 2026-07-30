@@ -12,6 +12,20 @@ import type {
   UserInfo,
 } from "../src/api/types";
 
+export const fixtureMarkdown = [
+  "## Cross-platform markdown",
+  "",
+  "Agora renders **bold text**, `inline code`, links, and lists.",
+  "",
+  "- Web and desktop",
+  "- iOS and Android",
+  "",
+  "| Runtime | Renderer |",
+  "| --- | --- |",
+  "| Web | React DOM |",
+  "| Mobile | React Native |",
+].join("\n");
+
 export const fixtureMe: Me = {
   username: "tom",
   display_name: "Tom",

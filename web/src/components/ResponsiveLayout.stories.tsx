@@ -93,6 +93,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Desktop: Story = {
+  globals: { viewport: { value: "desktopBoundary", isRotated: false } },
   parameters: {
     viewport: { defaultViewport: "desktopBoundary" },
     setup: () => setup("channel"),
@@ -105,6 +106,7 @@ export const Desktop: Story = {
 };
 
 export const PhoneMainPane: Story = {
+  globals: { viewport: { value: "phoneUpperBoundary", isRotated: false } },
   parameters: {
     viewport: { defaultViewport: "phoneUpperBoundary" },
     setup: () => setup("channel"),
@@ -118,6 +120,7 @@ export const PhoneMainPane: Story = {
 };
 
 export const TabletThreadOverlay: Story = {
+  globals: { viewport: { value: "tabletLowerBoundary", isRotated: false } },
   args: { mode: "thread" },
   parameters: {
     viewport: { defaultViewport: "tabletLowerBoundary" },
@@ -133,6 +136,7 @@ export const TabletThreadOverlay: Story = {
 };
 
 export const TabletMembersOverlay: Story = {
+  globals: { viewport: { value: "tablet", isRotated: false } },
   args: { mode: "members" },
   parameters: {
     viewport: { defaultViewport: "tablet" },

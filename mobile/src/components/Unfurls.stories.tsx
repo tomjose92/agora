@@ -15,3 +15,17 @@ export const Enriched: Story = {};
 export const Empty: Story = {
   args: { message: { ...fixtureAgentMessage, meta: null } },
 };
+export const PartialAndMultiple: Story = {
+  args: {
+    message: {
+      ...fixtureAgentMessage,
+      text: "Native fallback previews",
+      meta: {
+        unfurls: [
+          { url: "https://example.test/fallback" },
+          { url: "https://docs.example.test/native", title: "Native catalog" },
+        ],
+      },
+    },
+  },
+};

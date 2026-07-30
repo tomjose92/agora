@@ -25,3 +25,22 @@ export const Enriched: Story = {
     },
   },
 };
+
+export const PartialAndMultiple: Story = {
+  args: {
+    message: {
+      ...message,
+      text: "Two previews with incomplete enrichment.",
+      meta: {
+        unfurls: [
+          { url: "https://example.test/fallback" },
+          {
+            url: "https://docs.example.test/catalog",
+            title: "Component catalog",
+            description: "A second, distinct preview.",
+          },
+        ],
+      },
+    },
+  },
+};

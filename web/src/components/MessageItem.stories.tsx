@@ -95,6 +95,50 @@ export const CurrentUser: Story = {
       reactions: [],
     },
   },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const bubble = (await canvas.findByText("This is how a message from the signed-in user is presented."))
+      .closest(".bubble");
+    await expect(bubble).toHaveClass("user");
+    expect(canvas.queryByText(/· agent/)).not.toBeInTheDocument();
+  },
+};
+
+export const NonAdminOtherUser: Story = {
+  args: {
+    isAdmin: false,
+    message: {
+      ...message,
+      author_type: "user",
+      author_id: "alice",
+      author_name: "Alice",
+      text: "A member cannot delete another member's message.",
+      reactions: [],
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByText("A member cannot delete another member's message.")).resolves.toBeVisible();
+    expect(canvas.queryByTitle("Delete this message")).not.toBeInTheDocument();
+  },
+};
+
+export const ThreadReply: Story = {
+  args: {
+    inThread: true,
+    message: {
+      ...richMessage,
+      id: 44,
+      thread_id: 42,
+      reply_count: 0,
+      text: "A reply suppresses top-level thread and pin controls.",
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByText("A reply suppresses top-level thread and pin controls.")).resolves.toBeVisible();
+    expect(canvas.queryByTitle("Pin this thread for quick access")).not.toBeInTheDocument();
+  },
 };
 
 export const LongContent: Story = {
@@ -116,5 +160,6 @@ export const LongContent: Story = {
       meta: { tldr: "Long content remains constrained to its message pane." },
     },
   },
+  globals: { viewport: { value: "phone", isRotated: false } },
   parameters: { viewport: { defaultViewport: "phone" } },
 };

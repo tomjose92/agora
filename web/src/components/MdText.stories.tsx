@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { fixtureMarkdown } from "@agora/core/testing/fixtures";
 import { MdText } from "./MdText";
 
 const meta = {
@@ -11,21 +12,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const RichContent: Story = {
-  args: {
-    text: [
-      "## Storybook message",
-      "",
-      "Agora supports **bold**, `inline code`, links, and lists:",
-      "",
-      "- Web and desktop",
-      "- iOS and Android",
-      "",
-      "| Runtime | Renderer |",
-      "| --- | --- |",
-      "| Web | React DOM |",
-      "| Mobile | React Native |",
-    ].join("\n"),
-  },
+  args: { text: fixtureMarkdown },
 };
 
 export const LongUnbrokenContent: Story = {

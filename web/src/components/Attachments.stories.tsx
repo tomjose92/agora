@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, userEvent, within } from "storybook/test";
 import { Attachments } from "./Attachments";
 import { message } from "../stories/fixtures/data";
 
@@ -20,4 +21,53 @@ export const Files: Story = {
       ],
     },
   },
+};
+
+export const ImageLightbox: Story = {
+  args: {
+    message: {
+      ...message,
+      attachments: [{
+        id: "storybook-preview.svg",
+        filename: "responsive-layout-preview.svg",
+        mime: "image/svg+xml",
+        size: 1_024,
+      }],
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", {
+      name: "Preview responsive-layout-preview.svg",
+    }));
+    const page = within(canvasElement.ownerDocument.body);
+    await expect(page.findByRole("dialog", {
+      name: "Image preview: responsive-layout-preview.svg",
+    })).resolves.toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect(page.queryByRole("dialog")).not.toBeInTheDocument();
+  },
+};
+
+export const LongAndZeroByteFiles: Story = {
+  args: {
+    message: {
+      ...message,
+      attachments: [
+        {
+          id: "empty",
+          filename: "empty.txt",
+          mime: "text/plain",
+          size: 0,
+        },
+        {
+          id: "long",
+          filename: `${"responsive-component-contract-".repeat(4)}.pdf`,
+          mime: "application/pdf",
+          size: 9_437_184,
+        },
+      ],
+    },
+  },
+  globals: { viewport: { value: "smallPhone", isRotated: false } },
 };

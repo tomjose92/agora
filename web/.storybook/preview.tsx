@@ -1,6 +1,11 @@
 import { useState, type ReactNode } from "react";
 import type { Preview } from "@storybook/react-vite";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { ApiProvider } from "@agora/core";
 import { FixtureApiClient, type FixtureRoutes } from "../src/stories/fixtures/api";
 import { resetStoryState } from "../src/stories/resetState";
@@ -11,7 +16,15 @@ function StoryProviders({ routes, children }: {
   routes?: FixtureRoutes;
   children: ReactNode;
 }) {
+  const [fixtureError, setFixtureError] = useState("");
+  const reportFixtureError = (error: Error) => {
+    if (!error.message.startsWith("Missing Storybook fixture route:")) return;
+    console.error(error);
+    setFixtureError(error.message);
+  };
   const [queryClient] = useState(() => new QueryClient({
+    queryCache: new QueryCache({ onError: reportFixtureError }),
+    mutationCache: new MutationCache({ onError: reportFixtureError }),
     defaultOptions: {
       queries: { retry: false, staleTime: Infinity },
       mutations: { retry: false },
@@ -20,7 +33,19 @@ function StoryProviders({ routes, children }: {
   const [api] = useState(() => new FixtureApiClient(routes));
   return (
     <QueryClientProvider client={queryClient}>
-      <ApiProvider client={api}>{children}</ApiProvider>
+      <ApiProvider client={api}>
+        {fixtureError && (
+          <div role="alert" style={{
+            background: "#7f1d1d",
+            color: "white",
+            padding: "10px 14px",
+            fontFamily: "monospace",
+          }}>
+            {fixtureError}
+          </div>
+        )}
+        {children}
+      </ApiProvider>
     </QueryClientProvider>
   );
 }
