@@ -172,6 +172,7 @@ export function ConnectionsPane() {
   useEffect(() => {
     if (!open) return;
     const panel = panelRef.current;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     panel?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -181,7 +182,7 @@ export function ConnectionsPane() {
       if (event.key !== "Tab" || !panel) return;
       const focusable = [...panel.querySelectorAll<HTMLElement>(
         'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )].filter(element => !element.hidden);
+      )].filter(element => !element.hidden && element.getClientRects().length > 0);
       if (!focusable.length) {
         event.preventDefault();
         panel.focus();
@@ -201,7 +202,13 @@ export function ConnectionsPane() {
       }
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      const target = previouslyFocused?.isConnected
+        ? previouslyFocused
+        : document.querySelector<HTMLElement>("#btn-connections");
+      requestAnimationFrame(() => target?.focus());
+    };
   }, [open, closeConnections]);
 
   if (!open) return null;
@@ -350,7 +357,7 @@ export function ConnectionsPane() {
 
   const addPantheo = (
     <>
-      <BackButton onClick={() => setAddKind(null)} />
+      <BackButton onClick={() => setAddKind(null)} label="All connection types" />
       <h4>Link a Pantheo instance</h4>
       <div className="conn-form">
         <label>Name
@@ -487,7 +494,7 @@ export function ConnectionsPane() {
   );
 }
 
-function BackButton({ onClick, label = "All agent types" }: { onClick: () => void; label?: string }) {
+function BackButton({ onClick, label }: { onClick: () => void; label: string }) {
   return (
     <button className="btn sm conn-back" onClick={onClick}>
       <Icon name="chevron-left" /> {label}

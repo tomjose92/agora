@@ -6,6 +6,10 @@ describe("inferPairingKind", () => {
     expect(inferPairingKind({ name: "anything", kind: "cursor" })).toBe("cursor");
   });
 
+  it("rejects unknown explicit metadata", () => {
+    expect(inferPairingKind({ name: "anything", kind: "future-agent" })).toBeNull();
+  });
+
   it.each([
     ["Codex", "codex"],
     ["codex-macbook", "codex"],

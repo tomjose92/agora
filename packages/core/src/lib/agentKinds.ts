@@ -1,10 +1,14 @@
-import type { PairingKind } from "../api/types";
+import { PAIRING_KINDS, type PairingKind } from "../api/types";
 
 /** Resolve old pairing records that predate explicit kind metadata. */
 export function inferPairingKind(
-  token: { name: string; kind?: PairingKind },
+  token: { name: string; kind?: string },
 ): PairingKind | null {
-  if (token.kind) return token.kind;
+  if (token.kind) {
+    return PAIRING_KINDS.includes(token.kind as PairingKind)
+      ? token.kind as PairingKind
+      : null;
+  }
 
   const value = token.name.trim().toLowerCase();
   const matches = (prefix: string) =>

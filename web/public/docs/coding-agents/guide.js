@@ -28,10 +28,10 @@ document.querySelector("#docs-root").innerHTML = `
   <div class="docs-shell">
     <aside class="docs-nav">
       <a class="docs-brand" href="/"><img src="/icon.png" alt=""><span>Agora</span></a>
-      <div class="docs-eyebrow">Coding agents</div>
-      <nav class="docs-nav-list">${guideLinks}</nav>
-      <div class="docs-eyebrow">On this page</div>
-      <nav class="docs-nav-list">
+      <a class="docs-eyebrow docs-index-link" href="./">Coding agents</a>
+      <nav class="docs-nav-list docs-guide-switcher">${guideLinks}</nav>
+      <div class="docs-eyebrow docs-page-label">On this page</div>
+      <nav class="docs-nav-list docs-page-nav">
         <a href="#setup">Setup</a><a href="#commands">Commands</a>
         <a href="#configuration">Configuration</a><a href="#security">Security</a>
         <a href="#troubleshooting">Troubleshooting</a>

@@ -441,7 +441,8 @@ export interface PairingToken {
   agents?: { id: string; name: string }[];
 }
 
-export type PairingKind = "claw" | "hermes" | "codex" | "cursor" | "claude";
+export const PAIRING_KINDS = ["claw", "hermes", "codex", "cursor", "claude"] as const;
+export type PairingKind = typeof PAIRING_KINDS[number];
 
 export interface InstanceInfo {
   id: string;

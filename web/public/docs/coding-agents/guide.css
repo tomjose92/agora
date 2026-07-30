@@ -27,6 +27,8 @@ code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
 .docs-brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 750; }
 .docs-brand img { width: 34px; height: 34px; border-radius: 9px; }
 .docs-eyebrow { margin: 28px 0 8px; color: var(--faint); font-size: 10px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+.docs-index-link { display: block; text-decoration: none; }
+.docs-index-link:hover { color: var(--text); }
 .docs-nav-list { display: grid; gap: 5px; }
 .docs-nav-list a {
   padding: 7px 9px; border-radius: 7px; color: var(--dim); text-decoration: none; font-size: 12px;
@@ -90,7 +92,13 @@ td:first-child { color: #dcd5ff; font-family: "SFMono-Regular", Consolas, monosp
 @media (max-width: 780px) {
   .docs-shell { display: block; padding: 18px 16px 56px; }
   .docs-nav { position: static; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-  .docs-nav .docs-eyebrow, .docs-nav-list { display: none; }
+  .docs-page-label, .docs-page-nav { display: none; }
+  .docs-index-link { margin-top: 16px; }
+  .docs-guide-switcher {
+    display: flex; gap: 7px; overflow-x: auto; padding-bottom: 2px;
+    scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+  }
+  .docs-guide-switcher a { flex: 0 0 auto; border: 1px solid var(--border); border-radius: 999px; padding: 5px 10px; }
   .docs-hero { padding-top: 30px; }
   .docs-command-grid { grid-template-columns: 1fr; }
 }

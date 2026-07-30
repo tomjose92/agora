@@ -9,6 +9,9 @@ const agents = {
   "claude-cli": "claude",
 };
 const sharedVariables = sharedEnv.map(([name]) => name);
+// These checks intentionally mirror the connectors' current configuration
+// idioms. Update the matchers if environment access or command dispatch is
+// refactored away from os.environ.get/os.getenv and `cmd == "/command"`.
 const envRead = /os\.(?:environ\.get|getenv)\(\s*(["'])([A-Z0-9_]+)\1(?:\s*,\s*(["'])(.*?)\3)?/g;
 const indexedEnvRead = /os\.environ\s*\[\s*(["'])([A-Z0-9_]+)\1\s*\]/g;
 const commandRead = /cmd\s*==\s*(["'])(\/[a-z][a-z0-9-]*)\1/g;
