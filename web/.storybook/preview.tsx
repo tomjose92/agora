@@ -7,7 +7,10 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { ApiProvider } from "@agora/core";
-import { FixtureApiClient, type FixtureRoutes } from "../src/stories/fixtures/api";
+import {
+  FixtureApiClient,
+  type FixtureRoutes,
+} from "@agora/core/testing/FixtureApiClient";
 import { resetStoryState } from "../src/stories/resetState";
 import "../src/styles.css";
 import "./preview.css";

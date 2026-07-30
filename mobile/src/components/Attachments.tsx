@@ -55,9 +55,12 @@ function FileChip({ session, att }: { session: Session; att: Attachment }) {
 export function Attachments({
   session,
   attachments,
+  imageSource,
 }: {
   session: Session;
   attachments: Attachment[];
+  /** Story/testing seam for deterministic inline images; production omits it. */
+  imageSource?: (attachment: Attachment) => { uri: string; headers?: Record<string, string> };
 }) {
   if (!attachments || attachments.length === 0) return null;
   return (
@@ -66,7 +69,10 @@ export function Attachments({
         att.mime.startsWith("image/") ? (
           <Image
             key={att.id}
-            source={{ uri: fileUrl(session, att.id), headers: authHeaders(session) }}
+            source={imageSource?.(att) ?? {
+              uri: fileUrl(session, att.id),
+              headers: authHeaders(session),
+            }}
             style={styles.image}
             contentFit="cover"
             transition={100}

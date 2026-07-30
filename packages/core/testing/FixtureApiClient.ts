@@ -1,12 +1,13 @@
-import { ApiClient, type Session } from "@agora/core";
+import { ApiClient, type Session } from "../src";
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "UPLOAD";
 type RouteValue = unknown | ((body: unknown) => unknown | Promise<unknown>);
 
 export type FixtureRoutes = Partial<Record<`${Method} ${string}`, RouteValue>>;
 
-const session: Session = { baseUrl: "https://storybook.invalid", token: "storybook" };
+const session: Session = { baseUrl: "", token: "storybook" };
 
+/** Deterministic ApiClient used by both web and native component catalogs. */
 export class FixtureApiClient extends ApiClient {
   readonly calls: Array<{ method: Method; path: string; body?: unknown }> = [];
 
@@ -18,7 +19,7 @@ export class FixtureApiClient extends ApiClient {
     this.calls.push({ method, path, body });
     const route = this.routes[`${method} ${path}`];
     if (route === undefined) {
-      throw new Error(`Missing native Storybook fixture route: ${method} ${path}`);
+      throw new Error(`Missing Storybook fixture route: ${method} ${path}`);
     }
     return (typeof route === "function" ? await route(body) : route) as T;
   }

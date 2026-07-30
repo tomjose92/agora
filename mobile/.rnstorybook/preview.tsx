@@ -1,19 +1,32 @@
 import React, { useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import type { Preview } from "@storybook/react-native";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiProvider } from "@agora/core";
+import {
+  MutationCache,
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import {
+  ApiProvider,
+  useAddressed,
+  useLive,
+  useTldrView,
+} from "@agora/core";
 import {
   fixtureAgents,
   fixtureMe,
   fixtureUsers,
 } from "@agora/core/testing/fixtures";
-import { colors } from "../src/lib/theme";
 import {
   FixtureApiClient,
   type FixtureRoutes,
-} from "../src/storybook/FixtureApiClient";
+} from "@agora/core/testing/FixtureApiClient";
+import { colors } from "../src/lib/theme";
 import { useSession } from "../src/state/session";
+import { usePrefs } from "../src/state/prefs";
+import { useToasts } from "../src/components/Toast";
 
 const session = { baseUrl: "https://storybook.invalid", token: "storybook" };
 const defaultRoutes: FixtureRoutes = {
@@ -23,7 +36,15 @@ const defaultRoutes: FixtureRoutes = {
 };
 
 function Providers({ routes, children }: { routes?: FixtureRoutes; children: ReactNode }) {
+  const [fixtureError, setFixtureError] = useState("");
+  const reportFixtureError = (error: Error) => {
+    if (!error.message.startsWith("Missing Storybook fixture route:")) return;
+    console.error(error);
+    setFixtureError(error.message);
+  };
   const [queryClient] = useState(() => new QueryClient({
+    queryCache: new QueryCache({ onError: reportFixtureError }),
+    mutationCache: new MutationCache({ onError: reportFixtureError }),
     defaultOptions: {
       queries: { retry: false, staleTime: Infinity },
       mutations: { retry: false },
@@ -32,13 +53,33 @@ function Providers({ routes, children }: { routes?: FixtureRoutes; children: Rea
   const [api] = useState(() => new FixtureApiClient({ ...defaultRoutes, ...routes }));
   return (
     <QueryClientProvider client={queryClient}>
-      <ApiProvider client={api}>{children}</ApiProvider>
+      <ApiProvider client={api}>
+        {fixtureError ? (
+          <View style={{ backgroundColor: "#7f1d1d", paddingVertical: 10, paddingHorizontal: 14 }}>
+            <Text accessibilityRole="alert" style={{ color: "white", fontFamily: "monospace" }}>
+              {fixtureError}
+            </Text>
+          </View>
+        ) : null}
+        {children}
+      </ApiProvider>
     </QueryClientProvider>
   );
 }
 
 const preview: Preview = {
-  beforeEach: () => {
+  beforeEach: (context) => {
+    useLive.setState({ typing: {}, progress: {} });
+    useTldrView.setState({ showing: {} });
+    useAddressed.setState({ byConvo: {} });
+    usePrefs.setState({
+      loaded: true,
+      collapsedGroups: {},
+      unreadsOnly: false,
+      speakAloud: false,
+      recentEmoji: [],
+    });
+    useToasts.setState({ items: [] });
     useSession.setState({
       status: "signedIn",
       session,
@@ -48,14 +89,18 @@ const preview: Preview = {
       voiceOk: fixtureMe.voice,
       savedUrl: session.baseUrl,
     });
+    const setup = context.parameters.setup;
+    if (typeof setup === "function") setup();
   },
   decorators: [
     (Story, context) => (
-      <Providers key={context.id} routes={context.parameters.apiRoutes as FixtureRoutes | undefined}>
-        <View style={{ flex: 1, padding: 16, justifyContent: "center", backgroundColor: colors.bg }}>
-          <Story />
-        </View>
-      </Providers>
+      <SafeAreaProvider>
+        <Providers key={context.id} routes={context.parameters.apiRoutes as FixtureRoutes | undefined}>
+          <View style={{ flex: 1, padding: 16, justifyContent: "center", backgroundColor: colors.bg }}>
+            <Story />
+          </View>
+        </Providers>
+      </SafeAreaProvider>
     ),
   ],
   parameters: {
