@@ -1292,6 +1292,17 @@ impl Hub {
 
     /// Handle a protocol frame arriving from an agent connection.
     pub fn handle_agent_frame(&self, frame: &Value) {
+        self.handle_agent_frame_inner(None, frame);
+    }
+
+    /// Handle an agent frame while retaining the carrying connection's
+    /// identity for responses. Frame authorization still deliberately uses
+    /// the claimed agent id until connection-to-agent binding lands.
+    pub fn handle_agent_frame_from(&self, conn_id: u64, frame: &Value) {
+        self.handle_agent_frame_inner(Some(conn_id), frame);
+    }
+
+    fn handle_agent_frame_inner(&self, sender_conn_id: Option<u64>, frame: &Value) {
         let agent_id = frame["agent_id"].as_str().unwrap_or_default().to_string();
         let agent_name = self
             .agent_handle(&agent_id)
@@ -1337,12 +1348,23 @@ impl Hub {
             // live agent that the write was rejected instead of letting it
             // assume the message landed. Activity frames remain best-effort.
             if frame_type == "post" {
-                if let Some(handle) = self.agent_handle(&agent_id) {
-                    let _ = handle.tx.send(json!({
+                let sender = sender_conn_id.and_then(|conn_id| {
+                    self.state
+                        .lock()
+                        .unwrap()
+                        .agents
+                        .values()
+                        .find(|handle| handle.conn_id == conn_id)
+                        .map(|handle| handle.tx.clone())
+                });
+                if let Some(tx) = sender {
+                    let _ = tx.send(json!({
                         "type": "error",
                         "frame_type": "post",
+                        "agent_id": agent_id,
                         "error": "agent is not a member of this channel",
                         "channel_id": channel_id,
+                        "thread_id": frame["thread_id"],
                     }));
                 }
             }
@@ -2517,6 +2539,7 @@ mod tests {
         let h = hub();
         let _member_rx = add_agent(&h, "bot-a", "Bot A", false);
         let mut outsider_rx = add_agent(&h, "bot-b", "Bot B", false);
+        let outsider_conn_id = h.agent_handle("bot-b").unwrap().conn_id;
         let cid = setup_channel(&h, &["bot-a"]);
         let (tx_ui, mut rx_ui) = unbounded_channel();
         h.attach_socket("tom", false, tx_ui);
@@ -2535,17 +2558,50 @@ mod tests {
                 "text": "should not be stored",
             }),
         ] {
-            h.handle_agent_frame(&frame);
+            h.handle_agent_frame_from(outsider_conn_id, &frame);
         }
 
         assert!(rx_ui.try_recv().is_err());
         assert!(h.store.messages(&cid, None, None, 10).is_empty());
         assert!(h.channel_activity(&cid)["typing"].as_array().unwrap().is_empty());
         assert!(h.channel_activity(&cid)["progress"].as_array().unwrap().is_empty());
-        let error = last_frame(&mut outsider_rx, "error").unwrap();
+        let errors: Vec<_> = std::iter::from_fn(|| outsider_rx.try_recv().ok())
+            .filter(|frame| frame["type"] == "error")
+            .collect();
+        assert_eq!(errors.len(), 1);
+        let error = &errors[0];
         assert_eq!(error["frame_type"], "post");
+        assert_eq!(error["agent_id"], "bot-b");
         assert_eq!(error["channel_id"], cid);
+        assert!(error["thread_id"].is_null());
         assert_eq!(error["error"], "agent is not a member of this channel");
+    }
+
+    #[test]
+    fn denied_post_error_stays_on_the_sending_connection() {
+        let h = hub();
+        let mut victim_rx = add_agent(&h, "victim", "Victim", false);
+        let mut sender_rx = add_agent(&h, "sender", "Sender", false);
+        let sender_conn_id = h.agent_handle("sender").unwrap().conn_id;
+        let cid = setup_channel(&h, &["sender"]);
+
+        // The sender claims a non-member agent id. Until S2 binds frame
+        // identity, the write is rejected by membership; its error must not
+        // be injected into the claimed agent's different connection.
+        h.handle_agent_frame_from(
+            sender_conn_id,
+            &json!({
+                "type": "post", "agent_id": "victim", "channel_id": cid,
+                "thread_id": 42, "text": "spoofed",
+            }),
+        );
+
+        assert!(victim_rx.try_recv().is_err());
+        let error = sender_rx.try_recv().unwrap();
+        assert_eq!(error["type"], "error");
+        assert_eq!(error["agent_id"], "victim");
+        assert_eq!(error["thread_id"], 42);
+        assert!(h.store.messages(&cid, None, None, 10).is_empty());
     }
 
     #[test]

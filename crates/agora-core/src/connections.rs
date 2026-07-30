@@ -294,7 +294,7 @@ impl ConnectionManager {
                                         });
                                     }
                                 } else {
-                                    self.hub.handle_agent_frame(&frame);
+                                    self.hub.handle_agent_frame_from(conn_id, &frame);
                                 }
                             }
                         }

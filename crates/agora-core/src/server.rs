@@ -3107,7 +3107,7 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String,
                                 registered = true;
                             }
                         } else if registered {
-                            state.hub.handle_agent_frame(&frame);
+                            state.hub.handle_agent_frame_from(conn_id, &frame);
                         }
                     }
                     Some(Ok(WsMessage::Close(_))) | None => break,
