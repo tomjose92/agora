@@ -9,12 +9,15 @@
      — the classic dual-renderer hazard. */
 
 const { getDefaultConfig } = require("expo/metro-config");
+const { withStorybook } = require("@storybook/react-native/withStorybook");
 const path = require("path");
 
 const projectRoot = __dirname;
 const repoRoot = path.resolve(projectRoot, "..");
 
 const config = getDefaultConfig(projectRoot);
+// __DEV__ is a bundle global, not available while this Node config evaluates.
+const storybookEnabled = process.env.EXPO_PUBLIC_STORYBOOK_ENABLED === "true";
 
 config.watchFolders = [path.resolve(repoRoot, "packages/core")];
 
@@ -27,4 +30,23 @@ config.resolver.extraNodeModules = {
   zustand: path.resolve(projectRoot, "node_modules/zustand"),
 };
 
-module.exports = config;
+/* Routed screen stories need stable params/navigation without mounting an
+   Expo Router tree. Keep the alias Storybook-only so production navigation
+   always resolves the real package. */
+if (storybookEnabled) {
+  const routerFixture = path.resolve(projectRoot, ".rnstorybook/expo-router.tsx");
+  config.resolver.resolveRequest = (context, moduleName, platform) => {
+    if (moduleName === "expo-router") {
+      return { filePath: routerFixture, type: "sourceFile" };
+    }
+    return context.resolveRequest(context, moduleName, platform);
+  };
+}
+
+/* Same flag index.js switches the root component on — EXPO_PUBLIC_ so the
+   on-device branch there sees it inlined in the bundle. Disabled is the
+   default: withStorybook then stubs every storybook import out. */
+module.exports = withStorybook(config, {
+  configPath: path.resolve(projectRoot, ".rnstorybook"),
+  enabled: storybookEnabled,
+});

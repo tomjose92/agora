@@ -3,7 +3,8 @@
    ui/index.html + shim.js renderServerBadge()/boot(). */
 
 import { useEffect } from "react";
-import { useConnectionsInfo, useMe, useApi } from "@agora/core";
+import { useQueryClient } from "@tanstack/react-query";
+import { keys, useConnectionsInfo, useMe, useApi, type Me } from "@agora/core";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
 
@@ -52,6 +53,7 @@ function ServerBadge() {
 
 export function Topbar() {
   const api = useApi();
+  const qc = useQueryClient();
   const me = useMe().data;
   const openPanel = useUiState(s => s.openPanel);
   const isAdmin = !!me?.instance_admin;
@@ -62,7 +64,8 @@ export function Topbar() {
       me?.display_name || me?.username || "");
     if (next === null) return;
     try {
-      await api.patch("/api/me", { display_name: next.trim() });
+      const updated = await api.patch<Partial<Me>>("/api/me", { display_name: next.trim() });
+      qc.setQueryData<Me>(keys.me, prev => prev ? { ...prev, ...updated } : undefined);
       toast("Display name updated", { variant: "ok" });
     } catch (e) {
       toast("Couldn't update your name: " + ((e as Error).message || e), { variant: "error" });

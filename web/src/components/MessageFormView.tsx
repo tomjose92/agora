@@ -75,6 +75,7 @@ export function MessageFormView({ message }: { message: Message }) {
             <label className="lbl">{f.label}</label>
             <span className="ago-form-inwrap">
               <input className="ago-form-input" type="text" maxLength={2000}
+                aria-label={f.label}
                 data-mid={message.id} data-fid={f.id}
                 placeholder={f.placeholder || ""}
                 value={dirty || draft !== undefined ? draft : server}

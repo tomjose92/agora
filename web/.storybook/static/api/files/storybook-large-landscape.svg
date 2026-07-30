@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+  <defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#312e81"/><stop offset="1" stop-color="#0f766e"/></linearGradient></defs>
+  <rect width="1200" height="800" fill="url(#g)"/>
+  <circle cx="930" cy="190" r="110" fill="#fbbf24" opacity=".9"/>
+  <path d="M0 650 260 390 470 570 720 280 1200 690V800H0Z" fill="#111827" opacity=".75"/>
+  <text x="60" y="90" fill="#fff" font-family="sans-serif" font-size="42">Large landscape · 1200 × 800</text>
+</svg>

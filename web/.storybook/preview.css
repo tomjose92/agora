@@ -1,0 +1,5 @@
+/* Deterministic interaction assertions: product motion remains unchanged. */
+*, *::before, *::after {
+  animation: none !important;
+  transition: none !important;
+}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="1000" viewBox="0 0 600 1000">
+  <rect width="600" height="1000" fill="#0f172a"/>
+  <rect x="55" y="70" width="490" height="700" rx="40" fill="#164e63"/>
+  <circle cx="300" cy="310" r="145" fill="#22d3ee" opacity=".65"/>
+  <text x="300" y="880" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="34">Portrait · 600 × 1000</text>
+</svg>

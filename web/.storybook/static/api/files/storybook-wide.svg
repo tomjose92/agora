@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="450" viewBox="0 0 1200 450">
+  <rect width="1200" height="450" fill="#3f1d2e"/>
+  <path d="M0 320 Q280 120 560 300 T1200 250V450H0Z" fill="#fb7185" opacity=".55"/>
+  <text x="60" y="90" fill="#fff" font-family="sans-serif" font-size="42">Wide · 1200 × 450</text>
+</svg>

@@ -8,7 +8,8 @@
 #   2. mobile  — mobile/ consumes @agora/core via a file: dependency, so a
 #                core change can break it: standalone npm ci + tsc + jest.
 #                (Publishing stays in publish-mobile.yml.)
-#   3. parity  — the Playwright suite (web/e2e/parity.mjs) drives every core
+#   3. storybook — isolated component interaction tests in headless Chromium.
+#   4. parity  — the Playwright suite (web/e2e/parity.mjs) drives every core
 #                flow against a real agora-server serving the fresh web/dist
 #                build.
 
@@ -20,6 +21,7 @@ on:
       - "web/**"
       - "packages/**"
       - "mobile/**"
+      - "AGENTS.md"
       - "package.json"
       - "package-lock.json"
       - "scripts/gen-emoji.js"
@@ -32,6 +34,7 @@ on:
       - "web/**"
       - "packages/**"
       - "mobile/**"
+      - "AGENTS.md"
       - "package.json"
       - "package-lock.json"
       - "scripts/gen-emoji.js"
@@ -89,6 +92,28 @@ jobs:
         working-directory: mobile
       - run: npx jest --silent
         working-directory: mobile
+
+  storybook:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      # The Vitest browser provider may pin a different Playwright browser
+      # revision than the parity suite, so install it in this job explicitly.
+      - name: Install Storybook Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Storybook component tests
+        run: npm run test-storybook -w web
+      - name: Deployed UI includes Storybook at /storybook
+        run: |
+          npm run build:with-storybook -w web
+          test -f web/dist/storybook/index.html
+          test -f web/dist/storybook/iframe.html
 
   parity:
     runs-on: ubuntu-latest

@@ -792,10 +792,12 @@ a.btn { text-decoration: none; }
 .ago-msg-row .ago-av { margin-top: 2px; }
 .ago-msg-row .bubble { align-self: auto; min-width: 0; }
 
-.ago-bubble .ago-bubble-foot { display: flex; align-items: center; gap: 10px; }
+.ago-bubble .ago-bubble-foot {
+  display: flex; align-items: center; flex-wrap: wrap; column-gap: 10px; row-gap: 2px;
+}
 .ago-replies, .ago-thread-btn {
   border: none; background: transparent; color: var(--a1); font: inherit; font-size: 11.5px;
-  cursor: pointer; padding: 0; margin-top: 6px;
+  cursor: pointer; padding: 0; margin-top: 6px; white-space: nowrap;
 }
 .ago-thread-btn { color: var(--faint); opacity: 0; transition: opacity .15s ease; }
 .ago-bubble:hover .ago-thread-btn { opacity: 1; }
@@ -1033,11 +1035,18 @@ a.btn { text-decoration: none; }
 .ago-pending-chip .ago-x { opacity: 1; }
 .ago-atts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .ago-att-img {
-  display: block; padding: 0; border: 0; background: none; cursor: zoom-in;
+  display: block; min-width: 0; padding: 0; border: 0; background: none; cursor: zoom-in;
 }
 .ago-att-img img {
   display: block; max-width: min(340px, 100%); max-height: 260px;
   border-radius: 10px; border: 1px solid var(--border);
+}
+.ago-atts:has(.ago-att-img ~ .ago-att-img) .ago-att-img {
+  flex: 1 1 calc(50% - 4px);
+  max-width: calc(50% - 4px);
+}
+.ago-atts:has(.ago-att-img ~ .ago-att-img) .ago-att-img img {
+  width: 100%; height: clamp(110px, 22vw, 190px); object-fit: cover;
 }
 .ago-image-lightbox {
   position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center;
@@ -1479,7 +1488,7 @@ a.btn { text-decoration: none; }
 @media (max-width: 1100px) and (min-width: 821px) {
   .agora-thread, .agora-members-pane {
     position: fixed; right: 12px; top: 60px; bottom: 12px; height: auto;
-    z-index: 30; box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    z-index: 30; background: #0d1018; box-shadow: 0 12px 40px rgba(0,0,0,.5);
   }
   .agora-layout.thread-expanded .agora-main { display: flex; }
   .agora-layout.thread-expanded .agora-thread { left: 12px; width: auto; }
@@ -1550,6 +1559,11 @@ a.btn { text-decoration: none; }
   .agora-main .chat-input .btn, .agora-thread .chat-input .btn { flex-shrink: 0; }
   .toast-host { bottom: 14px; }
   .toast { width: 100%; }
+}
+
+@media (max-width: 640px) {
+  .topbar { flex-wrap: wrap; gap: 8px; }
+  .topbar-status { margin-left: 0; }
 }
 
 /* ---------- voice input (mic button in the composers) ---------- */

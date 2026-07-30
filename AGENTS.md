@@ -45,6 +45,14 @@ npm ci
 npx tsc --noEmit                # typecheck
 npx jest                        # unit tests
 npx expo start                  # dev client
+npm run storybook               # native component catalog (simulator/device, NOT a browser)
+npm run storybook:ios           # open native Storybook on iOS
+npm run storybook:android       # open native Storybook on Android
+npm run storybook-generate      # refresh .rnstorybook/storybook.requires.ts after adding stories
+# Before the first native Storybook run (and after native dependency changes),
+# compile its dev client with the same flag so Storybook-only modules are linked:
+EXPO_PUBLIC_STORYBOOK_ENABLED=true npx expo run:ios
+EXPO_PUBLIC_STORYBOOK_ENABLED=true npx expo run:android
 
 # desktop dev build
 cd crates/agora-desktop && npx @tauri-apps/cli@latest dev
@@ -54,6 +62,11 @@ npm ci
 npm test                    # @agora/core vitest
 npm run typecheck
 npm run build               # web/ -> web/dist (gitignored; the served dir)
+npm run storybook -w web    # web/desktop component catalog on :6006
+npm run build-storybook -w web
+npm run build:with-storybook -w web # web/dist plus public catalog at web/dist/storybook
+npx playwright install chromium # once per machine, for Storybook browser tests
+npm run test-storybook -w web  # browser smoke + story play tests
 node web/e2e/parity.mjs /   # Playwright regression flows (AGORA_TOKEN=<key>)
 ```
 
@@ -166,12 +179,20 @@ endpoint must not break:
   WS reducer); UI state in small zustand stores persisted to localStorage;
   styling in `web/src/styles.css` (one flat stylesheet, class-based). Keep
   `web/e2e/parity.mjs` green — it's the regression contract CI runs.
+- **Shared UI fixtures**: framework-free Storybook/test fixtures intentionally
+  use the `@agora/core/testing/fixtures` testing-only subpath; production code
+  continues to import from the package barrel.
 - **Mobile**: follow the existing screen patterns — react-query hooks and
   the WS reducer come from `@agora/core` (the client is provided by
   `ApiProvider` in `app/(app)/_layout.tsx`); mobile-only pieces (voice
   upload, notifications, session/secure-store) stay under `mobile/src`.
   Admin-only UI gates on `instanceAdmin` from the session store, `toastErr`
-  for mutation failures.
+  for mutation failures. The app entry is `mobile/index.js`, not
+  `expo-router/entry` directly: it picks the router or the on-device Storybook
+  root off `EXPO_PUBLIC_STORYBOOK_ENABLED` (the prefix matters — only
+  `EXPO_PUBLIC_*` is inlined into the bundle, and the literal is what lets
+  Metro drop Storybook from production builds). `metro.config.js` reads the
+  same variable.
 - **No new heavy deps** without good reason, in any of the three stacks.
 - **Secrets** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, OAuth client secret)
   live in the process env or `config.json` — never hardcode, never log.
