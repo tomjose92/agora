@@ -66,6 +66,7 @@ export const GoogleFirst: Story = {
 export const InvalidAdminKey: Story = {
   args: { mode: "invalid" },
   play: async ({ canvasElement }) => {
+    signedIn.mockClear();
     const canvas = within(canvasElement);
     await userEvent.type(await canvas.findByLabelText("Admin key"), "wrong{Enter}");
     await expect(signedIn).not.toHaveBeenCalled();

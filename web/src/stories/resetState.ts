@@ -16,6 +16,7 @@ const STORAGE_KEYS = [
   "agora_unreads_only",
   "agora_side",
   "agora_thread",
+  "agora_speak",
   "agoEmojiRecent",
 ];
 

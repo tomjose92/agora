@@ -7,6 +7,14 @@ export const router = {
   back: () => {},
 };
 
+export function useRouter() {
+  return router;
+}
+
+export function usePathname(): string {
+  return "/";
+}
+
 export function useLocalSearchParams<T>(): T {
   return ((globalThis as typeof globalThis & {
     __AGORA_STORY_PARAMS__?: Record<string, string>;
@@ -34,4 +42,8 @@ export const Stack = Object.assign(
 
 export function Link({ children }: { children?: ReactNode }) {
   return <Text>{children}</Text>;
+}
+
+export function Redirect(): ReactNode {
+  return null;
 }

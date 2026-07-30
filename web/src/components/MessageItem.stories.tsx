@@ -1,16 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 import type { Message } from "@agora/core";
+import { fixtureAgents } from "@agora/core/testing/fixtures";
 import { MessageItem } from "./MessageItem";
 import { me, message } from "../stories/fixtures/data";
-
-const agents = [{
-  id: "codex",
-  name: "Codex",
-  kind: "codex",
-  status: "online",
-  connected_at: 1_750_000_000,
-}];
 
 const richMessage: Message = {
   ...message,
@@ -50,7 +43,7 @@ const richMessage: Message = {
 
 const baseRoutes = {
   "GET /api/me": me,
-  "GET /api/agents": { agents },
+  "GET /api/agents": { agents: fixtureAgents },
   "GET /api/channels/general/pins": { pins: [] },
   "GET /api/channels/general/stars": { stars: [] },
 };

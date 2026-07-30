@@ -48,6 +48,7 @@ npx expo start                  # dev client
 npm run storybook               # native component catalog (simulator/device, NOT a browser)
 npm run storybook:ios           # open native Storybook on iOS
 npm run storybook:android       # open native Storybook on Android
+npm run storybook-generate      # refresh .rnstorybook/storybook.requires.ts after adding stories
 
 # desktop dev build
 cd crates/agora-desktop && npx @tauri-apps/cli@latest dev
