@@ -16,6 +16,7 @@ const projectRoot = __dirname;
 const repoRoot = path.resolve(projectRoot, "..");
 
 const config = getDefaultConfig(projectRoot);
+const storybookEnabled = process.env.EXPO_PUBLIC_STORYBOOK_ENABLED === "true";
 
 config.watchFolders = [path.resolve(repoRoot, "packages/core")];
 
@@ -28,10 +29,23 @@ config.resolver.extraNodeModules = {
   zustand: path.resolve(projectRoot, "node_modules/zustand"),
 };
 
+/* Routed screen stories need stable params/navigation without mounting an
+   Expo Router tree. Keep the alias Storybook-only so production navigation
+   always resolves the real package. */
+if (storybookEnabled) {
+  const routerFixture = path.resolve(projectRoot, ".rnstorybook/expo-router.tsx");
+  config.resolver.resolveRequest = (context, moduleName, platform) => {
+    if (moduleName === "expo-router") {
+      return { filePath: routerFixture, type: "sourceFile" };
+    }
+    return context.resolveRequest(context, moduleName, platform);
+  };
+}
+
 /* Same flag index.js switches the root component on — EXPO_PUBLIC_ so the
    on-device branch there sees it inlined in the bundle. Disabled is the
    default: withStorybook then stubs every storybook import out. */
 module.exports = withStorybook(config, {
   configPath: path.resolve(projectRoot, ".rnstorybook"),
-  enabled: process.env.EXPO_PUBLIC_STORYBOOK_ENABLED === "true",
+  enabled: storybookEnabled,
 });
