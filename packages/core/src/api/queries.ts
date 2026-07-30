@@ -250,6 +250,7 @@ export function useMessages(channelId: string, threadId: number | null) {
     // the start of history.
     getNextPageParam: (lastPage) =>
       lastPage.length < PAGE_SIZE ? undefined : lastPage[0]?.id,
+    enabled: !!channelId,
   });
 }
 
