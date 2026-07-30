@@ -34,7 +34,8 @@ export const ConnectedAgentAndCatalog: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.findByText("Live: Codex")).resolves.toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: "Add agent" }));
+    // "Add agent" is a role="tab" in the panel's tablist, not a button.
+    await userEvent.click(canvas.getByRole("tab", { name: "Add agent" }));
     await expect(canvas.findByText("What would you like to connect?")).resolves.toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: /Coding agents/ }));
     await expect(canvas.findByText("Choose a coding agent")).resolves.toBeVisible();
