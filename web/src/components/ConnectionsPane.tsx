@@ -145,6 +145,7 @@ function AgentCard({ definition, onSelect }: { definition: AddDefinition; onSele
 
 export function ConnectionsPane() {
   const ui = useUiState();
+  const closeConnections = useUiState(state => state.openPanel);
   const open = ui.panel === "connections";
   const info = useConnectionsInfo(open, open).data;
   const tokens = usePairingTokens(open, open).data || [];
@@ -164,7 +165,7 @@ export function ConnectionsPane() {
   useEffect(() => {
     if (!open) {
       setTab("list"); setAddKind(null); setIssued(null);
-      setName(""); setUrl(""); setToken(""); setPairName("");
+      setInstName(null); setName(""); setUrl(""); setToken(""); setPairName("");
     }
   }, [open]);
 
@@ -174,7 +175,7 @@ export function ConnectionsPane() {
     panel?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        ui.openPanel(null);
+        closeConnections(null);
         return;
       }
       if (event.key !== "Tab" || !panel) return;
@@ -188,7 +189,10 @@ export function ConnectionsPane() {
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (!panel.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -198,7 +202,7 @@ export function ConnectionsPane() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, ui]);
+  }, [open, closeConnections]);
 
   if (!open) return null;
   const conns = info?.connections || [];

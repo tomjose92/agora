@@ -11,6 +11,7 @@ const agents = {
 const sharedVariables = sharedEnv.map(([name]) => name);
 const envRead = /os\.(?:environ\.get|getenv)\(\s*(["'])([A-Z0-9_]+)\1(?:\s*,\s*(["'])(.*?)\3)?/g;
 const indexedEnvRead = /os\.environ\s*\[\s*(["'])([A-Z0-9_]+)\1\s*\]/g;
+const commandRead = /cmd\s*==\s*(["'])(\/[a-z][a-z0-9-]*)\1/g;
 const ignoredLiteralDefaults = new Set([
   "AGORA_PAIRING_TOKEN", "AGENT_ID", "AGENT_NAME", "AGENT_AVATAR", "STATE_FILE",
 ]);
@@ -50,8 +51,15 @@ for (const [directory, guideKey] of Object.entries(agents)) {
       ? []
       : [`${variable} (code: ${JSON.stringify(effectiveDefault)}, guide: ${JSON.stringify(documentedDefault)})`];
   });
+  const implementedCommands = new Set([...source.matchAll(commandRead)].map(match => match[2]));
+  const documentedCommands = new Set(
+    guides[guideKey].commands.map(([command]) => command.split(/\s/, 1)[0]),
+  );
+  const missingCommands = [...implementedCommands].filter(command => !documentedCommands.has(command));
+  const staleCommands = [...documentedCommands].filter(command => !implementedCommands.has(command));
 
-  if (missing.length || stale.length || invalidRequirements.length || wrongDefaults.length) {
+  if (missing.length || stale.length || invalidRequirements.length || wrongDefaults.length
+      || missingCommands.length || staleCommands.length) {
     failed = true;
     if (missing.length) {
       console.error(`${directory}: undocumented environment variables: ${missing.join(", ")}`);
@@ -65,8 +73,36 @@ for (const [directory, guideKey] of Object.entries(agents)) {
     if (wrongDefaults.length) {
       console.error(`${directory}: documented defaults differ from code: ${wrongDefaults.join(", ")}`);
     }
+    if (missingCommands.length) {
+      console.error(`${directory}: undocumented commands: ${missingCommands.join(", ")}`);
+    }
+    if (staleCommands.length) {
+      console.error(`${directory}: documented but unimplemented commands: ${staleCommands.join(", ")}`);
+    }
   } else {
-    console.log(`${directory}: ${implemented.size} environment variables and literal defaults documented exactly`);
+    console.log(`${directory}: ${implemented.size} environment variables and `
+      + `${implementedCommands.size} commands documented exactly`);
+  }
+}
+
+const shellDirectory = path.join(root, "web", "public", "docs", "coding-agents");
+const shellFiles = fs.readdirSync(shellDirectory)
+  .filter(file => file.endsWith(".html") && file !== "index.html");
+const shellKeys = new Map(shellFiles.map(file => {
+  const html = fs.readFileSync(path.join(shellDirectory, file), "utf8");
+  const match = html.match(/<body\s+data-agent=(["'])([^"']+)\1/);
+  return [path.basename(file, ".html"), match?.[2]];
+}));
+for (const guideKey of Object.keys(guides)) {
+  if (shellKeys.get(guideKey) !== guideKey) {
+    failed = true;
+    console.error(`${guideKey}: missing shell or mismatched data-agent`);
+  }
+}
+for (const [fileKey, agentKey] of shellKeys) {
+  if (!agentKey || !(agentKey in guides) || fileKey !== agentKey) {
+    failed = true;
+    console.error(`${fileKey}.html: unknown or mismatched guide key ${JSON.stringify(agentKey)}`);
   }
 }
 

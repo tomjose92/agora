@@ -22,6 +22,7 @@ body {
 a { color: #b6a8ff; }
 code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
 .docs-shell { display: grid; grid-template-columns: 244px minmax(0, 780px); gap: 52px; max-width: 1120px; margin: auto; padding: 34px 28px 80px; }
+.docs-page { width: 100%; max-width: 900px; margin: auto; padding: 34px 28px 80px; }
 .docs-nav { position: sticky; top: 28px; align-self: start; }
 .docs-brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 750; }
 .docs-brand img { width: 34px; height: 34px; border-radius: 9px; }

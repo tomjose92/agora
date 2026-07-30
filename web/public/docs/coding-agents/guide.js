@@ -76,6 +76,7 @@ document.querySelector("#docs-root").innerHTML = `
         <ul>
           <li>Keep pairing tokens out of shell history; prefer <code>AGORA_PAIRING_TOKEN_FILE</code> with mode 600.</li>
           <li>Set narrow allowed roots rather than an entire home directory.</li>
+          <li>Treat sandbox bypass, full-access modes, and disabled sandboxes as high risk. Use them only on a trusted machine after reviewing the connector's bundled <code>SECURITY.md</code>.</li>
           <li>Leave privilege-escalation and peer-agent settings disabled unless intentionally required.</li>
           <li>Only grant Agora channel membership to people trusted with the repositories exposed to that agent.</li>
           <li>Revoke a credential from Connections immediately if its machine or token may be compromised.</li>

@@ -335,6 +335,8 @@ async function main() {
     // guides rather than squeezing setup instructions into this modal.
     await page.locator('#conn-panel [role="tab"]', { hasText: "Add agent" }).click();
     await page.locator("#conn-panel .conn-card-select", { hasText: "Coding agents" }).click();
+    await page.locator('#conn-panel a[href="/docs/coding-agents/codex.html"]')
+      .waitFor({ timeout: 5000 });
     const codingCards = page.locator("#conn-panel .conn-card");
     if (await codingCards.count() !== 3) throw new Error("coding-agent picker should show three CLIs");
     for (const kind of ["codex", "cursor", "claude"]) {
