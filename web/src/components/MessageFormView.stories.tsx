@@ -40,7 +40,8 @@ type Story = StoryObj<typeof meta>;
 export const Editable: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const owner = canvas.getByLabelText("Owner");
+    // The form's .lbl label carries no htmlFor, so target the input directly.
+    const owner = canvas.getByPlaceholderText("Name");
     await userEvent.clear(owner);
     await userEvent.type(owner, "Tom{Enter}");
     await expect(saveField).toHaveBeenCalledWith({
@@ -72,7 +73,9 @@ export const Submitted: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.findByText("Submit by tom")).resolves.toBeVisible();
+    // Button label and attribution render in separate spans (.what / .dim).
+    await expect(canvas.findByText("Submit")).resolves.toBeVisible();
+    await expect(canvas.findByText(/by tom/)).resolves.toBeVisible();
     expect(canvas.queryByRole("button")).not.toBeInTheDocument();
   },
 };
