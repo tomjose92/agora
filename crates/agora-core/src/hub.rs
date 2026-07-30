@@ -388,7 +388,31 @@ impl Hub {
         st.next_id
     }
 
+    /// Register (or re-register) an agent id: the last hello wins. When the
+    /// id was live on a *different* connection, that connection is told —
+    /// frame binding will silently drop everything it sends from here on,
+    /// and without the notice a bridge whose id was claimed (two bridges
+    /// left on the default id, say) would stay mute with no diagnostic.
     pub fn register_agent(&self, handle: AgentHandle) {
+        {
+            let st = self.state.lock().unwrap();
+            if let Some(displaced) = st.agents.get(&handle.agent_id) {
+                if displaced.conn_id != handle.conn_id {
+                    tracing::warn!(
+                        agent_id = handle.agent_id,
+                        displaced_conn_id = displaced.conn_id,
+                        new_conn_id = handle.conn_id,
+                        "agent id re-registered by another connection"
+                    );
+                    let _ = displaced.tx.send(json!({
+                        "type": "error",
+                        "frame_type": "hello",
+                        "agent_id": handle.agent_id,
+                        "error": "agent id was claimed by another connection; reconnect to reclaim it",
+                    }));
+                }
+            }
+        }
         self.store.upsert_agent(
             &handle.agent_id,
             &handle.agent_name,
@@ -1309,7 +1333,7 @@ impl Hub {
             return;
         };
         if sender_conn_id.is_some_and(|conn_id| handle.conn_id != conn_id) {
-            tracing::debug!(
+            tracing::warn!(
                 agent_id,
                 sender_conn_id,
                 "dropping agent frame whose identity is not registered on the connection"
@@ -1358,7 +1382,7 @@ impl Hub {
                     "request_id": frame["request_id"],
                     "error": "agent is not a member of this channel",
                     "channel_id": channel_id,
-                    "thread_id": frame["thread_id"],
+                    "thread_id": frame["thread_id"].as_i64(),
                 }));
             }
             return;
@@ -2525,6 +2549,35 @@ mod tests {
         assert_eq!(ev["type"], "message");
         assert_eq!(ev["message"]["author_id"], "bot-a");
         assert_eq!(h.store.messages(&cid, None, None, 10).len(), 1);
+    }
+
+    #[test]
+    fn re_registering_an_agent_id_notifies_the_displaced_connection() {
+        let h = hub();
+        let mut displaced_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let displaced_conn = h.agent_handle("bot-a").unwrap().conn_id;
+        let cid = setup_channel(&h, &["bot-a"]);
+
+        // A second connection claims the id: last hello wins, and the
+        // displaced connection is told so it doesn't go silently mute.
+        let mut claimant_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let notice = displaced_rx.try_recv().unwrap();
+        assert_eq!(notice["type"], "error");
+        assert_eq!(notice["frame_type"], "hello");
+        assert_eq!(notice["agent_id"], "bot-a");
+        assert_ne!(h.agent_handle("bot-a").unwrap().conn_id, displaced_conn);
+
+        // Frames from the displaced connection are bound out.
+        h.handle_agent_frame_from(displaced_conn, &json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "text": "from the stale socket",
+        }));
+        assert!(h.store.messages(&cid, None, None, 10).is_empty());
+
+        // A plain re-announce on the same connection stays silent.
+        let live = h.agent_handle("bot-a").unwrap();
+        h.register_agent(live);
+        assert!(claimant_rx.try_recv().is_err());
     }
 
     #[test]
