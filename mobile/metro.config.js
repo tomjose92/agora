@@ -9,6 +9,7 @@
      — the classic dual-renderer hazard. */
 
 const { getDefaultConfig } = require("expo/metro-config");
+const { withStorybook } = require("@storybook/react-native/withStorybook");
 const path = require("path");
 
 const projectRoot = __dirname;
@@ -27,4 +28,7 @@ config.resolver.extraNodeModules = {
   zustand: path.resolve(projectRoot, "node_modules/zustand"),
 };
 
-module.exports = config;
+module.exports = withStorybook(config, {
+  configPath: path.resolve(projectRoot, ".rnstorybook"),
+  enabled: process.env.STORYBOOK_ENABLED === "true",
+});

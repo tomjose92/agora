@@ -45,6 +45,9 @@ npm ci
 npx tsc --noEmit                # typecheck
 npx jest                        # unit tests
 npx expo start                  # dev client
+npm run storybook               # native component catalog
+npm run storybook:ios           # open native Storybook on iOS
+npm run storybook:android       # open native Storybook on Android
 
 # desktop dev build
 cd crates/agora-desktop && npx @tauri-apps/cli@latest dev
@@ -54,6 +57,9 @@ npm ci
 npm test                    # @agora/core vitest
 npm run typecheck
 npm run build               # web/ -> web/dist (gitignored; the served dir)
+npm run storybook -w web    # web/desktop component catalog on :6006
+npm run build-storybook -w web
+npm run test-storybook -w web  # browser smoke + story play tests
 node web/e2e/parity.mjs /   # Playwright regression flows (AGORA_TOKEN=<key>)
 ```
 
