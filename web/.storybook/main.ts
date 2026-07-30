@@ -20,7 +20,8 @@ const config: StorybookConfig = {
     resolve: {
       ...viteConfig.resolve,
       // Story fixtures live beside the static Storybook build, not under
-      // Agora's authenticated production /api/files route.
+      // Agora's authenticated production /api/files route. Keep component
+      // imports on this exact relative specifier; Vite aliases raw imports.
       alias: [
         { find: "../lib/files", replacement: resolve(configDir, "files.ts") },
       ],

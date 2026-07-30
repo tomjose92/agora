@@ -65,7 +65,7 @@ export function Topbar() {
     if (next === null) return;
     try {
       const updated = await api.patch<Me>("/api/me", { display_name: next.trim() });
-      qc.setQueryData(keys.me, updated);
+      qc.setQueryData<Me>(keys.me, prev => prev ? { ...prev, ...updated } : undefined);
       toast("Display name updated", { variant: "ok" });
     } catch (e) {
       toast("Couldn't update your name: " + ((e as Error).message || e), { variant: "error" });

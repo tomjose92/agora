@@ -1,3 +1,4 @@
+import "./storage";
 import { useState, type ReactNode } from "react";
 import type { Preview } from "@storybook/react-vite";
 import {

@@ -35,6 +35,13 @@ const images = {
   },
 } satisfies Record<string, Attachment>;
 
+const logFile = {
+  id: "storybook-release-log.txt",
+  filename: "release-validation.log",
+  mime: "text/plain",
+  size: 4_096,
+} satisfies Attachment;
+
 function messageWith(attachments: Attachment[]): Message {
   return {
     ...fixtureRootMessage,
@@ -119,5 +126,22 @@ export const FourMixedImages: Story = {
     await validateGallery(canvasElement);
     const canvas = within(canvasElement);
     expect(canvas.getAllByRole("button", { name: /^Preview / })).toHaveLength(4);
+  },
+};
+
+export const ImageWithFileChip: Story = {
+  args: { message: messageWith([images.large, logFile]) },
+  play: async ({ canvasElement }) => {
+    await validateGallery(canvasElement);
+    const canvas = within(canvasElement);
+    expect(canvas.getAllByRole("button", { name: /^Preview / })).toHaveLength(1);
+    expect(canvas.getByTitle("Download release-validation.log")).toBeVisible();
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: "A single image keeps its natural proportions when a non-image download chip is present.",
+      },
+    },
   },
 };

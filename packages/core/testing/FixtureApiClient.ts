@@ -1,6 +1,7 @@
 import { ApiClient, type Session } from "../src";
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "UPLOAD";
+// Route callbacks model fixture responses, so only the request body is passed.
 type RouteValue = unknown | ((body: unknown) => unknown | Promise<unknown>);
 
 export type FixtureRoutes = Partial<Record<`${Method} ${string}`, RouteValue>>;
