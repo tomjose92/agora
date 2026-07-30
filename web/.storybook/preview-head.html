@@ -1,0 +1,46 @@
+<script>
+  (() => {
+    class MemoryStorage {
+      #values = new Map();
+
+      get length() {
+        return this.#values.size;
+      }
+
+      clear() {
+        this.#values.clear();
+      }
+
+      getItem(key) {
+        return this.#values.get(key) ?? null;
+      }
+
+      key(index) {
+        return [...this.#values.keys()][index] ?? null;
+      }
+
+      removeItem(key) {
+        this.#values.delete(key);
+      }
+
+      setItem(key, value) {
+        this.#values.set(key, String(value));
+      }
+    }
+
+    Object.defineProperties(window, {
+      localStorage: {
+        configurable: true,
+        value: new MemoryStorage(),
+      },
+      sessionStorage: {
+        configurable: true,
+        value: new MemoryStorage(),
+      },
+      __agoraStorybookStorageShimmed: {
+        configurable: true,
+        value: true,
+      },
+    });
+  })();
+</script>

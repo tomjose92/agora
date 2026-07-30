@@ -26,10 +26,28 @@ class MemoryStorage implements Storage {
   }
 }
 
+type ShimmedWindow = Window & {
+  __agoraStorybookStorageShimmed?: boolean;
+};
+
 // A co-hosted Storybook shares an origin with Agora. Keep story resets and
 // persisted UI stores inside the preview iframe instead of clearing real app
-// credentials and preferences.
-Object.defineProperty(window, "localStorage", {
-  configurable: true,
-  value: new MemoryStorage(),
-});
+// credentials and preferences. preview-head.html installs this before module
+// evaluation; this import is the fallback for the Vitest browser harness.
+const shimmedWindow = window as ShimmedWindow;
+if (!shimmedWindow.__agoraStorybookStorageShimmed) {
+  Object.defineProperties(window, {
+    localStorage: {
+      configurable: true,
+      value: new MemoryStorage(),
+    },
+    sessionStorage: {
+      configurable: true,
+      value: new MemoryStorage(),
+    },
+    __agoraStorybookStorageShimmed: {
+      configurable: true,
+      value: true,
+    },
+  });
+}

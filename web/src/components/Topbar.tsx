@@ -64,7 +64,7 @@ export function Topbar() {
       me?.display_name || me?.username || "");
     if (next === null) return;
     try {
-      const updated = await api.patch<Me>("/api/me", { display_name: next.trim() });
+      const updated = await api.patch<Partial<Me>>("/api/me", { display_name: next.trim() });
       qc.setQueryData<Me>(keys.me, prev => prev ? { ...prev, ...updated } : undefined);
       toast("Display name updated", { variant: "ok" });
     } catch (e) {

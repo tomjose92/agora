@@ -48,6 +48,7 @@ export const AdminKey: Story = {
     docs: { description: { story: "The expected key-only sign-in screen when Google authentication is unavailable." } },
   },
   play: async ({ canvasElement }) => {
+    signedIn.mockClear();
     const canvas = within(canvasElement);
     const input = await canvas.findByLabelText("Admin key");
     await userEvent.type(input, "storybook-token{Enter}");
@@ -61,6 +62,7 @@ export const GoogleFirst: Story = {
     docs: { description: { story: "Google is the primary sign-in method; the admin-key form remains available behind “Sign in as admin”." } },
   },
   play: async ({ canvasElement }) => {
+    signedIn.mockClear();
     const canvas = within(canvasElement);
     await expect(canvas.findByRole("button", { name: "Continue with Google" })).resolves.toBeVisible();
     expect(canvas.queryByLabelText("Admin key")).not.toBeInTheDocument();

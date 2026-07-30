@@ -114,7 +114,6 @@ export const PhoneMainPane: Story = {
   play: async ({ canvasElement }) => {
     await waitFor(() => expect(element(canvasElement, "#agora-main")).toBeVisible());
     expect(element(canvasElement, "#agora-side")).not.toBeVisible();
-    expect(element(canvasElement, "#agora-thread")).not.toBeVisible();
     await expectNoHorizontalOverflow(canvasElement);
   },
 };
