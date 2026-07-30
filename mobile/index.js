@@ -11,6 +11,11 @@
    bundles as dead code. */
 
 if (process.env.EXPO_PUBLIC_STORYBOOK_ENABLED === "true") {
+  if (!__DEV__) {
+    throw new Error(
+      "Storybook entry in a release bundle — unset EXPO_PUBLIC_STORYBOOK_ENABLED for production builds.",
+    );
+  }
   const { registerRootComponent } = require("expo");
   // storybook.requires exports `view`; index.tsx default-exports the UI root.
   // The disabled-path stub uses module.exports, hence the fallback.

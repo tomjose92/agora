@@ -65,6 +65,7 @@ export const DraftWithMention: Story = {
 
 export const SendAddressedMessage: Story = {
   play: async ({ canvasElement }) => {
+    sendMessage.mockClear();
     const canvas = within(canvasElement);
     await userEvent.click(await canvas.findByTitle("Choose which agents you're talking to"));
     await userEvent.click(await canvas.findByText("Codex"));

@@ -16,6 +16,7 @@ const projectRoot = __dirname;
 const repoRoot = path.resolve(projectRoot, "..");
 
 const config = getDefaultConfig(projectRoot);
+// __DEV__ is a bundle global, not available while this Node config evaluates.
 const storybookEnabled = process.env.EXPO_PUBLIC_STORYBOOK_ENABLED === "true";
 
 config.watchFolders = [path.resolve(repoRoot, "packages/core")];

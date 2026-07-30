@@ -1,13 +1,5 @@
 const storybookEnabled = process.env.EXPO_PUBLIC_STORYBOOK_ENABLED === "true";
-
-const storybookOnly = [
-  "@react-native-async-storage/async-storage",
-  "@react-native-community/datetimepicker",
-  "@react-native-community/slider",
-  "react-native-gesture-handler",
-  "react-native-reanimated",
-  "react-native-worklets",
-];
+const storybookOnly = require("./storybook-native-dependencies");
 
 module.exports = {
   dependencies: storybookEnabled

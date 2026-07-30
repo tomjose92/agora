@@ -1,12 +1,5 @@
 const STORYBOOK_ENV = "EXPO_PUBLIC_STORYBOOK_ENABLED";
-const STORYBOOK_ONLY = [
-  "@react-native-async-storage/async-storage",
-  "@react-native-community/datetimepicker",
-  "@react-native-community/slider",
-  "react-native-gesture-handler",
-  "react-native-reanimated",
-  "react-native-worklets",
-];
+const STORYBOOK_ONLY = require("../storybook-native-dependencies") as string[];
 
 function loadConfig(enabled?: string) {
   jest.resetModules();

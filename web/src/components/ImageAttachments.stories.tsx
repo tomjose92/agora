@@ -69,10 +69,14 @@ function ImageMessage({ message }: { message: Message }) {
   );
 }
 
-async function validateGallery(canvasElement: HTMLElement): Promise<void> {
+async function validateGallery(
+  canvasElement: HTMLElement,
+  expectedCount: number,
+): Promise<void> {
   const gallery = canvasElement.querySelector<HTMLElement>(".ago-atts");
   if (!gallery) throw new Error("Missing image attachment gallery");
   const imageElements = [...gallery.querySelectorAll<HTMLImageElement>(".ago-att-img img")];
+  expect(imageElements).toHaveLength(expectedCount);
   await waitFor(() => {
     expect(imageElements.every((image) => image.complete && image.naturalWidth > 0)).toBe(true);
   });
@@ -102,7 +106,6 @@ const meta = {
       },
     },
   },
-  play: async ({ canvasElement }) => validateGallery(canvasElement),
 } satisfies Meta<typeof ImageMessage>;
 
 export default meta;
@@ -110,20 +113,23 @@ type Story = StoryObj<typeof meta>;
 
 export const OneLargeImage: Story = {
   args: { message: messageWith([images.large]) },
+  play: async ({ canvasElement }) => validateGallery(canvasElement, 1),
 };
 
 export const SmallImage: Story = {
   args: { message: messageWith([images.small]) },
+  play: async ({ canvasElement }) => validateGallery(canvasElement, 1),
 };
 
 export const MixedSizes: Story = {
   args: { message: messageWith([images.large, images.small, images.portrait]) },
+  play: async ({ canvasElement }) => validateGallery(canvasElement, 3),
 };
 
 export const FourMixedImages: Story = {
   args: { message: messageWith([images.large, images.small, images.portrait, images.wide]) },
   play: async ({ canvasElement }) => {
-    await validateGallery(canvasElement);
+    await validateGallery(canvasElement, 4);
     const canvas = within(canvasElement);
     expect(canvas.getAllByRole("button", { name: /^Preview / })).toHaveLength(4);
   },
@@ -132,7 +138,7 @@ export const FourMixedImages: Story = {
 export const ImageWithFileChip: Story = {
   args: { message: messageWith([images.large, logFile]) },
   play: async ({ canvasElement }) => {
-    await validateGallery(canvasElement);
+    await validateGallery(canvasElement, 1);
     const canvas = within(canvasElement);
     expect(canvas.getAllByRole("button", { name: /^Preview / })).toHaveLength(1);
     expect(canvas.getByTitle("Download release-validation.log")).toBeVisible();
