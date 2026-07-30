@@ -2664,7 +2664,23 @@ impl Store {
     }
 
     pub fn agent(&self, id: &str) -> Option<Value> {
-        self.known_agents().into_iter().find(|a| a["id"] == id)
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, name, source, requires_mention, last_seen, has_avatar, avatar_v \
+             FROM agents WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok(json!({
+                    "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?,
+                    "source": r.get::<_, String>(2)?,
+                    "requires_mention": r.get::<_, i64>(3)? != 0,
+                    "last_seen": r.get::<_, f64>(4)?,
+                    "has_avatar": r.get::<_, i64>(5)? != 0,
+                    "avatar_v": r.get::<_, i64>(6)?,
+                }))
+            },
+        )
+        .ok()
     }
 
     pub fn remove_agent(&self, id: &str) -> bool {
@@ -2922,6 +2938,18 @@ mod tests {
         assert!(!s.agent_in_channel("missing", c1id));
         assert!(s.user_in_group("tom", gid));
         assert!(!s.user_in_group("alice", gid));
+
+        // Membership never crosses groups: a group-wide row in Ops grants
+        // nothing in another group, and a row whose channel_id points at a
+        // channel of a *different* group must not match either.
+        let g2 = s.create_group("Eng", "", Some("tom"));
+        let g2id = g2["id"].as_str().unwrap();
+        let c3 = s.create_channel(g2id, "gamma", "");
+        let c3id = c3["id"].as_str().unwrap();
+        assert!(!s.agent_in_channel("bot-a", c3id));
+        s.add_member(g2id, "agent", "bot-c", "member", Some(c1id));
+        assert!(!s.agent_in_channel("bot-c", c1id));
+        assert!(!s.agent_in_channel("bot-c", c3id));
     }
 
     #[test]

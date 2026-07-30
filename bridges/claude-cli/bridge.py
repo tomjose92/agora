@@ -15,7 +15,7 @@ Protocol (see docs/PROTOCOL.md, "Third-party agents"):
   -> {"type": "typing" | "progress", ...}   (optional niceties)
   -> {"type": "post", ..., "options_id", "options"}   (permission buttons)
   <- {"type": "option_select", "options_id", "option_id", "user", ...}
-  -> {"type": "options_resolve", "options_id", "text"}
+  -> {"type": "options_resolve", "channel_id", "options_id", "text"}
 
 Tool permissions: runs use `--permission-prompt-tool stdio`, so when the CLI
 needs approval it emits a `control_request` (subtype `can_use_tool`) on stdout;
