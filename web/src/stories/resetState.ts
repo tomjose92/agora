@@ -22,7 +22,7 @@ const STORAGE_KEYS = [
 ];
 
 /* The preview's own URL, captured before any story play rewrites history.
-   Resetting to "/" would strip the deployment base (/storybook/, GH Pages)
+   Resetting to "/" would strip a GitHub Pages project base such as /agora/
    that the fixture-file shim and Storybook itself derive from the URL. */
 const HOME = new URL(".", window.location.href).pathname;
 
