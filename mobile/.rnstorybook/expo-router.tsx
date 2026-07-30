@@ -1,4 +1,5 @@
 import React, { useEffect, type ReactNode } from "react";
+import { Text } from "react-native";
 
 export const router = {
   push: () => {},
@@ -7,11 +8,13 @@ export const router = {
 };
 
 export function useLocalSearchParams<T>(): T {
-  return {
+  return ((globalThis as typeof globalThis & {
+    __AGORA_STORY_PARAMS__?: Record<string, string>;
+  }).__AGORA_STORY_PARAMS__ ?? {
     id: "general",
     name: "storybook",
     groupId: "product",
-  } as T;
+  }) as T;
 }
 
 export function useFocusEffect(effect: () => void | (() => void)): void {
@@ -28,3 +31,7 @@ export const Stack = Object.assign(
   },
   { Screen },
 );
+
+export function Link({ children }: { children?: ReactNode }) {
+  return <Text>{children}</Text>;
+}

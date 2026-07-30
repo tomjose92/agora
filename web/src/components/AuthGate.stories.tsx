@@ -1,0 +1,71 @@
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, fn, userEvent, within } from "storybook/test";
+import { AuthGate } from "./AuthGate";
+
+type AuthMode = "admin" | "google" | "invalid";
+const signedIn = fn();
+
+function AuthSurface({ mode }: { mode: AuthMode }) {
+  const original = useRef(window.fetch);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const fetchMock = useRef(fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === "/api/auth/config") {
+      return new Response(JSON.stringify({
+        google: { enabled: modeRef.current === "google" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (path === "/api/me") {
+      return new Response(modeRef.current === "invalid" ? "unauthorized" : "{}", {
+        status: modeRef.current === "invalid" ? 401 : 200,
+      });
+    }
+    throw new Error(`Unexpected AuthGate fetch: ${path}`);
+  })).current;
+  window.fetch = fetchMock;
+  useEffect(() => () => {
+    if (window.fetch === fetchMock) window.fetch = original.current;
+  }, [fetchMock]);
+  return <AuthGate onSignedIn={signedIn} />;
+}
+
+const meta = {
+  title: "Web/Auth/Auth gate",
+  component: AuthSurface,
+  args: { mode: "admin" },
+  parameters: { layout: "fullscreen" },
+} satisfies Meta<typeof AuthSurface>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const AdminKey: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const input = await canvas.findByLabelText("Admin key");
+    await userEvent.type(input, "storybook-token{Enter}");
+    await expect(signedIn).toHaveBeenCalled();
+  },
+};
+
+export const GoogleFirst: Story = {
+  args: { mode: "google" },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByRole("button", { name: "Continue with Google" })).resolves.toBeVisible();
+    expect(canvas.queryByLabelText("Admin key")).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("button", { name: "Sign in as admin" }));
+    await expect(canvas.findByLabelText("Admin key")).resolves.toBeVisible();
+  },
+};
+
+export const InvalidAdminKey: Story = {
+  args: { mode: "invalid" },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.type(await canvas.findByLabelText("Admin key"), "wrong{Enter}");
+    await expect(signedIn).not.toHaveBeenCalled();
+  },
+};
+import { useEffect, useRef } from "react";

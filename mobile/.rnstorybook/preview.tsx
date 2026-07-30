@@ -69,6 +69,9 @@ function Providers({ routes, children }: { routes?: FixtureRoutes; children: Rea
 
 const preview: Preview = {
   beforeEach: (context) => {
+    delete (globalThis as typeof globalThis & {
+      __AGORA_STORY_PARAMS__?: Record<string, string>;
+    }).__AGORA_STORY_PARAMS__;
     useLive.setState({ typing: {}, progress: {} });
     useTldrView.setState({ showing: {} });
     useAddressed.setState({ byConvo: {} });
