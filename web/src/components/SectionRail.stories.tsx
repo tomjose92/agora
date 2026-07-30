@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import {
   fixtureAgentMessage,
   fixtureAgents,
@@ -10,7 +10,6 @@ import {
 import { SectionRail } from "./SectionRail";
 import { MessageItem } from "./MessageItem";
 
-const scrollTo = fn();
 const messages = [
   fixtureRootMessage,
   fixtureAgentMessage,
@@ -22,12 +21,17 @@ const messages = [
 
 function RailSurface() {
   const boxRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (boxRef.current) boxRef.current.scrollTo = scrollTo;
-  }, []);
   return (
-    <div className="ago-log-wrap" style={{ width: "min(720px, 100%)", height: 520 }}>
-      <div ref={boxRef} className="ago-log" style={{ overflow: "auto", position: "relative" }}>
+    <div
+      className="ago-log-wrap"
+      style={{
+        width: "min(720px, 100%)",
+        height: "min(520px, calc(100vh - 40px))",
+        flex: "0 0 auto",
+        overflow: "hidden",
+      }}
+    >
+      <div ref={boxRef} className="ago-log" style={{ height: "100%", minHeight: 0 }}>
         {messages.map((message) => (
           <MessageItem
             key={message.id}
@@ -73,7 +77,13 @@ export const MultipleSections: Story = {
     });
     const dots = within(navigation).getAllByRole("button");
     expect(dots).toHaveLength(3);
+    const log = canvasElement.querySelector<HTMLElement>(".ago-log");
+    if (!log) throw new Error("Missing scrollable message log");
+    expect(log.scrollHeight).toBeGreaterThan(log.clientHeight);
     await userEvent.click(dots[2]);
-    await expect(scrollTo).toHaveBeenCalled();
+    await waitFor(() => expect(log.scrollTop).toBeGreaterThan(0));
+    const lowerPosition = log.scrollTop;
+    await userEvent.click(dots[0]);
+    await waitFor(() => expect(log.scrollTop).toBeLessThan(lowerPosition));
   },
 };

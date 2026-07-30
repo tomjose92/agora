@@ -1035,11 +1035,18 @@ a.btn { text-decoration: none; }
 .ago-pending-chip .ago-x { opacity: 1; }
 .ago-atts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .ago-att-img {
-  display: block; padding: 0; border: 0; background: none; cursor: zoom-in;
+  display: block; min-width: 0; padding: 0; border: 0; background: none; cursor: zoom-in;
 }
 .ago-att-img img {
   display: block; max-width: min(340px, 100%); max-height: 260px;
   border-radius: 10px; border: 1px solid var(--border);
+}
+.ago-att-img:not(:only-child) {
+  flex: 1 1 calc(50% - 4px);
+  max-width: calc(50% - 4px);
+}
+.ago-att-img:not(:only-child) img {
+  width: 100%; height: clamp(110px, 22vw, 190px); object-fit: cover;
 }
 .ago-image-lightbox {
   position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center;
