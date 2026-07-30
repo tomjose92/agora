@@ -1,29 +1,11 @@
-import type { MapArtifactData, Me, Message } from "@agora/core";
+import type { MapArtifactData } from "@agora/core";
+import {
+  fixtureAgentMessage,
+  fixtureMe,
+} from "../../../../packages/core/testing/fixtures";
 
-export const me: Me = {
-  username: "tom",
-  display_name: "Tom",
-  version: "storybook",
-  instance_admin: true,
-  voice: true,
-  search_ai: true,
-};
-
-export const message: Message = {
-  id: 42,
-  channel_id: "general",
-  thread_id: null,
-  author_type: "agent",
-  author_id: "codex",
-  author_name: "Codex",
-  text: "The component catalog is ready for inspection.",
-  ts: 1_750_000_000,
-  attachments: [],
-  reactions: [
-    { emoji: "👍", users: ["tom", "alice"] },
-    { emoji: "🎉", users: ["alice"] },
-  ],
-};
+export const me = { ...fixtureMe, voice: true };
+export const message = { ...fixtureAgentMessage, id: 42 };
 
 export const mapArtifact: MapArtifactData = {
   initial_view: { mode: "fit" },

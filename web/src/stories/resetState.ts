@@ -1,4 +1,4 @@
-import { useAttachmentDrafts, useTldrView } from "@agora/core";
+import { useAttachmentDrafts, useLive, useTldrView } from "@agora/core";
 import { useAddressing, useDrafts } from "../components/Composer";
 import { useEmojiPicker } from "../components/EmojiPicker";
 import { useAgentProfile, useSourcesView } from "../components/MessageItem";
@@ -37,6 +37,7 @@ export function resetStoryState(): void {
   useDrafts.setState({ drafts: {} });
   useAddressing.setState({ addr: {} });
   useAttachmentDrafts.getState().reset();
+  useLive.setState({ typing: {}, progress: {} });
   useTldrView.setState({ showing: {} });
   useEmojiPicker.getState().close();
   useSourcesView.getState().close();

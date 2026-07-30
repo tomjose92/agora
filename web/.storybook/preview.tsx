@@ -26,8 +26,10 @@ function StoryProviders({ routes, children }: {
 }
 
 const preview: Preview = {
-  beforeEach: () => {
+  beforeEach: (context) => {
     resetStoryState();
+    const setup = context.parameters.setup;
+    if (typeof setup === "function") setup();
   },
   decorators: [
     (Story, context) => {
