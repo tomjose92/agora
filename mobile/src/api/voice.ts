@@ -17,6 +17,7 @@ export interface LocalFile {
   uri: string;
   name: string;
   type: string;
+  size?: number;
 }
 
 export function toOutgoing(f: LocalFile): { part: Blob; name: string } {

@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   DROP_HEAP_MAX_BYTES, DroppedFileError, dropMaterializationLimit,
-  materializeDroppedFile, useAgents, useAttachmentDrafts, useMe, useSendMessage,
+  draftAttachmentPreviewUrl, materializeDroppedFile, useAgents, useAttachmentDrafts, useMe, useSendMessage,
   type ChannelAgent, type DraftAttachment, type OutgoingFile,
 } from "@agora/core";
 import { create } from "zustand";
@@ -15,6 +15,8 @@ import { humanSize, withToken } from "../lib/files";
 import { slugify } from "../lib/mentions";
 import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
+import { ImageLightbox } from "./ImageLightbox";
+import { BROWSER_IMAGE } from "../lib/files";
 
 const MAX_FILES = 5;
 const ATTACHMENT_UPLOAD_TIMEOUT_MS = 120_000;
@@ -101,6 +103,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const attachments = useAttachmentDrafts(s => s.byDraft[draftKey] ?? NO_ATTACHMENTS);
   const [mention, setMention] = useState<{ items: MentionCandidate[]; active: number; start: number } | null>(null);
   const [addrOpen, setAddrOpen] = useState(false);
+  const [preview, setPreview] = useState<{ url: string; filename: string } | null>(null);
   const addrSel = useAddressing(s => s.addr[draftKey] ?? NO_ADDR);
   const addrToggle = useAddressing(s => s.toggle);
   const addrClear = useAddressing(s => s.clear);
@@ -351,10 +354,27 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       )}
       {attachments.length > 0 && (
         <div className="ago-pending">
-          {attachments.map(entry => (
-            <span key={entry.id} className="ago-pending-chip" title={entry.name}>
-              <Icon name={(entry.type || "").startsWith("image/") ? "image" : "file-text"} />
-              <span className="fname">
+          {attachments.map(entry => {
+            const image = BROWSER_IMAGE.test(entry.type || "");
+            const url = image ? draftAttachmentPreviewUrl(entry) : null;
+            return (
+            <span key={entry.id} className={`ago-pending-chip ${image ? "image" : "file"}`} title={entry.name}>
+              {url ? (
+                <button
+                  type="button"
+                  className="ago-pending-thumb"
+                  aria-label={`Preview ${entry.name}`}
+                  onClick={() => setPreview({ url, filename: entry.name })}
+                >
+                  <img src={url} alt="" />
+                </button>
+              ) : (
+                <span className={`ago-pending-file-icon ${entry.status === "preparing" ? "preparing" : ""}`}>
+                  <Icon name={image ? "image" : "file-text"} />
+                </span>
+              )}
+              <span className="ago-pending-meta">
+                <span className="fname">
                 {entry.status === "preparing"
                   ? `Preparing ${entry.name}…`
                   : entry.status === "sending"
@@ -362,8 +382,9 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
                   : entry.status === "failed"
                     ? entry.error || `Could not read ${entry.name}`
                     : entry.name}
+                </span>
+                {entry.status === "ready" && <span className="fsize">{humanSize(entry.size)}</span>}
               </span>
-              {entry.status === "ready" && <span className="fsize">{humanSize(entry.size)}</span>}
               <button className="ago-x"
                 title={entry.status === "sending"
                   ? "Cancel upload"
@@ -374,9 +395,10 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
                 <Icon name="x" />
               </button>
             </span>
-          ))}
+          )})}
         </div>
       )}
+      {preview && <ImageLightbox {...preview} onClose={() => setPreview(null)} />}
       <div className="chat-input"
         onDragOver={e => e.preventDefault()}
         onDrop={e => {

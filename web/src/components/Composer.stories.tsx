@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { Composer } from "./Composer";
 import { me, message } from "../stories/fixtures/data";
+import { useAttachmentDrafts } from "@agora/core";
 
 const agents = [
   { id: "codex", name: "Codex" },
@@ -53,6 +54,61 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Empty: Story = {};
+
+const previewSvg = new File([
+  '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320">'
+  + '<rect width="480" height="320" fill="#312e81"/>'
+  + '<circle cx="150" cy="145" r="70" fill="#8b7cff"/>'
+  + '<text x="250" y="175" fill="white" font-size="28">Composer preview</text>'
+  + "</svg>",
+], "release-dashboard.svg", { type: "image/svg+xml" });
+
+function stage(files: File[], status: "ready" | "preparing" = "ready") {
+  useAttachmentDrafts.getState().stage("c:general", files, status, 5);
+}
+
+export const ImageAndDocuments: Story = {
+  parameters: {
+    setup: () => stage([
+      previewSvg,
+      new File(["%PDF"], "release-plan.pdf", { type: "application/pdf" }),
+      new File(["review"], `${"responsive-attachment-review-".repeat(3)}.docx`, {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    ]),
+  },
+};
+
+export const ImagePreview: Story = {
+  parameters: { setup: () => stage([previewSvg]) },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button", { name: "Preview release-dashboard.svg" }));
+    const body = within(document.body);
+    await expect(body.findByRole("dialog", {
+      name: "Image preview: release-dashboard.svg",
+    })).resolves.toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect(body.queryByRole("dialog", {
+      name: "Image preview: release-dashboard.svg",
+    })).not.toBeInTheDocument();
+  },
+};
+
+export const PreparingAndFailed: Story = {
+  parameters: {
+    setup: () => {
+      stage([new File(["pending"], "dragged-screenshot.png", { type: "image/png" })], "preparing");
+      const failed = useAttachmentDrafts.getState().stage(
+        "c:general",
+        [new File(["broken"], "unreadable.pdf", { type: "application/pdf" })],
+        "preparing",
+        5,
+      ).accepted[0];
+      useAttachmentDrafts.getState().fail("c:general", failed.id, "Could not read unreadable.pdf");
+    },
+  },
+};
 
 export const DraftWithMention: Story = {
   play: async ({ canvasElement }) => {

@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { useAttachmentDrafts } from "../src";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { draftAttachmentPreviewUrl, useAttachmentDrafts } from "../src";
 
 const file = (name: string) => new File([name], name, { type: "text/plain" });
 
-afterEach(() => useAttachmentDrafts.getState().reset());
+afterEach(() => {
+  useAttachmentDrafts.getState().reset();
+  vi.restoreAllMocks();
+});
 
 describe("attachment drafts", () => {
   it("reserves pending slots synchronously across concurrent staging", () => {
@@ -103,5 +106,33 @@ describe("attachment drafts", () => {
 
     store.sendFailed("c:a", [entry.id]);
     expect(useAttachmentDrafts.getState().byDraft["c:a"][0].status).toBe("ready");
+  });
+
+  it("keeps preview URLs until the owning draft removes them", () => {
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("image")], "ready", 5).accepted;
+
+    expect(draftAttachmentPreviewUrl(entry)).toBe("blob:preview");
+    expect(draftAttachmentPreviewUrl(entry)).toBe("blob:preview");
+    expect(create).toHaveBeenCalledTimes(1);
+
+    store.remove("c:a", entry.id);
+    expect(revoke).toHaveBeenCalledWith("blob:preview");
+  });
+
+  it("does not create previews before a dropped file is ready", () => {
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:ready");
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("placeholder")], "preparing", 5).accepted;
+
+    expect(draftAttachmentPreviewUrl(entry)).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+
+    const readyFile = file("ready");
+    expect(store.complete("c:a", entry.id, readyFile)).toBe(true);
+    const ready = useAttachmentDrafts.getState().byDraft["c:a"][0];
+    expect(draftAttachmentPreviewUrl(ready)).toBe("blob:ready");
   });
 });
