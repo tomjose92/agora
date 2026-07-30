@@ -16,7 +16,7 @@ WORKDIR /src
 COPY package.json package-lock.json ./
 COPY packages ./packages
 COPY web ./web
-RUN npm ci --no-audit --no-fund && npm run build:with-storybook -w web
+RUN npm ci --no-audit --no-fund && npm run build -w web
 
 FROM debian:bookworm-slim
 RUN apt-get update \
