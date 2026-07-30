@@ -49,6 +49,10 @@ npm run storybook               # native component catalog (simulator/device, NO
 npm run storybook:ios           # open native Storybook on iOS
 npm run storybook:android       # open native Storybook on Android
 npm run storybook-generate      # refresh .rnstorybook/storybook.requires.ts after adding stories
+# Before the first native Storybook run (and after native dependency changes),
+# compile its dev client with the same flag so Storybook-only modules are linked:
+EXPO_PUBLIC_STORYBOOK_ENABLED=true npx expo run:ios
+EXPO_PUBLIC_STORYBOOK_ENABLED=true npx expo run:android
 
 # desktop dev build
 cd crates/agora-desktop && npx @tauri-apps/cli@latest dev
