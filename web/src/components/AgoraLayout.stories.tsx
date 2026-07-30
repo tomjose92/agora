@@ -39,11 +39,17 @@ const meta = {
   parameters: {
     layout: "fullscreen",
     apiRoutes: routes,
-    setup: () => useUiState.setState({
-      sel: { g: "product", c: "general" },
-      view: { kind: "channel" },
-      mobileView: "main",
-    }),
+    // AgoraLayout resolves window.location against the seeded selection, and
+    // a prior story's replaceState survives in the shared test page — pin the
+    // URL to the state each story seeds or the resolver "corrects" it.
+    setup: () => {
+      history.replaceState(null, "", "/g/product/c/general");
+      useUiState.setState({
+        sel: { g: "product", c: "general" },
+        view: { kind: "channel" },
+        mobileView: "main",
+      });
+    },
   },
   globals: { viewport: { value: "desktop", isRotated: false } },
 } satisfies Meta<typeof AgoraLayout>;
@@ -65,12 +71,15 @@ export const ChannelAndGlobalOverlays: Story = {
 export const ThreadOpen: Story = {
   parameters: {
     apiRoutes: routes,
-    setup: () => useUiState.setState({
-      sel: { g: "product", c: "general" },
-      view: { kind: "channel" },
-      mobileView: "thread",
-      threadRoot: 42,
-    }),
+    setup: () => {
+      history.replaceState(null, "", "/g/product/c/general/t/42");
+      useUiState.setState({
+        sel: { g: "product", c: "general" },
+        view: { kind: "channel" },
+        mobileView: "thread",
+        threadRoot: 42,
+      });
+    },
   },
   play: async ({ canvasElement }) => {
     await expect(within(canvasElement).findByText("The 820px phone boundary is covered.")).resolves.toBeVisible();

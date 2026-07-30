@@ -10,6 +10,7 @@ import { useLiveVoice } from "../state/liveVoice";
 import { useSpeak } from "../state/speak";
 
 const STORAGE_KEYS = [
+  "agora_token",
   "agora_sel",
   "agora_open",
   "agora_unreads_only",
