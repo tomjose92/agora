@@ -80,9 +80,20 @@ export const MultipleSections: Story = {
     const log = canvasElement.querySelector<HTMLElement>(".ago-log");
     if (!log) throw new Error("Missing scrollable message log");
     expect(log.scrollHeight).toBeGreaterThan(log.clientHeight);
+    // The dots smooth-scroll; wait for the animation to settle before
+    // capturing a reference position, or the second click races it.
+    const settled = async () => {
+      let last = -1;
+      await waitFor(() => {
+        const now = log.scrollTop;
+        const stable = now === last && now > 0;
+        last = now;
+        expect(stable).toBe(true);
+      }, { interval: 120, timeout: 5000 });
+      return log.scrollTop;
+    };
     await userEvent.click(dots[2]);
-    await waitFor(() => expect(log.scrollTop).toBeGreaterThan(0));
-    const lowerPosition = log.scrollTop;
+    const lowerPosition = await settled();
     await userEvent.click(dots[0]);
     await waitFor(() => expect(log.scrollTop).toBeLessThan(lowerPosition));
   },
