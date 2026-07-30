@@ -530,7 +530,7 @@ class Bridge:
         first = True
         while text:
             chunk, text = text[:MAX_POST_CHARS], text[MAX_POST_CHARS:]
-            frame = {**base, "text": chunk}
+            frame = {**base, "request_id": f"post-{time.time_ns()}", "text": chunk}
             # A tldr summarizes the whole reply, so it rides only the first
             # chunk (the hub also requires it be strictly shorter than that
             # chunk's text — trivially true for a one-sentence summary).
@@ -1410,8 +1410,15 @@ class Bridge:
                     continue
                 if frame.get("agent_id") != self.agent_id:
                     continue
-                if frame.get("type") == "inbound":
+                kind = frame.get("type")
+                if kind == "inbound":
                     asyncio.create_task(self.handle_inbound(frame))
+                elif kind == "error":
+                    log(
+                        f"{frame.get('frame_type', 'frame')} rejected"
+                        f" [{frame.get('request_id') or 'uncorrelated'}]:"
+                        f" {frame.get('error', 'unknown error')}"
+                    )
         finally:
             send_task.cancel()
 

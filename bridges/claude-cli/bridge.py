@@ -15,7 +15,7 @@ Protocol (see docs/PROTOCOL.md, "Third-party agents"):
   -> {"type": "typing" | "progress", ...}   (optional niceties)
   -> {"type": "post", ..., "options_id", "options"}   (permission buttons)
   <- {"type": "option_select", "options_id", "option_id", "user", ...}
-  -> {"type": "options_resolve", "options_id", "text"}
+  -> {"type": "options_resolve", "channel_id", "options_id", "text"}
 
 Tool permissions: runs use `--permission-prompt-tool stdio`, so when the CLI
 needs approval it emits a `control_request` (subtype `can_use_tool`) on stdout;
@@ -515,7 +515,7 @@ class Bridge:
         first = True
         while text:
             chunk, text = text[:MAX_POST_CHARS], text[MAX_POST_CHARS:]
-            frame = {**base, "text": chunk}
+            frame = {**base, "request_id": f"post-{time.time_ns()}", "text": chunk}
             # A tldr summarizes the whole reply, so it rides only the first
             # chunk (the hub also requires it be strictly shorter than that
             # chunk's text — trivially true for a one-sentence summary).
@@ -1477,6 +1477,7 @@ class Bridge:
         perm_ids.append(options_id)
         self.send({
             "type": "post", "agent_id": self.agent_id,
+            "request_id": f"post-{options_id}",
             "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
             "text": self._perm_prompt_text(tool, tool_input, req.get("description")),
             "options_id": options_id,
@@ -1544,6 +1545,7 @@ class Bridge:
             self.pending_questions.setdefault(key, []).append(entry)
             self.send({
                 "type": "post", "agent_id": self.agent_id,
+                "request_id": f"post-{options_id}",
                 "channel_id": frame["channel_id"], "thread_id": frame.get("thread_id"),
                 "text": self._question_text(q, i, len(questions)),
                 "options_id": options_id,
@@ -1713,6 +1715,12 @@ class Bridge:
                     asyncio.create_task(self.handle_inbound(frame))
                 elif kind == "option_select":
                     self.handle_option_select(frame)
+                elif kind == "error":
+                    log(
+                        f"{frame.get('frame_type', 'frame')} rejected"
+                        f" [{frame.get('request_id') or 'uncorrelated'}]:"
+                        f" {frame.get('error', 'unknown error')}"
+                    )
         finally:
             send_task.cancel()
 

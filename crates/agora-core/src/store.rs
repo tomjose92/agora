@@ -1169,6 +1169,20 @@ impl Store {
             .collect()
     }
 
+    /// Whether one agent is a member of a channel, either through a
+    /// group-wide membership or a row scoped to that exact channel.
+    pub fn agent_in_channel(&self, agent_id: &str, channel_id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM channels c JOIN memberships m ON m.group_id = c.group_id \
+             WHERE c.id = ?1 AND m.member_type = 'agent' AND m.member_id = ?2 \
+             AND (m.channel_id = '' OR m.channel_id = c.id) LIMIT 1",
+            params![channel_id, agent_id],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
     // ------------------------------------------------------- users / invites
 
     pub fn create_user(
@@ -1724,18 +1738,25 @@ impl Store {
         deleted
     }
 
-    /// Find a message whose meta.options_id matches (for agent-side resolve).
-    pub fn find_message_by_options_id(&self, options_id: &str) -> Option<i64> {
-        if options_id.is_empty() {
+    /// Find an agent's own message in one channel whose meta.options_id
+    /// matches. Both channel and author scopes are authorization boundaries.
+    pub fn find_message_by_options_id(
+        &self,
+        channel_id: &str,
+        agent_id: &str,
+        options_id: &str,
+    ) -> Option<i64> {
+        if channel_id.is_empty() || agent_id.is_empty() || options_id.is_empty() {
             return None;
         }
         let conn = self.conn.lock().unwrap();
         // SQLite json1: meta is a JSON text column.
         conn.query_row(
             "SELECT id FROM messages WHERE meta IS NOT NULL \
-             AND json_extract(meta, '$.options_id') = ?1 \
+             AND channel_id = ?1 AND author_type = 'agent' AND author_id = ?2 \
+             AND json_extract(meta, '$.options_id') = ?3 \
              ORDER BY id DESC LIMIT 1",
-            params![options_id],
+            params![channel_id, agent_id, options_id],
             |r| r.get(0),
         )
         .ok()
@@ -2643,7 +2664,23 @@ impl Store {
     }
 
     pub fn agent(&self, id: &str) -> Option<Value> {
-        self.known_agents().into_iter().find(|a| a["id"] == id)
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, name, source, requires_mention, last_seen, has_avatar, avatar_v \
+             FROM agents WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok(json!({
+                    "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?,
+                    "source": r.get::<_, String>(2)?,
+                    "requires_mention": r.get::<_, i64>(3)? != 0,
+                    "last_seen": r.get::<_, f64>(4)?,
+                    "has_avatar": r.get::<_, i64>(5)? != 0,
+                    "avatar_v": r.get::<_, i64>(6)?,
+                }))
+            },
+        )
+        .ok()
     }
 
     pub fn remove_agent(&self, id: &str) -> bool {
@@ -2894,8 +2931,25 @@ mod tests {
         s.add_member(gid, "agent", "bot-b", "member", Some(c1id)); // one channel
         assert_eq!(s.agents_for_channel(c1id).len(), 2);
         assert_eq!(s.agents_for_channel(c2id), vec!["bot-a".to_string()]);
+        assert!(s.agent_in_channel("bot-a", c1id));
+        assert!(s.agent_in_channel("bot-a", c2id));
+        assert!(s.agent_in_channel("bot-b", c1id));
+        assert!(!s.agent_in_channel("bot-b", c2id));
+        assert!(!s.agent_in_channel("missing", c1id));
         assert!(s.user_in_group("tom", gid));
         assert!(!s.user_in_group("alice", gid));
+
+        // Membership never crosses groups: a group-wide row in Ops grants
+        // nothing in another group, and a row whose channel_id points at a
+        // channel of a *different* group must not match either.
+        let g2 = s.create_group("Eng", "", Some("tom"));
+        let g2id = g2["id"].as_str().unwrap();
+        let c3 = s.create_channel(g2id, "gamma", "");
+        let c3id = c3["id"].as_str().unwrap();
+        assert!(!s.agent_in_channel("bot-a", c3id));
+        s.add_member(g2id, "agent", "bot-c", "member", Some(c1id));
+        assert!(!s.agent_in_channel("bot-c", c1id));
+        assert!(!s.agent_in_channel("bot-c", c3id));
     }
 
     #[test]
