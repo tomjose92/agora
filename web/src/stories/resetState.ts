@@ -5,6 +5,9 @@ import { useAgentProfile, useSourcesView } from "../components/MessageItem";
 import { useConfirm } from "../state/confirm";
 import { useJump } from "../state/jump";
 import { useUiState } from "../state/ui";
+import { useVoiceRec } from "../state/voiceRec";
+import { useLiveVoice } from "../state/liveVoice";
+import { useSpeak } from "../state/speak";
 
 const STORAGE_KEYS = [
   "agora_sel",
@@ -42,4 +45,7 @@ export function resetStoryState(): void {
   useEmojiPicker.getState().close();
   useSourcesView.getState().close();
   useAgentProfile.getState().close();
+  useVoiceRec.setState({ recordingKey: null, startedAt: 0, busyKey: null });
+  useLiveVoice.setState({ scope: null, state: "listening" });
+  useSpeak.setState({ on: false });
 }
