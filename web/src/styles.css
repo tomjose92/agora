@@ -1224,7 +1224,7 @@ a.btn { text-decoration: none; }
   display: flex; align-items: center; justify-content: center; z-index: 55; padding: 30px;
 }
 .conn-panel {
-  width: min(640px, 100%); max-height: 82vh; display: flex; flex-direction: column;
+  width: min(720px, 100%); max-height: 86vh; display: flex; flex-direction: column;
   background: #0d1018; border: 1px solid var(--border-strong); border-radius: 20px;
   box-shadow: 0 30px 80px rgba(0,0,0,.6); animation: rise .2s ease;
 }
@@ -1232,7 +1232,7 @@ a.btn { text-decoration: none; }
   display: flex; align-items: center; justify-content: space-between;
   padding: 16px 20px; border-bottom: 1px solid var(--border); font-size: 14px;
 }
-.conn-body { padding: 14px 20px 20px; overflow-y: auto; }
+.conn-body { padding: 16px 22px 24px; overflow-y: auto; }
 .conn-body h4 { margin: 14px 0 8px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
 .conn-body > h4:first-child { margin-top: 2px; }
 .conn-body h4 .dim { text-transform: none; letter-spacing: 0; font-weight: 400; }
@@ -1244,6 +1244,8 @@ a.btn { text-decoration: none; }
   display: flex; align-items: center; gap: 12px; padding: 9px 10px;
   border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px;
 }
+.conn-row > .conn-agent-logo.small,
+.conn-row > .conn-agent-glyph.small { flex: 0 0 auto; }
 .conn-row-main { flex: 1; min-width: 0; }
 .conn-name { font-weight: 600; font-size: 13px; }
 .conn-url { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1274,18 +1276,78 @@ a.btn { text-decoration: none; }
   font-size: 9.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
   color: var(--dim);
 }
-.conn-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 10px; }
-.conn-card {
-  appearance: none; text-align: left; cursor: pointer;
-  background: rgba(0,0,0,.22); border: 1px solid var(--border-strong); border-radius: 12px;
-  padding: 14px; color: var(--text); font: inherit;
-  display: flex; flex-direction: column; gap: 6px;
-  transition: border-color .12s ease, background .12s ease;
+.conn-catalog { padding: 2px 0 4px; }
+.conn-intro { padding: 6px 2px 8px; }
+.conn-kicker {
+  color: var(--a1); font-size: 10px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase;
 }
-.conn-card:hover { border-color: var(--a1); background: rgba(0,0,0,.32); }
-.conn-card-ico { width: 18px; height: 18px; color: var(--a1); }
-.conn-card-title { font-size: 13px; font-weight: 600; }
+.conn-intro h3, .conn-setup-title {
+  margin: 5px 0 4px; color: var(--text); font-size: 20px; letter-spacing: -.025em;
+}
+.conn-intro p, .conn-setup-copy {
+  margin: 0; max-width: 540px; color: var(--dim); font-size: 12.5px; line-height: 1.55;
+}
+.conn-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.conn-cards.top-level { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 14px; }
+.conn-card {
+  text-align: left;
+  background: rgba(0,0,0,.22); border: 1px solid var(--border-strong); border-radius: 12px;
+  min-height: 176px; padding: 0; color: var(--text); overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.conn-card:hover {
+  transform: translateY(-2px); border-color: color-mix(in srgb, var(--a1) 72%, transparent);
+  background: rgba(0,0,0,.34); box-shadow: 0 12px 28px rgba(0,0,0,.24);
+}
+.conn-card:focus-within { border-color: var(--a1); }
+.conn-card-select {
+  appearance: none; width: 100%; flex: 1; display: flex; flex-direction: column; gap: 9px;
+  padding: 14px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.conn-card-select:focus-visible, .conn-guide-link:focus-visible {
+  outline: 2px solid var(--a1); outline-offset: -2px;
+}
+.conn-card-top { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.conn-agent-logo, .conn-agent-glyph {
+  width: 42px; height: 42px; display: grid; place-items: center; object-fit: cover;
+  border-radius: 11px; border: 1px solid rgba(255,255,255,.1);
+  background: linear-gradient(145deg, rgba(255,255,255,.1), rgba(255,255,255,.025));
+  box-shadow: inset 0 1px rgba(255,255,255,.06), 0 7px 18px rgba(0,0,0,.22);
+}
+.conn-agent-logo.small, .conn-agent-glyph.small {
+  width: 28px; height: 28px; border-radius: 8px;
+}
+.conn-agent-glyph { color: var(--a1); }
+.conn-agent-glyph .ico { width: 20px; height: 20px; }
+.conn-agent-glyph.small .ico { width: 14px; height: 14px; }
+.conn-logo-stack { display: flex; align-items: center; padding-left: 4px; }
+.conn-logo-stack img {
+  width: 38px; height: 38px; object-fit: cover; margin-left: -4px;
+  border: 2px solid #111521; border-radius: 11px; box-shadow: 0 5px 14px rgba(0,0,0,.28);
+}
+.conn-logo-stack img + img { margin-left: -10px; }
+.conn-coding-intro { padding-top: 8px; padding-bottom: 15px; }
+.conn-local-badge {
+  padding: 3px 6px; border-radius: 999px; color: var(--dim); background: rgba(255,255,255,.045);
+  border: 1px solid var(--border); font-size: 8px; font-weight: 700; letter-spacing: .035em;
+  text-transform: uppercase; white-space: nowrap;
+}
+.conn-card-title {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13.5px; font-weight: 650;
+}
+.conn-card-title .ico { width: 14px; height: 14px; color: var(--faint); transition: transform .15s ease; }
+.conn-card:hover .conn-card-title .ico { transform: translateX(2px); color: var(--a1); }
 .conn-card-desc { font-size: 11.5px; color: var(--dim); line-height: 1.45; }
+.conn-guide-link {
+  display: flex; align-items: center; justify-content: space-between; padding: 8px 14px;
+  border-top: 1px solid var(--border); color: var(--dim); font-size: 10.5px; font-weight: 600;
+  text-decoration: none; transition: color .12s ease, background .12s ease;
+}
+.conn-guide-link:hover { color: var(--text); background: rgba(255,255,255,.035); }
+.conn-guide-link .ico, .conn-setup-guide .ico { width: 12px; height: 12px; }
 .conn-back { align-self: flex-start; margin: 2px 0 4px; display: inline-flex; align-items: center; gap: 4px; }
 .conn-form { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; max-width: 440px; }
 .conn-form label {
@@ -1303,14 +1365,58 @@ a.btn { text-decoration: none; }
   border: 1px solid var(--border-strong); border-radius: 12px; padding: 14px;
   background: rgba(0,0,0,.22);
 }
-.conn-issued-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.conn-issued-label {
-  flex: 0 0 90px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--dim);
-}
-.conn-issued-field code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conn-issued > .btn { align-self: flex-start; }
+.conn-issued-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.conn-guide-cta { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
+.conn-guide-cta .ico { width: 13px; height: 13px; }
 .conn-empty .btn { margin-left: 6px; }
+.conn-setup-head { display: flex; align-items: center; gap: 12px; margin: 10px 0 4px; }
+.conn-setup-head .conn-setup-title { margin-top: 2px; }
+.conn-setup-guide {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 3px;
+  color: var(--a1); font-size: 10.5px; text-decoration: none;
+}
+.conn-setup-guide:hover { text-decoration: underline; }
+.conn-token-form { margin-top: 16px; }
+.conn-token-form .btn { padding: 8px 16px; }
+.conn-security-note {
+  display: flex; align-items: flex-start; gap: 7px; max-width: 480px;
+  margin: 14px 0 0; color: var(--faint); font-size: 11px; line-height: 1.45;
+}
+.conn-security-note .ico { flex: none; width: 14px; height: 14px; margin-top: 1px; }
+.conn-command {
+  display: flex; align-items: stretch; min-width: 0; border: 1px solid var(--border);
+  border-radius: 9px; background: rgba(0,0,0,.28); overflow: hidden;
+}
+.conn-command code {
+  flex: 1; min-width: 0; margin: 0; padding: 9px 11px; border: 0; border-radius: 0;
+  background: none; color: color-mix(in srgb, var(--text) 90%, var(--a1)); line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.conn-command .btn { border: 0; border-left: 1px solid var(--border); border-radius: 0; }
+.conn-command .btn .ico { width: 12px; height: 12px; }
+.conn-success-mark {
+  width: 44px; height: 44px; display: grid; place-items: center; margin: 8px 0 12px;
+  border-radius: 50%; color: var(--a1); background: color-mix(in srgb, var(--a1) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--a1) 35%, transparent);
+}
+@media (max-width: 640px) {
+  .conn-overlay { padding: 12px; }
+  .conn-panel { max-height: 92vh; border-radius: 15px; }
+  .conn-cards { grid-template-columns: 1fr; }
+  .conn-cards.top-level { grid-template-columns: 1fr; }
+  .conn-card { min-height: 0; }
+  .conn-row { flex-wrap: wrap; }
+  .conn-row-main { flex: 1 1 190px; }
+  .conn-row > .btn { flex: 1 1 90px; }
+  .conn-setup-head { align-items: flex-start; }
+  .conn-command code { font-size: 10.5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conn-panel, .conn-card, .conn-card-title .ico { animation: none; transition: none; }
+  .conn-card:hover { transform: none; }
+}
 
 /* ---------- auth gate (headless deployments) ----------
    Mirrors the desktop shell's connect page (ui/connect.html) so signing in

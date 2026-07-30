@@ -754,7 +754,8 @@ export function usePairingMutations() {
   const invalidate = () => qc.invalidateQueries({ queryKey: keys.pairing });
   return {
     create: useMutation({
-      mutationFn: (name: string) => api.post<{ token: string }>("/api/pairing", { name }),
+      mutationFn: (v: { name: string; kind?: PairingToken["kind"] }) =>
+        api.post<{ token: string }>("/api/pairing", v),
       onSuccess: invalidate,
     }),
     revoke: useMutation({

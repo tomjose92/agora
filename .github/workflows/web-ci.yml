@@ -23,6 +23,8 @@ on:
       - "package.json"
       - "package-lock.json"
       - "scripts/gen-emoji.js"
+      - "scripts/check-agent-docs.mjs"
+      - "bridges/*-cli/**"
       - ".github/workflows/web-ci.yml"
   push:
     branches: [main]
@@ -33,6 +35,8 @@ on:
       - "package.json"
       - "package-lock.json"
       - "scripts/gen-emoji.js"
+      - "scripts/check-agent-docs.mjs"
+      - "bridges/*-cli/**"
       - ".github/workflows/web-ci.yml"
 
 concurrency:
@@ -61,6 +65,8 @@ jobs:
           node scripts/gen-emoji.js
           git diff --exit-code -- packages/core/src/lib/emoji.ts \
             || { echo "::error::packages/core/src/lib/emoji.ts is stale — run 'node scripts/gen-emoji.js' and commit the result."; exit 1; }
+      - name: Coding-agent documentation drift check
+        run: npm run check:agent-docs
 
   mobile:
     runs-on: ubuntu-latest

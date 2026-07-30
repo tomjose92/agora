@@ -331,14 +331,31 @@ async function main() {
   await check("connections: pairing token create + revoke", async () => {
     await page.locator("#btn-connections").click();
     await page.waitForSelector("#conn-panel .conn-body", { timeout: 5000 });
-    // The modal is tabbed now (Connections | Add agent); pairing tokens are
-    // issued from a dial-in agent-type card under "Add agent".
+    // Coding CLIs live under their own category and link to complete bundled
+    // guides rather than squeezing setup instructions into this modal.
     await page.locator('#conn-panel [role="tab"]', { hasText: "Add agent" }).click();
-    await page.locator("#conn-panel .conn-card", { hasText: "OpenClaw" }).click();
+    await page.locator("#conn-panel .conn-card-select", { hasText: "Coding agents" }).click();
+    await page.locator('#conn-panel a[href="/docs/coding-agents/codex.html"]')
+      .waitFor({ timeout: 5000 });
+    const codingCards = page.locator("#conn-panel .conn-card");
+    if (await codingCards.count() !== 3) throw new Error("coding-agent picker should show three CLIs");
+    for (const kind of ["codex", "cursor", "claude"]) {
+      const href = await page.locator(`#conn-panel a[href="/docs/coding-agents/${kind}.html"]`).getAttribute("href");
+      if (!href) throw new Error(`missing ${kind} setup guide link`);
+    }
+    const guidePage = await page.context().newPage();
+    const guideResponse = await guidePage.goto(`${BASE}/docs/coding-agents/codex.html`);
+    if (!guideResponse?.ok()) throw new Error(`Codex setup guide returned ${guideResponse?.status()}`);
+    await guidePage.locator("#docs-root h1", { hasText: "Codex CLI" }).waitFor({ timeout: 5000 });
+    await guidePage.close();
+    await page.locator("#conn-panel button", { hasText: "All connection types" }).click();
+
+    // Non-coding integrations still use the same access/revoke lifecycle.
+    await page.locator("#conn-panel .conn-card-select", { hasText: "OpenClaw" }).click();
     await page.fill("#pair-name", "parity-tok");
-    await page.locator("#conn-panel button", { hasText: "Issue token" }).click();
+    await page.locator("#conn-panel button", { hasText: "Create access" }).click();
     await page.locator("#conn-panel .conn-issued").waitFor({ timeout: 8000 });
-    await page.locator("#conn-panel button", { hasText: "Done" }).click();
+    await page.locator("#conn-panel button", { hasText: "View connections" }).click();
     // Back on the list tab the freshly issued token is listed and revocable.
     const row = page.locator("#conn-panel .conn-row", { hasText: "parity-tok" });
     await row.waitFor({ timeout: 8000 });

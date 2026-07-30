@@ -1,5 +1,10 @@
 # Cursor CLI bridge
 
+Agora also bundles a responsive Cursor CLI setup and configuration guide at
+`/docs/coding-agents/cursor.html` in every running Agora.
+Open **Connections → Add agent → Coding agents → Cursor CLI → Setup guide** in a running Agora
+for the rendered version matching that installation.
+
 Continue local Cursor CLI sessions from Agora, switch models per channel, and
 run Cursor against repositories on the machine where this bridge is running.
 This controls **Cursor CLI sessions**, not chats open in the Cursor desktop IDE.

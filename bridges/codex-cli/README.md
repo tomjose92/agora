@@ -1,5 +1,10 @@
 # Codex CLI bridge
 
+Agora also bundles a responsive Codex CLI setup and configuration guide at
+`/docs/coding-agents/codex.html` in every running Agora.
+Open **Connections → Add agent → Coding agents → Codex CLI → Setup guide** in a running Agora
+for the rendered version matching that installation.
+
 Talk to your local Codex CLI sessions from any Agora channel — follow up on
 a finished session from your phone while the laptop sits at home.
 
