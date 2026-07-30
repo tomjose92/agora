@@ -68,6 +68,8 @@ const meta = {
   component: ArtifactList,
   args: { artifacts: [itinerary, unsupported] },
   parameters: { apiRoutes: { "GET /api/me": { username: "tom", map_style_url: "" } } },
+  // `itinerary` is fixture data shared with MapPreview stories, not a story.
+  excludeStories: ["itinerary"],
 } satisfies Meta<typeof ArtifactList>;
 
 export default meta;
@@ -77,7 +79,8 @@ export const SupportedAndUnsupported: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.findByText("Future artifact")).resolves.toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: /Kerala component itinerary/ }));
+    // Both the card head and the preview expose the title; target the preview.
+    await userEvent.click(canvas.getByRole("button", { name: "Open Kerala component itinerary" }));
     const page = within(canvasElement.ownerDocument.body);
     await expect(page.findByRole("dialog", { name: "Kerala component itinerary" })).resolves.toBeVisible();
     await userEvent.selectOptions(page.getByLabelText("Area"), "kochi");
