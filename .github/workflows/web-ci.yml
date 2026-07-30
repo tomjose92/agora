@@ -111,6 +111,11 @@ jobs:
         run: npm run test-storybook -w web
       - name: Storybook static build
         run: npm run build-storybook -w web
+      - name: Deployed UI includes Storybook at /storybook
+        run: |
+          npm run build:with-storybook -w web
+          test -f web/dist/storybook/index.html
+          test -f web/dist/storybook/iframe.html
 
   parity:
     runs-on: ubuntu-latest
