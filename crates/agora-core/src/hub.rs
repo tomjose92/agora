@@ -1290,24 +1290,33 @@ impl Hub {
 
     // ------------------------------------------------------------- agent frames
 
-    /// Handle a protocol frame arriving from an agent connection.
-    pub fn handle_agent_frame(&self, frame: &Value) {
+    /// Test/in-process entry point without a carrying socket. Production
+    /// callers must use `handle_agent_frame_from` so identity is connection-bound.
+    #[cfg(test)]
+    fn handle_agent_frame(&self, frame: &Value) {
         self.handle_agent_frame_inner(None, frame);
     }
 
-    /// Handle an agent frame while retaining the carrying connection's
-    /// identity for responses. Frame authorization still deliberately uses
-    /// the claimed agent id until connection-to-agent binding lands.
+    /// Handle an agent frame from a live connection. The claimed agent id
+    /// must be registered on that same connection before any read or write.
     pub fn handle_agent_frame_from(&self, conn_id: u64, frame: &Value) {
         self.handle_agent_frame_inner(Some(conn_id), frame);
     }
 
     fn handle_agent_frame_inner(&self, sender_conn_id: Option<u64>, frame: &Value) {
         let agent_id = frame["agent_id"].as_str().unwrap_or_default().to_string();
-        let agent_name = self
-            .agent_handle(&agent_id)
-            .map(|h| h.agent_name)
-            .unwrap_or_else(|| agent_id.clone());
+        let Some(handle) = self.agent_handle(&agent_id) else {
+            return;
+        };
+        if sender_conn_id.is_some_and(|conn_id| handle.conn_id != conn_id) {
+            tracing::debug!(
+                agent_id,
+                sender_conn_id,
+                "dropping agent frame whose identity is not registered on the connection"
+            );
+            return;
+        }
+        let agent_name = handle.agent_name.clone();
         let channel_id = frame["channel_id"].as_str().unwrap_or_default().to_string();
         // history_request answers with an error frame instead of the silent
         // drop below — the asking agent is awaiting a correlated response.
@@ -1328,15 +1337,9 @@ impl Hub {
         // Everything reaching this point is addressed to a room. Gate it
         // unconditionally so future write frames fail closed instead of
         // relying on a second frame-type allowlist being kept in sync with
-        // the match below. This proves the claimed agent belongs to the
-        // channel; binding that identity to the sending connection is a
-        // separate concern.
-        if !self
-            .store
-            .agents_for_channel(&channel_id)
-            .iter()
-            .any(|id| id == &agent_id)
-        {
+        // the match below. Connection ownership was established above;
+        // membership is the remaining channel-level authorization boundary.
+        if !self.store.agent_in_channel(&agent_id, &channel_id) {
             let frame_type = frame["type"].as_str().unwrap_or("<missing>");
             tracing::debug!(
                 agent_id,
@@ -1348,20 +1351,12 @@ impl Hub {
             // live agent that the write was rejected instead of letting it
             // assume the message landed. Activity frames remain best-effort.
             if frame_type == "post" {
-                let sender = sender_conn_id.and_then(|conn_id| {
-                    self.state
-                        .lock()
-                        .unwrap()
-                        .agents
-                        .values()
-                        .find(|handle| handle.conn_id == conn_id)
-                        .map(|handle| handle.tx.clone())
-                });
-                if let Some(tx) = sender {
-                    let _ = tx.send(json!({
+                if sender_conn_id.is_some() {
+                    let _ = handle.tx.send(json!({
                         "type": "error",
                         "frame_type": "post",
                         "agent_id": agent_id,
+                        "request_id": frame["request_id"],
                         "error": "agent is not a member of this channel",
                         "channel_id": channel_id,
                         "thread_id": frame["thread_id"],
@@ -1461,7 +1456,7 @@ impl Hub {
                 let text = frame["text"].as_str().unwrap_or("Resolved.");
                 if let Some(message_id) = self
                     .store
-                    .find_message_by_options_id(&channel_id, options_id)
+                    .find_message_by_options_id(&channel_id, &agent_id, options_id)
                 {
                     let _ = self.resolve_options_by_agent(message_id, text);
                 }
@@ -1493,7 +1488,7 @@ impl Hub {
         }
         // Membership is the read boundary: an agent can only read rooms it
         // is in, exactly like the inbound fan-out.
-        if !self.store.agents_for_channel(channel_id).iter().any(|a| a == agent_id) {
+        if !self.store.agent_in_channel(agent_id, channel_id) {
             response["error"] = json!("agent is not a member of this channel");
             let _ = handle.tx.send(response);
             return;
@@ -1567,7 +1562,7 @@ impl Hub {
                 let _ = handle.tx.send(response);
                 return;
             }
-            if !self.store.agents_for_channel(channel_id).iter().any(|a| a == agent_id) {
+            if !self.store.agent_in_channel(agent_id, channel_id) {
                 response["error"] = json!("agent is not a member of this channel");
                 let _ = handle.tx.send(response);
                 return;
@@ -2555,7 +2550,7 @@ mod tests {
             }),
             json!({
                 "type": "post", "agent_id": "bot-b", "channel_id": cid,
-                "text": "should not be stored",
+                "request_id": "post-denied", "text": "should not be stored",
             }),
         ] {
             h.handle_agent_frame_from(outsider_conn_id, &frame);
@@ -2572,35 +2567,41 @@ mod tests {
         let error = &errors[0];
         assert_eq!(error["frame_type"], "post");
         assert_eq!(error["agent_id"], "bot-b");
+        assert_eq!(error["request_id"], "post-denied");
         assert_eq!(error["channel_id"], cid);
         assert!(error["thread_id"].is_null());
         assert_eq!(error["error"], "agent is not a member of this channel");
     }
 
     #[test]
-    fn denied_post_error_stays_on_the_sending_connection() {
+    fn frames_cannot_spoof_an_agent_on_another_connection() {
         let h = hub();
         let mut victim_rx = add_agent(&h, "victim", "Victim", false);
         let mut sender_rx = add_agent(&h, "sender", "Sender", false);
         let sender_conn_id = h.agent_handle("sender").unwrap().conn_id;
         let cid = setup_channel(&h, &["sender"]);
 
-        // The sender claims a non-member agent id. Until S2 binds frame
-        // identity, the write is rejected by membership; its error must not
-        // be injected into the claimed agent's different connection.
-        h.handle_agent_frame_from(
-            sender_conn_id,
-            &json!({
+        // None of the frame families may be sent under an identity registered
+        // on another connection, and no response may be injected there.
+        for frame in [
+            json!({
                 "type": "post", "agent_id": "victim", "channel_id": cid,
                 "thread_id": 42, "text": "spoofed",
             }),
-        );
+            json!({
+                "type": "history_request", "request_id": "h-spoof",
+                "agent_id": "victim", "channel_id": cid,
+            }),
+            json!({
+                "type": "search_request", "request_id": "s-spoof",
+                "agent_id": "victim", "channel_id": cid, "query": "secret",
+            }),
+        ] {
+            h.handle_agent_frame_from(sender_conn_id, &frame);
+        }
 
         assert!(victim_rx.try_recv().is_err());
-        let error = sender_rx.try_recv().unwrap();
-        assert_eq!(error["type"], "error");
-        assert_eq!(error["agent_id"], "victim");
-        assert_eq!(error["thread_id"], 42);
+        assert!(sender_rx.try_recv().is_err());
         assert!(h.store.messages(&cid, None, None, 10).is_empty());
     }
 
@@ -2653,8 +2654,8 @@ mod tests {
 
         for channel_id in [&allowed_id, &denied_id] {
             h.post_agent_message_with_options(
-                "seed",
-                "Seed",
+                "bot-a",
+                "Bot A",
                 channel_id,
                 "Choose",
                 None,
@@ -2692,6 +2693,75 @@ mod tests {
             "allowed"
         );
         assert!(h.store.message(denied_mid).unwrap()["meta"]["resolved"].is_null());
+    }
+
+    #[test]
+    fn options_resolve_is_scoped_to_channel_and_author_in_one_group() {
+        let h = hub();
+        let _rx_a = add_agent(&h, "bot-a", "Bot A", false);
+        let _rx_b = add_agent(&h, "bot-b", "Bot B", false);
+        let g = h.store.create_group("G", "", Some("tom"));
+        let gid = g["id"].as_str().unwrap();
+        let allowed = h.store.create_channel(gid, "allowed", "");
+        let other = h.store.create_channel(gid, "other", "");
+        let allowed_id = allowed["id"].as_str().unwrap();
+        let other_id = other["id"].as_str().unwrap();
+        h.store
+            .add_member(gid, "agent", "bot-a", "member", Some(allowed_id));
+        h.store
+            .add_member(gid, "agent", "bot-b", "member", Some(allowed_id));
+
+        for (author_id, channel_id) in [
+            ("bot-a", allowed_id),
+            ("bot-b", allowed_id),
+            ("bot-a", other_id),
+        ] {
+            h.post_agent_message_with_options(
+                author_id,
+                author_id,
+                channel_id,
+                "Choose",
+                None,
+                Some(&json!([{"id": "yes", "label": "Yes"}])),
+                Some("shared-options"),
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+        }
+        let a_mid = h
+            .store
+            .messages(allowed_id, None, None, 10)
+            .into_iter()
+            .find(|m| m["author_id"] == "bot-a")
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let b_mid = h
+            .store
+            .messages(allowed_id, None, None, 10)
+            .into_iter()
+            .find(|m| m["author_id"] == "bot-b")
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let other_mid = h.store.messages(other_id, None, None, 10)[0]["id"]
+            .as_i64()
+            .unwrap();
+
+        h.handle_agent_frame(&json!({
+            "type": "options_resolve", "agent_id": "bot-a", "channel_id": allowed_id,
+            "options_id": "shared-options", "text": "only mine",
+        }));
+
+        assert_eq!(
+            h.store.message(a_mid).unwrap()["meta"]["resolved"]["label"],
+            "only mine"
+        );
+        assert!(h.store.message(b_mid).unwrap()["meta"]["resolved"].is_null());
+        assert!(h.store.message(other_mid).unwrap()["meta"]["resolved"].is_null());
     }
 
     #[test]

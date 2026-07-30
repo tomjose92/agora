@@ -1169,6 +1169,20 @@ impl Store {
             .collect()
     }
 
+    /// Whether one agent is a member of a channel, either through a
+    /// group-wide membership or a row scoped to that exact channel.
+    pub fn agent_in_channel(&self, agent_id: &str, channel_id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM channels c JOIN memberships m ON m.group_id = c.group_id \
+             WHERE c.id = ?1 AND m.member_type = 'agent' AND m.member_id = ?2 \
+             AND (m.channel_id = '' OR m.channel_id = c.id) LIMIT 1",
+            params![channel_id, agent_id],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
     // ------------------------------------------------------- users / invites
 
     pub fn create_user(
@@ -1724,19 +1738,25 @@ impl Store {
         deleted
     }
 
-    /// Find a message in one channel whose meta.options_id matches (for
-    /// agent-side resolve). Channel scope is the authorization boundary.
-    pub fn find_message_by_options_id(&self, channel_id: &str, options_id: &str) -> Option<i64> {
-        if channel_id.is_empty() || options_id.is_empty() {
+    /// Find an agent's own message in one channel whose meta.options_id
+    /// matches. Both channel and author scopes are authorization boundaries.
+    pub fn find_message_by_options_id(
+        &self,
+        channel_id: &str,
+        agent_id: &str,
+        options_id: &str,
+    ) -> Option<i64> {
+        if channel_id.is_empty() || agent_id.is_empty() || options_id.is_empty() {
             return None;
         }
         let conn = self.conn.lock().unwrap();
         // SQLite json1: meta is a JSON text column.
         conn.query_row(
             "SELECT id FROM messages WHERE meta IS NOT NULL \
-             AND channel_id = ?1 AND json_extract(meta, '$.options_id') = ?2 \
+             AND channel_id = ?1 AND author_type = 'agent' AND author_id = ?2 \
+             AND json_extract(meta, '$.options_id') = ?3 \
              ORDER BY id DESC LIMIT 1",
-            params![channel_id, options_id],
+            params![channel_id, agent_id, options_id],
             |r| r.get(0),
         )
         .ok()
@@ -2895,6 +2915,11 @@ mod tests {
         s.add_member(gid, "agent", "bot-b", "member", Some(c1id)); // one channel
         assert_eq!(s.agents_for_channel(c1id).len(), 2);
         assert_eq!(s.agents_for_channel(c2id), vec!["bot-a".to_string()]);
+        assert!(s.agent_in_channel("bot-a", c1id));
+        assert!(s.agent_in_channel("bot-a", c2id));
+        assert!(s.agent_in_channel("bot-b", c1id));
+        assert!(!s.agent_in_channel("bot-b", c2id));
+        assert!(!s.agent_in_channel("missing", c1id));
         assert!(s.user_in_group("tom", gid));
         assert!(!s.user_in_group("alice", gid));
     }
