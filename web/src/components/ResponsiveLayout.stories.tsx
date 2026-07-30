@@ -113,7 +113,8 @@ export const PhoneMainPane: Story = {
   },
   play: async ({ canvasElement }) => {
     await waitFor(() => expect(element(canvasElement, "#agora-main")).toBeVisible());
-    expect(element(canvasElement, "#agora-side")).not.toBeVisible();
+    // The phone media query hides the sidebar; wait out any settling render.
+    await waitFor(() => expect(element(canvasElement, "#agora-side")).not.toBeVisible());
     await expectNoHorizontalOverflow(canvasElement);
   },
 };
