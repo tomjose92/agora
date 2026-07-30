@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { fixtureAgentMessage } from "@agora/core/testing/fixtures";
 import { useSourcesView } from "./MessageItem";
 import { SourcesViewer } from "./SourcesViewer";
@@ -43,7 +43,7 @@ export const KeyboardAndButtons: Story = {
     await userEvent.click(page.getByTitle("Next source"));
     await expect(page.findByText("React documentation")).resolves.toBeVisible();
     await userEvent.keyboard("{Escape}");
-    expect(page.queryByText("React documentation")).not.toBeInTheDocument();
+    await waitFor(() => expect(page.queryByText("React documentation")).not.toBeInTheDocument());
     useSourcesView.getState().show(message, 1);
     await expect(page.findByText("React documentation")).resolves.toBeVisible();
   },

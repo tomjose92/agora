@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { EmojiPickerHost, useEmojiPicker } from "./EmojiPicker";
 
 const pick = fn();
@@ -36,7 +36,7 @@ export const SearchAndPick: Story = {
     await userEvent.type(await page.findByPlaceholderText("Search emoji…"), "party");
     await userEvent.click(await page.findByTitle(/party popper celebration/));
     await expect(pick).toHaveBeenCalledWith(42, "🎉");
-    expect(page.queryByPlaceholderText("Search emoji…")).not.toBeInTheDocument();
+    await waitFor(() => expect(page.queryByPlaceholderText("Search emoji…")).not.toBeInTheDocument());
     await userEvent.click(within(canvasElement).getByText("Open reaction picker"));
     await userEvent.type(await page.findByPlaceholderText("Search emoji…"), "party");
     await expect(page.findByTitle(/party popper celebration/)).resolves.toBeVisible();

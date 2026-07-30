@@ -29,15 +29,14 @@ function RailSurface() {
     <div className="ago-log-wrap" style={{ width: "min(720px, 100%)", height: 520 }}>
       <div ref={boxRef} className="ago-log" style={{ overflow: "auto", position: "relative" }}>
         {messages.map((message) => (
-          <div key={message.id} style={{ minHeight: 150 }}>
-            <MessageItem
-              message={message}
-              inThread={false}
-              isAdmin
-              mentions={{}}
-              onOpenThread={fn()}
-            />
-          </div>
+          <MessageItem
+            key={message.id}
+            message={message}
+            inThread={false}
+            isAdmin
+            mentions={{}}
+            onOpenThread={fn()}
+          />
         ))}
         <SectionRail boxRef={boxRef} messages={messages} />
       </div>

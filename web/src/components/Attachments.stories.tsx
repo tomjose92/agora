@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { Attachments } from "./Attachments";
 import { message } from "../stories/fixtures/data";
 
@@ -48,7 +48,7 @@ export const ImageLightbox: Story = {
       name: "Image preview: responsive-layout-preview.svg",
     })).resolves.toBeVisible();
     await userEvent.keyboard("{Escape}");
-    await expect(page.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(page.queryByRole("dialog")).not.toBeInTheDocument());
     await userEvent.click(canvas.getByRole("button", {
       name: "Preview responsive-layout-preview.svg",
     }));

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import type { MapMessageArtifact, MessageArtifact } from "@agora/core";
 import { ArtifactList } from "./ArtifactList";
 
@@ -86,6 +86,6 @@ export const SupportedAndUnsupported: Story = {
     await userEvent.selectOptions(page.getByLabelText("Area"), "kochi");
     await expect(page.findByRole("heading", { name: "Fort Kochi" })).resolves.toBeVisible();
     await userEvent.keyboard("{Escape}");
-    expect(page.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(page.queryByRole("dialog")).not.toBeInTheDocument());
   },
 };
