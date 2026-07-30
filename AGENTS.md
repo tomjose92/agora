@@ -59,6 +59,7 @@ npm run typecheck
 npm run build               # web/ -> web/dist (gitignored; the served dir)
 npm run storybook -w web    # web/desktop component catalog on :6006
 npm run build-storybook -w web
+npx playwright install chromium # once per machine, for Storybook browser tests
 npm run test-storybook -w web  # browser smoke + story play tests
 node web/e2e/parity.mjs /   # Playwright regression flows (AGORA_TOKEN=<key>)
 ```

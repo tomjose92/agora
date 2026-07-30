@@ -1,29 +1,42 @@
+import { useState, type ReactNode } from "react";
 import type { Preview } from "@storybook/react-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiProvider } from "@agora/core";
-import { FixtureApiClient } from "../src/stories/fixtures/api";
+import { FixtureApiClient, type FixtureRoutes } from "../src/stories/fixtures/api";
 import { resetStoryState } from "../src/stories/resetState";
 import "../src/styles.css";
+import "./preview.css";
+
+function StoryProviders({ routes, children }: {
+  routes?: FixtureRoutes;
+  children: ReactNode;
+}) {
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Infinity },
+      mutations: { retry: false },
+    },
+  }));
+  const [api] = useState(() => new FixtureApiClient(routes));
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ApiProvider client={api}>{children}</ApiProvider>
+    </QueryClientProvider>
+  );
+}
 
 const preview: Preview = {
+  beforeEach: () => {
+    resetStoryState();
+  },
   decorators: [
     (Story, context) => {
-      resetStoryState(context.id);
-      const queryClient = new QueryClient({
-        defaultOptions: {
-          queries: { retry: false, staleTime: Infinity },
-          mutations: { retry: false },
-        },
-      });
-      const api = new FixtureApiClient(context.parameters.apiRoutes);
       return (
-        <QueryClientProvider client={queryClient}>
-          <ApiProvider client={api}>
-            <main style={{ minHeight: "100vh" }}>
-              <Story />
-            </main>
-          </ApiProvider>
-        </QueryClientProvider>
+        <StoryProviders key={context.id} routes={context.parameters.apiRoutes}>
+          <main style={{ minHeight: "100vh" }}>
+            <Story />
+          </main>
+        </StoryProviders>
       );
     },
   ],
@@ -38,6 +51,8 @@ const preview: Preview = {
         desktop: { name: "Desktop", styles: { width: "1440px", height: "900px" } },
         desktopBoundary: { name: "Desktop boundary", styles: { width: "1101px", height: "800px" } },
         tablet: { name: "Tablet overlay", styles: { width: "1000px", height: "1180px" } },
+        tabletLowerBoundary: { name: "Tablet lower boundary", styles: { width: "821px", height: "900px" } },
+        phoneUpperBoundary: { name: "Phone upper boundary", styles: { width: "820px", height: "900px" } },
         phone: { name: "Phone", styles: { width: "390px", height: "844px" } },
         smallPhone: { name: "Small phone", styles: { width: "320px", height: "568px" } },
       },

@@ -15,13 +15,8 @@ const STORAGE_KEYS = [
   "agoEmojiRecent",
 ];
 
-let activeStory = "";
-
 /** Reset module-scoped zustand stores as well as their persisted inputs. */
-export function resetStoryState(storyId: string): void {
-  if (storyId === activeStory) return;
-  activeStory = storyId;
-
+export function resetStoryState(): void {
   for (const key of STORAGE_KEYS) localStorage.removeItem(key);
   useUiState.setState({
     sel: {},

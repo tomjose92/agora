@@ -44,7 +44,7 @@ export class FixtureApiClient extends ApiClient {
     return this.resolve("DELETE", path, body);
   }
 
-  override upload<T>(path: string, form: FormData): Promise<T> {
+  override upload<T>(path: string, form: FormData, _signal?: AbortSignal): Promise<T> {
     return this.resolve("UPLOAD", path, form);
   }
 }
