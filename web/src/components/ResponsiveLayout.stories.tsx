@@ -9,6 +9,7 @@ import {
   fixtureMessages,
   fixtureReplies,
   fixtureThreads,
+  fixtureTemplates,
   fixtureUsers,
 } from "@agora/core/testing/fixtures";
 import { useUiState } from "../state/ui";
@@ -44,6 +45,7 @@ const routes = {
   "GET /api/agents": { agents: fixtureAgents },
   "GET /api/users": { users: fixtureUsers },
   "GET /api/groups/product/members": { members: fixtureMembers },
+  "GET /api/groups/product/templates": { templates: fixtureTemplates },
   "GET /api/channels/general/agents": { agents: fixtureChannelAgents },
   "GET /api/channels/general/activity": { typing: [], progress: [] },
   "GET /api/channels/general/messages?limit=50": { messages: fixtureMessages },
@@ -100,6 +102,7 @@ export const Desktop: Story = {
   },
   play: async ({ canvasElement }) => {
     await waitFor(() => expect(element(canvasElement, "#agora-main")).toBeVisible());
+    expect(canvasElement.querySelector('[role="alert"]')).not.toBeInTheDocument();
     expect(getComputedStyle(element(canvasElement, "#agora-side")).position).not.toBe("fixed");
     await expectNoHorizontalOverflow(canvasElement);
   },

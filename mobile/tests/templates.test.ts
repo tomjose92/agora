@@ -4,9 +4,10 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiClient, ApiProvider } from "@agora/core";
+import { ApiClient, ApiProvider, MAX_MESSAGE_CHARS } from "@agora/core";
 import { fixtureTemplates } from "@agora/core/testing/fixtures";
 import { Composer } from "../src/components/Composer";
+import { useToasts } from "../src/components/Toast";
 
 jest.mock("expo-file-system/legacy", () => ({
   cacheDirectory: "file:///cache/",
@@ -119,6 +120,22 @@ test("a chosen template lands at the caret without replacing the draft", async (
     nativeEvent: { selection: { start: 3 + first.text.length, end: 3 + first.text.length } },
   }));
   expect(input().props.selection).toBeUndefined();
+
+  const full = "x".repeat(MAX_MESSAGE_CHARS);
+  act(() => input().props.onChangeText(full));
+  act(() => input().props.onSelectionChange({
+    nativeEvent: { selection: { start: full.length, end: full.length } },
+  }));
+  await act(async () => {
+    labelled(tree.root, "Message templates").props.onPress();
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+  await act(async () => {
+    labelled(tree.root, `Use template ${first.label}`).props.onPress();
+  });
+  expect(input().props.value).toBe(full);
+  expect(useToasts.getState().items.at(-1)?.message).toContain("would exceed");
+  useToasts.setState({ items: [] });
   act(() => tree.unmount());
   // Drop the cache so no background refetch outlives the test environment.
   queryClient.clear();

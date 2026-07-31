@@ -746,30 +746,27 @@ impl Store {
         .collect()
     }
 
-    pub fn count_message_templates(&self, username: &str, group_id: &str) -> i64 {
-        self.conn
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM message_templates WHERE username = ?1 AND group_id = ?2",
-                params![username, group_id],
-                |r| r.get(0),
-            )
-            .unwrap_or(0)
-    }
-
     pub fn create_message_template(
         &self,
         username: &str,
         group_id: &str,
         label: &str,
         text: &str,
-    ) -> Value {
+        max_count: i64,
+    ) -> Option<Value> {
         // Labels are free text, so they can slugify to nothing (emoji-only);
         // fall back so the id never degenerates to a bare random suffix.
         let seed = if slugify(label).is_empty() { "template" } else { label };
         let ts = now();
         let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM message_templates WHERE username = ?1 AND group_id = ?2",
+            params![username, group_id],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        if count >= max_count {
+            return None;
+        }
         // Human labels repeat heavily and new_id has a short random suffix.
         // Retry the only expected constraint failure instead of dropping the
         // HTTP connection on an unlucky id collision.
@@ -792,8 +789,8 @@ impl Store {
             }
         }
         let id = inserted.expect("message template id collided after three attempts");
-        json!({"id": id, "group_id": group_id, "label": label, "text": text,
-               "created_at": ts, "updated_at": ts})
+        Some(json!({"id": id, "group_id": group_id, "label": label, "text": text,
+               "created_at": ts, "updated_at": ts}))
     }
 
     /// `None` when the row is not this user's template in this group — the
@@ -841,6 +838,19 @@ impl Store {
             )
             .unwrap()
             > 0
+    }
+
+    pub fn message_template_label(
+        &self,
+        id: &str,
+        username: &str,
+        group_id: &str,
+    ) -> Option<String> {
+        self.conn.lock().unwrap().query_row(
+            "SELECT label FROM message_templates WHERE id = ?1 AND username = ?2 AND group_id = ?3",
+            params![id, username, group_id],
+            |r| r.get(0),
+        ).ok()
     }
 
     // ------------------------------------------------------------- channels
@@ -2994,7 +3004,7 @@ mod tests {
         let c = s.create_channel(gid, "workouts", "daily");
         let cid = c["id"].as_str().unwrap();
         s.add_message(cid, "hello", "user", "tom", Some("Tom"), None, &[]);
-        s.create_message_template("tom", gid, "Daily", "Daily update");
+        s.create_message_template("tom", gid, "Daily", "Daily update", 50);
         assert_eq!(s.messages(cid, None, None, 50).len(), 1);
         assert!(s.delete_group(gid));
         assert!(s.group(gid).is_none());
@@ -3008,10 +3018,10 @@ mod tests {
         let s = store();
         let g1 = s.create_group("One", "", Some("tom"));
         let g2 = s.create_group("Two", "", Some("tom"));
-        let a = s.create_message_template("tom", g1["id"].as_str().unwrap(), "First", "alpha");
-        let b = s.create_message_template("tom", g1["id"].as_str().unwrap(), "Second", "beta");
-        s.create_message_template("ana", g1["id"].as_str().unwrap(), "Other", "private");
-        s.create_message_template("tom", g2["id"].as_str().unwrap(), "Elsewhere", "hidden");
+        let a = s.create_message_template("tom", g1["id"].as_str().unwrap(), "First", "alpha", 50).unwrap();
+        let b = s.create_message_template("tom", g1["id"].as_str().unwrap(), "Second", "beta", 50).unwrap();
+        s.create_message_template("ana", g1["id"].as_str().unwrap(), "Other", "private", 50);
+        s.create_message_template("tom", g2["id"].as_str().unwrap(), "Elsewhere", "hidden", 50);
         assert_eq!(s.message_templates("tom", g1["id"].as_str().unwrap()).len(), 2);
         assert!(s.message_templates("ana", g2["id"].as_str().unwrap()).is_empty());
         let updated = s.update_message_template(a["id"].as_str().unwrap(), "tom", g1["id"].as_str().unwrap(), "First edit", "changed").unwrap();
@@ -3049,7 +3059,7 @@ mod tests {
         s.mark_read("tom", cid, Some(other_id));
         s.mark_thread_read("tom", root_id, Some(root_id));
         s.hide_thread("tom", root_id);
-        s.create_message_template("tom", gid, "Mine", "private draft");
+        s.create_message_template("tom", gid, "Mine", "private draft", 50);
         let file_id = root["attachments"][0]["id"].as_str().unwrap().to_string();
 
         s.delete_user_data("tom");
@@ -3143,7 +3153,7 @@ mod tests {
         assert!(s.user_in_group("tom", gid));
         assert!(!s.user_in_group("alice", gid));
         s.add_member(gid, "user", "alice", "member", None);
-        s.create_message_template("alice", gid, "Standup", "Status update");
+        s.create_message_template("alice", gid, "Standup", "Status update", 50);
         s.remove_member(gid, "user", "alice", None);
         assert_eq!(s.message_templates("alice", gid).len(), 1);
 

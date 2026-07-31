@@ -40,6 +40,7 @@ export default function Connect() {
   const [google, setGoogle] = useState(false);
   const [apple, setApple] = useState(false);
   const [admin, setAdmin] = useState(true);
+  const [probed, setProbed] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -63,6 +64,7 @@ export default function Connect() {
   }, [savedUrl, url]);
 
   const probe = useCallback(async (target: string) => {
+    setProbed(false);
     const methods = await probeAuth(target);
     // A signed-out relaunch reuses the keychain URL verbatim; if it carries a
     // stale scheme (http:// against a host that 301s to https), sign-in would
@@ -79,6 +81,7 @@ export default function Connect() {
     setApple(appleOk);
     setAdmin(methods.admin);
     setShowToken(methods.admin && !methods.google && !appleOk);
+    setProbed(true);
   }, []);
 
   useEffect(() => {
@@ -232,7 +235,7 @@ export default function Connect() {
             <Text style={styles.serverChip}>
               Sign in to <Text style={styles.serverHost}>{base.replace(/^https?:\/\//, "")}</Text>
             </Text>
-            {apple ? (
+            {probed && apple ? (
               <AppleAuthentication.AppleAuthenticationButton
                 buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
                 buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
@@ -241,7 +244,7 @@ export default function Connect() {
                 onPress={submitApple}
               />
             ) : null}
-            {google ? (
+            {probed && google ? (
               <Pressable style={[styles.btnGoogle, busy && styles.btnOff]} onPress={submitGoogle} disabled={busy}>
                 {busy ? (
                   <ActivityIndicator color="#1f1f1f" />
@@ -254,7 +257,7 @@ export default function Connect() {
                 )}
               </Pressable>
             ) : null}
-            {admin && (showToken ? (
+            {probed && admin && (showToken ? (
               <>
                 <TextInput
                   style={styles.input}

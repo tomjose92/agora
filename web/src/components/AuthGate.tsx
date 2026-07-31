@@ -10,6 +10,7 @@ import { toast } from "../lib/toast";
 export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [adminEnabled, setAdminEnabled] = useState(true);
+  const [probed, setProbed] = useState(false);
   const [showTokenForm, setShowTokenForm] = useState(true);
   const [error] = useState(() =>
     AUTH_ERROR ? (AUTH_ERROR_TEXT[AUTH_ERROR] || "Google sign-in failed — try again.") : "");
@@ -25,7 +26,8 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
       } else if (!admin) {
         setShowTokenForm(false);
       }
-    }).catch(() => {});
+      setProbed(true);
+    }).catch(() => setProbed(true));
     inputRef.current?.focus();
   }, []);
 
@@ -39,7 +41,9 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
     else toast("That token didn't work", { variant: "warn" });
   };
 
-  const hint = googleEnabled
+  const hint = !probed
+    ? "Checking available sign-in methods…"
+    : googleEnabled
     ? (JOIN_TOKEN
       ? "You've been invited to this Agora — sign in with Google to join."
       : "Sign in with Google — members and invited emails get in.")
@@ -52,7 +56,7 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
       <div className="auth-card">
         <div className="auth-brand"><img src="/icon.png" alt="" /><h1>Agora</h1></div>
         <p className="auth-sub" id="auth-hint">{hint}</p>
-        {googleEnabled && (
+        {probed && googleEnabled && (
           <button className="btn google" id="auth-google"
             onClick={() => {
               rememberAuthPath();
@@ -64,7 +68,7 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
           </button>
         )}
         {googleEnabled && showTokenForm && <div className="auth-divider" id="auth-divider">or</div>}
-        {adminEnabled && showTokenForm && (
+        {probed && adminEnabled && showTokenForm && (
           <div id="auth-token-form">
             <label htmlFor="auth-token">Admin key</label>
             <input id="auth-token" ref={inputRef} type="password"
@@ -74,7 +78,7 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
             <button className="btn primary" onClick={() => void submit()}>Sign in as admin</button>
           </div>
         )}
-        {adminEnabled && googleEnabled && !showTokenForm && (
+        {probed && adminEnabled && googleEnabled && !showTokenForm && (
           <button className="auth-link" id="auth-token-toggle"
             onClick={() => { setShowTokenForm(true); setTimeout(() => inputRef.current?.focus(), 0); }}>
             Sign in as admin

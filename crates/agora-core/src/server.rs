@@ -954,16 +954,11 @@ async fn create_template(
     group_or_404(&state, &group_id)?;
     require_member(&state, &user, &group_id)?;
     let (label, text) = template_fields(&payload)?;
-    if state.hub.store.count_message_templates(&user.username, &group_id)
-        >= MAX_TEMPLATES_PER_GROUP as i64
-    {
-        return Err(err(
-            StatusCode::CONFLICT,
-            "Up to 50 templates per group — delete one first",
-        ));
-    }
-    Ok(Json(
-        state.hub.store.create_message_template(&user.username, &group_id, &label, &text),
+    state.hub.store.create_message_template(
+        &user.username, &group_id, &label, &text, MAX_TEMPLATES_PER_GROUP as i64,
+    ).map(Json).ok_or_else(|| err(
+        StatusCode::CONFLICT,
+        "Up to 50 templates per group — delete one first",
     ))
 }
 
@@ -972,11 +967,17 @@ async fn update_template(
     Path((group_id, template_id)): Path<(String, String)>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
-    Json(payload): Json<Value>,
+    Json(mut payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
     require_member(&state, &user, &group_id)?;
+    if payload.get("label").is_none() {
+        let label = state.hub.store.message_template_label(
+            &template_id, &user.username, &group_id,
+        ).ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown template"))?;
+        payload["label"] = json!(label);
+    }
     let (label, text) = template_fields(&payload)?;
     state
         .hub
@@ -3587,6 +3588,16 @@ mod tests {
         state.hub.store.add_member(&gid, "user", "ana", "member", None);
         let q = || Query(HashMap::new());
 
+        assert_eq!(
+            list_templates(
+                State(state.clone()),
+                Path("missing-group".into()),
+                q(),
+                session_headers(&state, "ana"),
+            ).await.unwrap_err().0,
+            StatusCode::NOT_FOUND
+        );
+
         let created = create_template(
             State(state.clone()),
             Path(gid.clone()),
@@ -3664,8 +3675,8 @@ mod tests {
         .unwrap()
         .0;
         assert_eq!(updated["text"], "Today…");
-        // An empty label falls back to the first line of the body.
-        assert_eq!(updated["label"], "Today…");
+        // PATCH without label preserves the deliberately chosen label.
+        assert_eq!(updated["label"], "Standup");
         assert!(delete_template(
             State(state.clone()),
             Path((gid.clone(), template_id.clone())),
