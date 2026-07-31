@@ -140,9 +140,11 @@ export const PreviewClosesAfterSend: Story = {
     useAttachmentDrafts.getState().beginSend("c:general", [entry.id], () => {});
     useAttachmentDrafts.getState().sendSucceeded("c:general", [entry.id]);
 
-    await expect(body.queryByRole("dialog", {
-      name: "Image preview: release-dashboard.svg",
-    })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(body.queryByRole("dialog", {
+        name: "Image preview: release-dashboard.svg",
+      })).not.toBeInTheDocument();
+    });
   },
 };
 
