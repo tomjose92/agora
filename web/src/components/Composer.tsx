@@ -102,7 +102,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const attachments = useAttachmentDrafts(s => s.byDraft[draftKey] ?? NO_ATTACHMENTS);
   const [mention, setMention] = useState<{ items: MentionCandidate[]; active: number; start: number } | null>(null);
   const [addrOpen, setAddrOpen] = useState(false);
-  const [preview, setPreview] = useState<{ url: string; filename: string } | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const addrSel = useAddressing(s => s.addr[draftKey] ?? NO_ADDR);
   const addrToggle = useAddressing(s => s.toggle);
   const addrClear = useAddressing(s => s.clear);
@@ -124,6 +124,8 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const selectedAgents = addrSel
     .map(id => agents.find(a => a.id === id))
     .filter(Boolean) as ChannelAgent[];
+  const previewEntry = attachments.find(entry => entry.id === previewId) ?? null;
+  const previewUrl = previewEntry ? draftAttachmentPreviewUrl(previewEntry) : null;
 
   // Click-away closes the addressing popup (button/popup exempt).
   useEffect(() => {
@@ -358,13 +360,13 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
             const previewable = BROWSER_IMAGE.test(entry.type || "");
             const url = previewable ? draftAttachmentPreviewUrl(entry) : null;
             return (
-            <span key={entry.id} className={`ago-pending-chip ${previewable ? "image" : "file"}`} title={entry.name}>
+            <span key={entry.id} className={`ago-pending-chip ${url ? "image" : "file"}`} title={entry.name}>
               {url ? (
                 <button
                   type="button"
                   className="ago-pending-thumb"
                   aria-label={`Preview ${entry.name}`}
-                  onClick={() => setPreview({ url, filename: entry.name })}
+                  onClick={() => setPreviewId(entry.id)}
                 >
                   <img src={url} alt="" />
                 </button>
@@ -398,7 +400,10 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           )})}
         </div>
       )}
-      {preview && <ImageLightbox {...preview} onClose={() => setPreview(null)} />}
+      {previewEntry && previewUrl && (
+        <ImageLightbox url={previewUrl} filename={previewEntry.name}
+          onClose={() => setPreviewId(null)} />
+      )}
       <div className="chat-input"
         onDragOver={e => e.preventDefault()}
         onDrop={e => {

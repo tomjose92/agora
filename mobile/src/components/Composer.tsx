@@ -461,7 +461,7 @@ export function Composer({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${f.name}`}
-                  hitSlop={8}
+                  style={styles.fileRemove}
                   onPress={() => setFiles(files.filter((_, j) => j !== i))}
                 >
                   <Icon icon={X} size={14} />
@@ -759,6 +759,7 @@ const styles = StyleSheet.create({
   fileMeta: { flex: 1, minWidth: 0 },
   fileText: { color: colors.text, fontSize: 12.5, fontWeight: "600" },
   fileSize: { marginTop: 2, color: colors.faint, fontSize: 10.5 },
+  fileRemove: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   row: { flexDirection: "row", alignItems: "flex-end", padding: 10, gap: 8 },
   colFocused: { paddingHorizontal: 12, paddingTop: 8 },
   iconBtn: { paddingBottom: 9 },

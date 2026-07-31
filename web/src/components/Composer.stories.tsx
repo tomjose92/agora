@@ -124,6 +124,26 @@ export const SendingImage: Story = {
   },
 };
 
+export const PreviewClosesAfterSend: Story = {
+  parameters: { setup: () => stage([previewSvg]) },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button", { name: "Preview release-dashboard.svg" }));
+    const body = within(document.body);
+    await expect(body.findByRole("dialog", {
+      name: "Image preview: release-dashboard.svg",
+    })).resolves.toBeVisible();
+
+    const [entry] = useAttachmentDrafts.getState().byDraft["c:general"];
+    useAttachmentDrafts.getState().beginSend("c:general", [entry.id], () => {});
+    useAttachmentDrafts.getState().sendSucceeded("c:general", [entry.id]);
+
+    await expect(body.queryByRole("dialog", {
+      name: "Image preview: release-dashboard.svg",
+    })).not.toBeInTheDocument();
+  },
+};
+
 export const DraftWithMention: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

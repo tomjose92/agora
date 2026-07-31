@@ -18,7 +18,7 @@ export function withToken(url: string): string {
   return url.startsWith("/api/") ? BASE + url : url;
 }
 
-export const BROWSER_IMAGE = /^image\/(jpeg|png|gif|webp|svg\+xml|bmp)$/;
+export const BROWSER_IMAGE = /^image\/(jpeg|png|gif|webp|svg\+xml|bmp)$/i;
 
 export function humanSize(bytes: number): string {
   if (!bytes && bytes !== 0) return "";

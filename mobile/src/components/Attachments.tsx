@@ -15,7 +15,7 @@ import { colors } from "../lib/theme";
 import { Icon } from "./Icon";
 import { toastErr } from "./Toast";
 import { ImagePreviewModal } from "./ImagePreviewModal";
-import { BROWSER_IMAGE } from "../lib/files";
+import { NATIVE_IMAGE } from "../lib/files";
 
 async function downloadAndShare(session: Session, att: Attachment) {
   const target = `${FileSystem.cacheDirectory}${att.id}-${att.filename}`;
@@ -73,7 +73,7 @@ export function Attachments({
               uri: fileUrl(session, att.id),
               headers: authHeaders(session),
             };
-        return BROWSER_IMAGE.test(att.mime) ? (
+        return NATIVE_IMAGE.test(att.mime) ? (
           <Pressable key={att.id} accessibilityRole="button"
             accessibilityLabel={`Preview ${att.filename}`}
             onPress={() => setPreview({ source, filename: att.filename })}>

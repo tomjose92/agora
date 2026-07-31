@@ -138,6 +138,33 @@ describe("attachment drafts", () => {
     expect(revoke).toHaveBeenCalledWith("blob:sending");
   });
 
+  it("does not revoke when removal is attempted during a send", () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:sending");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("image")], "ready", 5).accepted;
+    draftAttachmentPreviewUrl(entry);
+    store.beginSend("c:a", [entry.id], () => {});
+
+    expect(store.remove("c:a", entry.id)).toBe(false);
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it("keeps the preview URL after a failed send for retry", () => {
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:retry");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("image")], "ready", 5).accepted;
+    draftAttachmentPreviewUrl(entry);
+    store.beginSend("c:a", [entry.id], () => {});
+    store.sendFailed("c:a", [entry.id]);
+
+    const retry = useAttachmentDrafts.getState().byDraft["c:a"][0];
+    expect(draftAttachmentPreviewUrl(retry)).toBe("blob:retry");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
   it("does not create previews before a dropped file is ready", () => {
     const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:ready");
     const store = useAttachmentDrafts.getState();
