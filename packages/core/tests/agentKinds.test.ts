@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentWsUrl, inferPairingKind } from "../src/lib/agentKinds";
+import { agentWsUrl } from "../src/api/client";
+import { inferPairingKind } from "../src/lib/agentKinds";
 
 describe("inferPairingKind", () => {
   it("prefers explicit metadata", () => {
@@ -32,9 +33,9 @@ describe("inferPairingKind", () => {
 });
 
 describe("agentWsUrl", () => {
-  it("preserves a path-mounted https server and encodes the credential", () => {
+  it("uses the https server origin and encodes the credential", () => {
     expect(agentWsUrl("https://agora.example/app/", "token with spaces")).toBe(
-      "wss://agora.example/app/agent/ws?token=token%20with%20spaces",
+      "wss://agora.example/agent/ws?token=token%20with%20spaces",
     );
   });
 

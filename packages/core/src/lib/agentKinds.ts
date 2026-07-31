@@ -24,11 +24,3 @@ export function inferPairingKind(token: {
   if (matches("hermes")) return "hermes";
   return null;
 }
-
-/** Build the authenticated agent socket address shown to dial-in agents.
- * The origin may be an http(s) app/server URL; paths and trailing slashes are
- * intentionally discarded so web and native clients produce one contract. */
-export function agentWsUrl(origin: string, token: string): string {
-  const base = origin.replace(/\/+$/, "").replace(/^http/i, "ws");
-  return `${base}/agent/ws?token=${encodeURIComponent(token)}`;
-}

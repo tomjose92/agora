@@ -2,7 +2,10 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, ApiProvider } from "@agora/core";
-import { AddAgentFlow } from "../src/components/AgentConnections";
+import {
+  AddAgentFlow,
+  AgentConnectionsList,
+} from "../src/components/AgentConnections";
 import { useSession } from "../src/state/session";
 import AddAgentScreen from "../app/(app)/add-agent";
 
@@ -33,6 +36,39 @@ class RecordingApi extends ApiClient {
   override async post<T>(path: string, body?: unknown): Promise<T> {
     this.calls.push({ path, body });
     return { token: "issued-secret-token" } as T;
+  }
+
+  override async get<T>(path: string): Promise<T> {
+    if (path === "/api/connections") {
+      return {
+        connections: [
+          {
+            name: "Disabled Pantheo",
+            url: "wss://pantheo.example/agora/connect",
+            enabled: false,
+            status: null,
+          },
+        ],
+      } as T;
+    }
+    if (path === "/api/pairing") {
+      return {
+        tokens: [
+          {
+            token: "codex-token",
+            name: "Codex laptop",
+            kind: "codex",
+            created_at: 1,
+          },
+          {
+            token: "custom-token",
+            name: "Custom integration",
+            created_at: 2,
+          },
+        ],
+      } as T;
+    }
+    throw new Error(`Unexpected GET ${path}`);
   }
 }
 
@@ -117,7 +153,7 @@ test("Another agent deliberately creates generic access without kind", async () 
   act(() => tree.unmount());
 });
 
-test("success state shows a supplied one-time token", () => {
+test("success state shows the supplied token and remote socket address", () => {
   const tree = renderFlow(
     new RecordingApi(),
     React.createElement(AddAgentFlow, {
@@ -126,6 +162,27 @@ test("success state shows a supplied one-time token", () => {
     }),
   );
   expect(JSON.stringify(tree.toJSON())).toContain("one-time-token");
+  expect(JSON.stringify(tree.toJSON())).toContain(
+    "wss://agora.example/agent/ws?token=one-time-token",
+  );
+  act(() => tree.unmount());
+});
+
+test("connection list distinguishes disabled links and unknown agent kinds", async () => {
+  const tree = renderFlow(
+    new RecordingApi(),
+    React.createElement(AgentConnectionsList),
+  );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  const rendered = JSON.stringify(tree.toJSON());
+
+  expect(rendered).toContain("Disabled Pantheo");
+  expect(rendered).toContain("Disabled");
+  expect(rendered).not.toContain("Connecting…");
+  expect(rendered).toContain("Codex");
+  expect(rendered).toContain("Agent");
   act(() => tree.unmount());
 });
 

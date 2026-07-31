@@ -212,8 +212,19 @@ function Card({
 
 function Credential({ label, value }: { label: string; value: string }) {
   const copy = async () => {
-    await Clipboard.setStringAsync(value);
-    toast(`${label} copied`);
+    try {
+      await Clipboard.setStringAsync(value);
+      toast(`${label} copied`);
+    } catch (error) {
+      toastErr(`Couldn't copy ${label.toLowerCase()}`, error);
+    }
+  };
+  const share = async () => {
+    try {
+      await Share.share({ message: value });
+    } catch (error) {
+      toastErr(`Couldn't share ${label.toLowerCase()}`, error);
+    }
   };
   return (
     <View style={styles.credential}>
@@ -223,7 +234,7 @@ function Credential({ label, value }: { label: string; value: string }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Copy ${label}`}
-        hitSlop={8}
+        style={styles.iconButton}
         onPress={() => void copy()}
       >
         <Copy size={19} color={colors.a1} />
@@ -231,8 +242,8 @@ function Credential({ label, value }: { label: string; value: string }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Share ${label}`}
-        hitSlop={8}
-        onPress={() => void Share.share({ message: value })}
+        style={styles.iconButton}
+        onPress={() => void share()}
       >
         <Share2 size={19} color={colors.a1} />
       </Pressable>
@@ -451,7 +462,7 @@ export function AddAgentFlow({
   const definition = kind === "generic" ? undefined : byKind[kind];
   const local = !!definition?.local;
   const guideUrl = local
-    ? `${session.baseUrl}/docs/coding-agents/${kind}.html`
+    ? `${session.baseUrl.replace(/\/+$/, "")}/docs/coding-agents/${kind}.html`
     : null;
   if (issued) {
     const socket = agentWsUrl(session.baseUrl, issued);
@@ -465,7 +476,7 @@ export function AddAgentFlow({
         </Text>
         <Text style={styles.heroCopy}>
           {local
-            ? "Carry this one-time credential to your computer, then follow the setup guide to configure and start the CLI."
+            ? "Carry this access credential to your computer, then follow the setup guide to configure and start the CLI."
             : "Use this credential in the agent’s Agora settings."}
         </Text>
         <Text style={styles.label}>Access token</Text>
@@ -479,7 +490,11 @@ export function AddAgentFlow({
         {guideUrl ? (
           <PrimaryButton
             label="Open setup guide"
-            onPress={() => void Linking.openURL(guideUrl)}
+            onPress={() =>
+              void Linking.openURL(guideUrl).catch((error) =>
+                toastErr("Couldn't open setup guide", error),
+              )
+            }
           />
         ) : null}
         <Pressable style={styles.secondary} onPress={onDone}>
@@ -509,7 +524,11 @@ export function AddAgentFlow({
       {guideUrl ? (
         <Pressable
           style={styles.guideLink}
-          onPress={() => void Linking.openURL(guideUrl)}
+          onPress={() =>
+            void Linking.openURL(guideUrl).catch((error) =>
+              toastErr("Couldn't open setup guide", error),
+            )
+          }
         >
           <Text style={styles.backText}>Open full setup guide</Text>
           <ExternalLink size={15} color={colors.a1} />
@@ -584,9 +603,11 @@ export function AgentConnectionsList() {
             style={[
               styles.dot,
               {
-                backgroundColor: connection.status?.connected
-                  ? colors.green
-                  : colors.faint,
+                backgroundColor: !connection.enabled
+                  ? colors.faint
+                  : connection.status?.connected
+                    ? colors.green
+                    : colors.red,
               },
             ]}
           />
@@ -596,9 +617,11 @@ export function AgentConnectionsList() {
               {connection.url}
             </Text>
             <Text style={styles.rowMeta}>
-              {connection.status?.connected
-                ? `${connection.status.agents.length} agent${connection.status.agents.length === 1 ? "" : "s"}`
-                : connection.status?.last_error || "Connecting…"}
+              {!connection.enabled
+                ? "Disabled"
+                : connection.status?.connected
+                  ? `${connection.status.agents.length} agent${connection.status.agents.length === 1 ? "" : "s"}`
+                  : connection.status?.last_error || "Connecting…"}
             </Text>
           </View>
           <Switch
@@ -656,10 +679,13 @@ export function AgentConnectionsList() {
               </Text>
               <View style={styles.tokenActions}>
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Copy ${token.name} token`}
+                  style={styles.tokenButton}
                   onPress={() =>
-                    void Clipboard.setStringAsync(token.token).then(() =>
-                      toast("Token copied"),
-                    )
+                    void Clipboard.setStringAsync(token.token)
+                      .then(() => toast("Token copied"))
+                      .catch((error) => toastErr("Couldn't copy token", error))
                   }
                 >
                   <Text style={styles.token}>
@@ -667,8 +693,14 @@ export function AgentConnectionsList() {
                   </Text>
                 </Pressable>
                 <Pressable
+                  accessibilityRole="button"
                   accessibilityLabel={`Share ${token.name} token`}
-                  onPress={() => void Share.share({ message: token.token })}
+                  style={styles.iconButton}
+                  onPress={() =>
+                    void Share.share({ message: token.token }).catch((error) =>
+                      toastErr("Couldn't share token", error),
+                    )
+                  }
                 >
                   <Share2 size={15} color={colors.a1} />
                 </Pressable>
@@ -837,6 +869,12 @@ const styles = StyleSheet.create({
     borderColor: colors.borderStrong,
     backgroundColor: colors.panelStrong,
   },
+  iconButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   credentialText: { ...mono, color: colors.text, fontSize: 12, flex: 1 },
   sectionTitle: {
     color: colors.text,
@@ -873,6 +911,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     alignSelf: "flex-start",
+  },
+  tokenButton: {
+    minHeight: 44,
+    justifyContent: "center",
   },
   token: { ...mono, color: colors.a1, fontSize: 10.5, marginTop: 3 },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 18 },

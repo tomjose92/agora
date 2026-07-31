@@ -33,7 +33,10 @@ export function normalizeBaseUrl(input: string): string {
 
 /** The origin fetch actually ended up at (after redirects), so the stored
     base URL matches the server's canonical scheme/host. */
-export function originOf(finalUrl: string | undefined, fallback: string): string {
+export function originOf(
+  finalUrl: string | undefined,
+  fallback: string,
+): string {
   const m = finalUrl?.match(/^https?:\/\/[^/]+/i);
   return m ? m[0] : fallback;
 }
@@ -41,6 +44,14 @@ export function originOf(finalUrl: string | undefined, fallback: string): string
 export function wsUrl(session: Session): string {
   const base = session.baseUrl.replace(/^http/i, "ws");
   return `${base}/ws?token=${encodeURIComponent(session.token)}`;
+}
+
+/** Address shown to dial-in agents. Callers pass an app/server URL, but agent
+ * sockets always live at the server origin rather than below a UI path. */
+export function agentWsUrl(origin: string, token: string): string {
+  const root =
+    origin.match(/^https?:\/\/[^/]+/i)?.[0] || origin.replace(/\/+$/, "");
+  return `${root.replace(/^http/i, "ws")}/agent/ws?token=${encodeURIComponent(token)}`;
 }
 
 export function fileUrl(session: Session, fileId: string): string {
@@ -68,10 +79,7 @@ export class ApiClient {
     return this.session.baseUrl;
   }
 
-  private async request<T>(
-    path: string,
-    init: RequestInit = {},
-  ): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(`${this.session.baseUrl}${path}`, {
       ...init,
       headers: {

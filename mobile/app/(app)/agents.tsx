@@ -85,8 +85,9 @@ export default function AgentsScreen() {
         ))}
         {agents.isSuccess && agents.data.length === 0 ? (
           <Text style={styles.empty}>
-            No agents yet. Use Add agent to connect one; it will appear here
-            when it dials in.
+            {admin
+              ? "No agents yet. Use Add agent to connect one; it will appear here when it dials in."
+              : "No agents are available yet. Ask an instance admin to connect one."}
           </Text>
         ) : null}
         {admin ? (
