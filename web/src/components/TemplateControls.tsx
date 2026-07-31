@@ -130,7 +130,7 @@ export function TemplateControls({ groupId, draft, onChoose }: {
         <Icon name="file-text" />
       </button>
       {open && (
-        <div ref={popRef} className="ago-template-pop" id="ago-template-pop" role="menu">
+        <div ref={popRef} className="ago-template-pop" id="ago-template-pop">
           <div className="ago-template-head">
             <strong>Templates</strong>
             <button onClick={() => openManager()}>Manage</button>

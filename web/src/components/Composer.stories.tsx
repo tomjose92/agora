@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { Composer, useDrafts } from "./Composer";
@@ -65,10 +66,26 @@ const withTemplateRoutes = {
   "POST /api/channels/general/messages": sendMessage,
 };
 
-/* A chosen template lands at the caret, leaving the typed draft in place. */
+/* Swaps channelId on a live Composer the way ChannelPane does — no remount,
+   so the draftKey effect (not a fresh mount) is what clears the caret. */
+function SwitchableComposer(props: React.ComponentProps<typeof Composer>) {
+  const [channel, setChannel] = useState("general");
+  return (
+    <>
+      <button data-testid="switch-channel" onClick={() => setChannel("random")}>
+        switch channel
+      </button>
+      <Composer {...props} channelId={channel} channelName={channel} />
+    </>
+  );
+}
+
+/* A chosen template lands at the caret, leaving the typed draft in place —
+   and a caret from the previous conversation never decides the insert point. */
 export const WithTemplates: Story = {
   parameters: { apiRoutes: withTemplateRoutes },
-  play: async ({ canvasElement, updateArgs }) => {
+  render: args => <SwitchableComposer {...args} />,
+  play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const input = canvas.getByPlaceholderText("Message #general") as HTMLTextAreaElement;
     await userEvent.type(input, "Draft: ");
@@ -78,9 +95,10 @@ export const WithTemplates: Story = {
     await userEvent.click(await canvas.findByText("Daily standup"));
     await waitFor(() => expect(input).toHaveValue(`Dra${fixtureTemplates[0].text}ft: `));
 
+    // Same textarea, new conversation: the stale caret at 3 must not splice.
     useDrafts.getState().set("c:random", "Second draft");
-    await updateArgs({ channelId: "random", channelName: "random" });
-    const next = canvas.getByPlaceholderText("Message #random") as HTMLTextAreaElement;
+    await userEvent.click(canvas.getByTestId("switch-channel"));
+    const next = await canvas.findByPlaceholderText("Message #random") as HTMLTextAreaElement;
     await userEvent.click(canvas.getByTitle("Message templates"));
     await userEvent.click(await canvas.findByText("Daily standup"));
     await waitFor(() => expect(next).toHaveValue(`Second draft${fixtureTemplates[0].text}`));
