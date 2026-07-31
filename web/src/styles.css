@@ -978,12 +978,25 @@ a.btn { text-decoration: none; }
 .ago-react .rc { font-size: 11px; font-weight: 700; }
 .ago-react-wrap { position: relative; display: inline-flex; }
 .ago-react-pop {
-  position: absolute; z-index: 90; left: 50%; bottom: calc(100% + 8px);
-  width: max-content; min-width: 220px; max-width: min(320px, 80vw); transform: translateX(-50%);
+  position: fixed; z-index: 80;
+  width: max-content; min-width: 220px; max-width: min(320px, calc(100vw - 16px));
+  max-height: min(280px, 50vh);
+}
+.ago-react-pop-body {
+  max-height: inherit; overflow-y: auto;
   color: var(--text); background: #171b26; border: 1px solid var(--border-strong);
   border-radius: 10px; padding: 10px; font-size: 11.5px; font-weight: 500;
   line-height: 1.35; white-space: normal; box-shadow: 0 8px 24px rgba(0,0,0,.45);
-  max-height: min(280px, 50vh); overflow-y: auto;
+}
+.ago-react-pop::after {
+  content: ""; position: absolute; left: var(--ago-anchor-x); width: 8px; height: 8px;
+  background: #171b26; border: solid var(--border-strong); transform: translateX(-50%) rotate(45deg);
+}
+.ago-react-pop[data-placement="above"]::after {
+  bottom: -5px; border-width: 0 1px 1px 0;
+}
+.ago-react-pop[data-placement="below"]::after {
+  top: -5px; border-width: 1px 0 0 1px;
 }
 .ago-reactor { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .ago-reactor-av { width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: rgba(139,124,255,.15); color: var(--a2); font-weight: 800; }

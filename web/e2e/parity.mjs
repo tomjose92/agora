@@ -184,7 +184,7 @@ async function main() {
     await bubble.locator(".ago-reacts .ago-react", { hasText: "👍" }).waitFor({ timeout: 8000 });
     const reaction = bubble.locator(".ago-reacts .ago-react", { hasText: "👍" });
     await reaction.hover();
-    const popover = bubble.locator(".ago-react-pop", { hasText: "reactions" });
+    const popover = page.locator(".ago-react-pop", { hasText: "reactions" });
     await popover.waitFor({ timeout: 5000 });
     const me = await api("/api/me");
     await popover.locator("b", { hasText: me.display_name || me.username }).waitFor({ timeout: 5000 });
