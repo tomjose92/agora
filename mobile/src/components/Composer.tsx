@@ -3,7 +3,7 @@
    live agents + group members, and a "talk to" multi-select that prepends
    the chosen agents' mentions to every message sent here. */
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -14,6 +14,9 @@ import {
   Text,
   TextInput,
   View,
+  Image as ReactNativeImage,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import {
   AudioModule,
@@ -23,6 +26,7 @@ import {
   useAudioRecorderState,
 } from "expo-audio";
 import * as Clipboard from "expo-clipboard";
+import { TextInputWrapper, type PasteEventPayload } from "expo-paste-input";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -65,17 +69,60 @@ const REC_KEEP_AWAKE = "composer-voice-note";
 /** Longest edge for uploads; keeps photos comfortably under server caps. */
 const MAX_IMAGE_EDGE = 2048;
 
+const PASTED_IMAGE_MIME: Record<string, string> = {
+  gif: "image/gif",
+  heic: "image/heic",
+  heif: "image/heif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
+  tif: "image/tiff",
+  tiff: "image/tiff",
+  webp: "image/webp",
+};
+let pastedImageSequence = 0;
+
+function imageSize(uri: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    ReactNativeImage.getSize(
+      uri,
+      (width, height) => resolve({ width, height }),
+      () => resolve({ width: 0, height: 0 }),
+    );
+  });
+}
+
+function PasteAwareInput({
+  children,
+  onPaste,
+  style,
+}: {
+  children: ReactElement;
+  onPaste: (payload: PasteEventPayload) => void;
+  style: StyleProp<ViewStyle>;
+}) {
+  if (Platform.OS !== "ios") return children;
+  return <TextInputWrapper style={style} onPaste={onPaste}>{children}</TextInputWrapper>;
+}
+
 async function toWebSafeImage(a: ImagePicker.ImagePickerAsset): Promise<LocalFile> {
   const type = a.mimeType ?? "image/jpeg";
   const name = a.fileName ?? `photo-${Date.now()}.jpg`;
-  const oversize = Math.max(a.width ?? 0, a.height ?? 0) > MAX_IMAGE_EDGE;
+  let width = a.width ?? 0;
+  let height = a.height ?? 0;
+  if (width <= 0 || height <= 0) {
+    const probe = await ImageManipulator.manipulate(a.uri).renderAsync();
+    width = probe.width;
+    height = probe.height;
+  }
+  const oversize = Math.max(width, height) > MAX_IMAGE_EDGE;
   if (WEB_SAFE_IMAGE.test(type) && !oversize) {
     return { uri: a.uri, name, type, size: a.fileSize };
   }
   const ctx = ImageManipulator.manipulate(a.uri);
   if (oversize) {
     ctx.resize(
-      (a.width ?? 0) >= (a.height ?? 0) ? { width: MAX_IMAGE_EDGE } : { height: MAX_IMAGE_EDGE },
+      width >= height ? { width: MAX_IMAGE_EDGE } : { height: MAX_IMAGE_EDGE },
     );
   }
   const rendered = await ctx.renderAsync();
@@ -127,9 +174,13 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<LocalFile[]>(initialFiles);
+  const filesRef = useRef<LocalFile[]>(initialFiles);
   const [preview, setPreview] = useState<LocalFile | null>(null);
   const [focused, setFocused] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
+  const [pasteOps, setPasteOps] = useState(0);
+  const pasteGeneration = useRef(0);
+  const pasteReservations = useRef(0);
   /* "Reply in thread": one message's ask, so it resets after each send. */
   const [replyInThread, setReplyInThread] = useState(false);
   /* "Talk to": which agents this conversation addresses. Session-level state
@@ -150,6 +201,17 @@ export function Composer({
   };
   const selection = useRef({ start: 0, end: 0 });
   const inputRef = useRef<TextInput>(null);
+
+  /* A native paste finishes asynchronously. Invalidate in-flight work when
+     this composer changes conversation or unmounts so an old image can never
+     land in a new draft. */
+  useEffect(() => {
+    pasteGeneration.current += 1;
+    setPasteOps(0);
+    return () => {
+      pasteGeneration.current += 1;
+    };
+  }, [addressKey]);
 
   /* iOS can't present the native picker while the attach-sheet Modal is
      still dismissing — the launch is silently dropped. Stash the action and
@@ -274,10 +336,13 @@ export function Composer({
     inputRef.current?.focus();
   };
 
-  const addFiles = (picked: LocalFile[]) => {
-    const merged = [...files, ...picked].slice(0, MAX_FILES);
-    if (files.length + picked.length > MAX_FILES) toast(`Max ${MAX_FILES} files per message`, "warn");
-    setFiles(merged);
+  const addFiles = (picked: LocalFile[]): LocalFile[] => {
+    const accepted = picked.slice(0, Math.max(0, MAX_FILES - filesRef.current.length));
+    const dropped = picked.slice(accepted.length);
+    filesRef.current = [...filesRef.current, ...accepted];
+    setFiles(filesRef.current);
+    if (dropped.length > 0) toast(`Max ${MAX_FILES} files per message`, "warn");
+    return dropped;
   };
 
   /* Clipboard image → cache file → the same re-encode/attach path photos
@@ -309,6 +374,84 @@ export function Composer({
       ]);
     } catch (e) {
       toastErr("Paste failed", e);
+    }
+  };
+
+  /* The iOS-native wrapper keeps React Native's real TextInput, but teaches
+     its standard edit menu how to turn an image paste into temporary file
+     URIs. Text events are deliberately ignored here: UITextView has already
+     inserted them normally. Some "Copy Image" sources publish both an image
+     and a URL; the native wrapper intentionally gives the image precedence. */
+  const onNativePaste = async (payload: PasteEventPayload) => {
+    if (payload.type !== "images") return;
+
+    const generation = pasteGeneration.current;
+    setPasteOps((count) => count + 1);
+    const pasted: LocalFile[] = [];
+    let reserved = 0;
+    try {
+      const sourceUris = payload.uris.filter((uri): uri is string => typeof uri === "string");
+      const available = Math.max(
+        0,
+        MAX_FILES - filesRef.current.length - pasteReservations.current,
+      );
+      const acceptedUris = sourceUris.slice(0, available);
+      reserved = acceptedUris.length;
+      pasteReservations.current += reserved;
+      for (const sourceUri of sourceUris.slice(available)) {
+        void FileSystem.deleteAsync(sourceUri, { idempotent: true }).catch(() => {});
+      }
+      if (sourceUris.length > available) toast(`Max ${MAX_FILES} files per message`, "warn");
+
+      for (const [index, sourceUri] of acceptedUris.entries()) {
+        const rawName = sourceUri.split("/").pop() ?? "";
+        const ext = rawName.match(/\.([a-z0-9]+)$/i)?.[1].toLowerCase() ?? "unknown";
+        pastedImageSequence += 1;
+        const name = `pasted-${Date.now()}-${pastedImageSequence}-${index}.${ext}`;
+        const uri = `${FileSystem.cacheDirectory}${name}`;
+        let normalized: LocalFile | null = null;
+        try {
+          /* expo-paste-input owns sourceUri in NSTemporaryDirectory. Copy it
+             before returning from the callback so attachment previews/uploads
+             never depend on the package's temporary-file lifetime. */
+          await FileSystem.copyAsync({ from: sourceUri, to: uri });
+          const [size, info] = await Promise.all([
+            imageSize(uri),
+            FileSystem.getInfoAsync(uri).catch(() => null),
+          ]);
+          normalized = await toWebSafeImage({
+            uri,
+            width: size.width,
+            height: size.height,
+            /* Unknown types are deliberately unsafe so normalization decodes
+               and re-encodes them instead of mislabelling bytes as PNG. */
+            mimeType: PASTED_IMAGE_MIME[ext] ?? "application/octet-stream",
+            fileName: name,
+            fileSize: info?.exists ? info.size : undefined,
+          } as ImagePicker.ImagePickerAsset);
+          pasted.push(normalized);
+        } catch (e) {
+          toastErr("Paste failed", e);
+        } finally {
+          void FileSystem.deleteAsync(sourceUri, { idempotent: true }).catch(() => {});
+          if (!normalized || normalized.uri !== uri) {
+            void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+          }
+        }
+      }
+
+      if (generation !== pasteGeneration.current) {
+        for (const file of pasted) {
+          void FileSystem.deleteAsync(file.uri, { idempotent: true }).catch(() => {});
+        }
+        return;
+      }
+      for (const file of addFiles(pasted)) {
+        void FileSystem.deleteAsync(file.uri, { idempotent: true }).catch(() => {});
+      }
+    } finally {
+      pasteReservations.current = Math.max(0, pasteReservations.current - reserved);
+      setPasteOps((count) => Math.max(0, count - 1));
     }
   };
 
@@ -360,6 +503,7 @@ export function Composer({
   };
 
   const send = async () => {
+    if (pasteOps > 0) return;
     const body = text.trim();
     if (!body && files.length === 0) return;
     const prefix = addressedAgents.map((a) => `@${slugify(a.name)}`).join(", ");
@@ -370,6 +514,7 @@ export function Composer({
         replyInThread: threadToggle ? replyInThread : undefined,
       });
       setText("");
+      filesRef.current = [];
       setFiles([]);
       setReplyInThread(false);
     } catch (e) {
@@ -459,7 +604,10 @@ export function Composer({
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${f.name}`}
                   style={styles.fileRemove}
-                  onPress={() => setFiles(files.filter((_, j) => j !== i))}
+                  onPress={() => {
+                    filesRef.current = filesRef.current.filter((_, j) => j !== i);
+                    setFiles(filesRef.current);
+                  }}
                 >
                   <Icon icon={X} size={14} />
                 </Pressable>
@@ -485,31 +633,41 @@ export function Composer({
             <Text style={styles.plusText}>+</Text>
           </Pressable>
         ) : null}
-        <TextInput
-          key="composer-input"
-          ref={inputRef}
-          style={focused ? styles.inputFocused : styles.input}
-          value={text}
-          onChangeText={setText}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          onSelectionChange={(e) => {
-            selection.current = e.nativeEvent.selection;
-          }}
-          placeholder={placeholder}
-          placeholderTextColor={colors.faint}
-          multiline
-          maxLength={20_000}
-        />
+        <PasteAwareInput
+          style={focused ? styles.pasteWrapFocused : styles.pasteWrap}
+          onPaste={(payload) => void onNativePaste(payload)}
+        >
+          <TextInput
+            key="composer-input"
+            ref={inputRef}
+            style={[
+              focused ? styles.inputFocused : styles.input,
+              Platform.OS === "ios" && !focused ? styles.inputIOS : null,
+            ]}
+            value={text}
+            onChangeText={setText}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            onSelectionChange={(e) => {
+              selection.current = e.nativeEvent.selection;
+            }}
+            placeholder={placeholder}
+            placeholderTextColor={colors.faint}
+            multiline
+            maxLength={20_000}
+          />
+        </PasteAwareInput>
         {/* Collapsed with a draft pending (e.g. after the picker stole focus):
             swap the mic for a send button so the draft isn't stranded. */}
         {!focused && (text.trim() || files.length > 0) ? (
           <Pressable
             onPress={send}
-            disabled={sending}
-            style={[styles.sendBtn, sending && styles.sendOff]}
+            disabled={sending || pasteOps > 0}
+            accessibilityRole="button"
+            accessibilityLabel={pasteOps > 0 ? "Processing pasted image" : "Send message"}
+            style={[styles.sendBtn, (sending || pasteOps > 0) && styles.sendOff]}
           >
-            {sending ? (
+            {sending || pasteOps > 0 ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
               <Icon icon={ArrowUp} size={20} color={colors.onAccent} strokeWidth={2.4} />
@@ -565,10 +723,15 @@ export function Composer({
           ) : null}
           <Pressable
             onPress={send}
-            disabled={sending || (!text.trim() && files.length === 0)}
-            style={[styles.sendBtn, (sending || (!text.trim() && files.length === 0)) && styles.sendOff]}
+            disabled={sending || pasteOps > 0 || (!text.trim() && files.length === 0)}
+            accessibilityRole="button"
+            accessibilityLabel={pasteOps > 0 ? "Processing pasted image" : "Send message"}
+            style={[
+              styles.sendBtn,
+              (sending || pasteOps > 0 || (!text.trim() && files.length === 0)) && styles.sendOff,
+            ]}
           >
-            {sending ? (
+            {sending || pasteOps > 0 ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
               <Icon icon={ArrowUp} size={20} color={colors.onAccent} strokeWidth={2.4} />
@@ -759,6 +922,8 @@ const styles = StyleSheet.create({
   fileRemove: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   row: { flexDirection: "row", alignItems: "flex-end", padding: 10, gap: 8 },
   colFocused: { paddingHorizontal: 12, paddingTop: 8 },
+  pasteWrap: { flex: 1 },
+  pasteWrapFocused: { alignSelf: "stretch" },
   iconBtn: { paddingBottom: 9 },
   input: {
     flex: 1,
@@ -773,6 +938,10 @@ const styles = StyleSheet.create({
     paddingTop: 9,
     paddingBottom: 9,
   },
+  /* The native paste wrapper owns horizontal flex on iOS. Let the inner
+     multiline input contribute intrinsic height instead of nesting flex: 1
+     inside an auto-height wrapper. */
+  inputIOS: { flex: 0 },
   /* Focused: the input sheds its pill and spans the full width; the actions
      move into the toolbar row below (Slack's expanded composer). */
   inputFocused: {
