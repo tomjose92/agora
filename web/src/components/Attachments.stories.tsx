@@ -21,6 +21,16 @@ export const Files: Story = {
       ],
     },
   },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const filename = await canvas.findByText("storybook-requirements.pdf");
+    expect(filename).toBeVisible();
+    await expect(canvas.findByText("418.0 KB")).resolves.toBeVisible();
+    expect(filename.closest(".ago-file-meta")).not.toBeNull();
+    const card = filename.closest(".ago-att-file");
+    expect(card).not.toBeNull();
+    expect(card?.querySelector(".ago-file-icon")).not.toBeNull();
+  },
 };
 
 export const ImageLightbox: Story = {

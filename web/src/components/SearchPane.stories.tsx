@@ -13,6 +13,10 @@ const hit = {
   channel_name: "storybook",
   group_id: "product",
   group_name: "Product",
+  // Keep a file card in the search fixture so its shared structure stays covered.
+  attachments: [
+    { id: "spec", filename: "search-result-spec.pdf", mime: "application/pdf", size: 262_144 },
+  ],
   snippet: "The real panes use \u0001fixture\u0002 data.",
 };
 
@@ -65,5 +69,12 @@ export const ResultsAndKeyboardNavigation: Story = {
     await userEvent.clear(reopened);
     await userEvent.type(reopened, "fixture");
     await expect(canvas.findByText("Product planning")).resolves.toBeVisible();
+    const filename = await canvas.findByText("search-result-spec.pdf");
+    expect(filename).toBeVisible();
+    await expect(canvas.findByText("256.0 KB")).resolves.toBeVisible();
+    expect(filename.closest(".ago-file-meta")).not.toBeNull();
+    const card = filename.closest(".ago-att-file");
+    expect(card).not.toBeNull();
+    expect(card?.querySelector(".ago-file-icon")).not.toBeNull();
   },
 };

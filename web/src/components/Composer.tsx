@@ -371,11 +371,11 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
                   <img src={url} alt="" />
                 </button>
               ) : (
-                <span className={`ago-pending-file-icon ${entry.status === "preparing" ? "preparing" : ""}`}>
+                <span className={`ago-file-icon ${entry.status === "preparing" ? "preparing" : ""}`}>
                   <Icon name={imageType ? "image" : "file-text"} />
                 </span>
               )}
-              <span className="ago-pending-meta">
+              <span className="ago-file-meta">
                 <span className="fname">
                 {entry.status === "preparing"
                   ? `Preparing ${entry.name}…`
