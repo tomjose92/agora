@@ -1,9 +1,27 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
+import { Image, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import * as FileSystem from "expo-file-system/legacy";
 import { Composer } from "../src/components/Composer";
 import { Attachments } from "../src/components/Attachments";
 
+jest.mock("expo-file-system/legacy", () => ({
+  cacheDirectory: "file:///cache/",
+  EncodingType: { Base64: "base64" },
+  copyAsync: jest.fn(async () => {}),
+  deleteAsync: jest.fn(async () => {}),
+  getInfoAsync: jest.fn(async () => ({ exists: true, size: 4_096 })),
+  writeAsStringAsync: jest.fn(async () => {}),
+}));
+jest.mock("expo-paste-input", () => {
+  const mockReact = require("react");
+  const { View: MockView } = require("react-native");
+  return {
+    TextInputWrapper: ({ children, ...props }: React.PropsWithChildren<object>) =>
+      mockReact.createElement(MockView, { ...props, testID: "paste-aware-input" }, children),
+  };
+});
 jest.mock("expo-audio", () => ({
   AudioModule: { requestRecordingPermissionsAsync: jest.fn() },
   RecordingPresets: { HIGH_QUALITY: {} },
@@ -24,6 +42,13 @@ const files = [
   { uri: "file:///middle.pdf", name: "middle.pdf", type: "application/pdf", size: 2_048 },
   { uri: "file:///last.txt", name: "last.txt", type: "text/plain" },
 ];
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  (FileSystem.copyAsync as jest.Mock).mockResolvedValue(undefined);
+  (FileSystem.deleteAsync as jest.Mock).mockResolvedValue(undefined);
+  (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({ exists: true, size: 4_096 });
+});
 
 function labelled(root: TestRenderer.ReactTestInstance, label: string) {
   return root.find((node) => node.props.accessibilityLabel === label);
@@ -71,6 +96,167 @@ test("composer attachment cards preview images and remove the selected file", ()
   expect(labelled(tree.root, "Remove last.txt")).toBeDefined();
   expect(tree.root.findAll((node) => node.props.accessibilityLabel === "Remove middle.pdf"))
     .toHaveLength(0);
+  act(() => tree.unmount());
+});
+
+test("native iOS image paste becomes an attachment while text paste stays native", async () => {
+  jest.spyOn(Image, "getSize").mockImplementation((_, success) => {
+    success(640, 480);
+  });
+
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {
+    tree = TestRenderer.create(React.createElement(
+      SafeAreaProvider,
+      {
+        initialMetrics: {
+          frame: { x: 0, y: 0, width: 390, height: 844 },
+          insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        },
+      },
+      React.createElement(Composer, {
+        placeholder: "Message #test",
+        mentions: [],
+        sending: false,
+        onSend: async () => {},
+      }),
+    ));
+  });
+
+  const pasteInput = tree.root.findByProps({ testID: "paste-aware-input" });
+  await act(async () => {
+    pasteInput.props.onPaste({ type: "text", value: "ordinary paste" });
+    await Promise.resolve();
+  });
+  expect(tree.root.findAll((node) => node.props.accessibilityLabel?.startsWith("Remove pasted-")))
+    .toHaveLength(0);
+
+  await act(async () => {
+    pasteInput.props.onPaste({ type: "images", uris: ["file:///tmp/copied.png"] });
+    await Promise.resolve();
+  });
+
+  expect(FileSystem.copyAsync).toHaveBeenCalledWith({
+    from: "file:///tmp/copied.png",
+    to: expect.stringMatching(/^file:\/\/\/cache\/pasted-\d+-\d+-0\.png$/),
+  });
+  expect(FileSystem.deleteAsync).toHaveBeenCalledWith(
+    "file:///tmp/copied.png",
+    { idempotent: true },
+  );
+  expect(tree.root.find(
+    (node) => node.type === View && node.props.accessibilityLabel?.startsWith("Remove pasted-"),
+  )).toBeDefined();
+  act(() => tree.unmount());
+});
+
+test("native paste cleans unused temporary images when the draft already has five files", async () => {
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {
+    tree = TestRenderer.create(React.createElement(
+      SafeAreaProvider,
+      {
+        initialMetrics: {
+          frame: { x: 0, y: 0, width: 390, height: 844 },
+          insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        },
+      },
+      React.createElement(Composer, {
+        placeholder: "Message #test",
+        mentions: [],
+        sending: false,
+        initialFiles: [...files, files[0], files[1]],
+        onSend: async () => {},
+      }),
+    ));
+  });
+
+  await act(async () => {
+    tree.root.findByProps({ testID: "paste-aware-input" }).props.onPaste({
+      type: "images",
+      uris: ["file:///tmp/unused-a.png", "file:///tmp/unused-b.png"],
+    });
+    await Promise.resolve();
+  });
+
+  expect(FileSystem.copyAsync).not.toHaveBeenCalled();
+  expect(FileSystem.deleteAsync).toHaveBeenCalledWith(
+    "file:///tmp/unused-a.png",
+    { idempotent: true },
+  );
+  expect(FileSystem.deleteAsync).toHaveBeenCalledWith(
+    "file:///tmp/unused-b.png",
+    { idempotent: true },
+  );
+  act(() => tree.unmount());
+});
+
+test("send waits for native paste processing and failed copies clean both temporary paths", async () => {
+  let releaseCopy!: () => void;
+  (FileSystem.copyAsync as jest.Mock)
+    .mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseCopy = resolve;
+    }))
+    .mockRejectedValueOnce(new Error("copy failed"));
+  jest.spyOn(Image, "getSize").mockImplementation((_, success) => {
+    success(640, 480);
+  });
+  const onSend = jest.fn(async () => {});
+
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {
+    tree = TestRenderer.create(React.createElement(
+      SafeAreaProvider,
+      {
+        initialMetrics: {
+          frame: { x: 0, y: 0, width: 390, height: 844 },
+          insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        },
+      },
+      React.createElement(Composer, {
+        placeholder: "Message #test",
+        mentions: [],
+        sending: false,
+        initialFiles: [files[0]],
+        onSend,
+      }),
+    ));
+  });
+
+  act(() => {
+    tree.root.findByProps({ testID: "paste-aware-input" }).props.onPaste({
+      type: "images",
+      uris: ["file:///tmp/slow.png"],
+    });
+  });
+  expect(labelled(tree.root, "Processing pasted image").props.disabled).toBe(true);
+  await act(async () => {
+    labelled(tree.root, "Processing pasted image").props.onPress();
+    await Promise.resolve();
+  });
+  expect(onSend).not.toHaveBeenCalled();
+
+  await act(async () => {
+    releaseCopy();
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+  expect(labelled(tree.root, "Send message").props.disabled).toBe(false);
+
+  await act(async () => {
+    tree.root.findByProps({ testID: "paste-aware-input" }).props.onPaste({
+      type: "images",
+      uris: ["file:///tmp/broken.png"],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+  expect(FileSystem.deleteAsync).toHaveBeenCalledWith(
+    "file:///tmp/broken.png",
+    { idempotent: true },
+  );
+  expect(FileSystem.deleteAsync).toHaveBeenCalledWith(
+    expect.stringMatching(/^file:\/\/\/cache\/pasted-\d+-\d+-0\.png$/),
+    { idempotent: true },
+  );
   act(() => tree.unmount());
 });
 
