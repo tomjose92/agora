@@ -73,7 +73,7 @@ export function Attachments({
               headers: authHeaders(session),
             };
         return att.mime.startsWith("image/") ? (
-          <Pressable key={att.id} accessibilityRole="button"
+          <Pressable key={att.id} accessibilityRole="button" style={{ alignSelf: "flex-start" }}
             accessibilityLabel={`Preview ${att.filename}`}
             onPress={() => setPreview({ source, filename: att.filename })}>
             <Image source={source} style={styles.image} contentFit="cover" transition={100} />

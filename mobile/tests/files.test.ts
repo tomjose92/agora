@@ -9,7 +9,7 @@ describe("mobile attachment previews", () => {
     expect(WEB_SAFE_IMAGE.test("application/pdf")).toBe(false);
   });
 
-  it("keeps server-stored SVG and BMP attachments inline", () => {
+  it("supports native image formats in local draft previews", () => {
     expect(NATIVE_IMAGE.test("image/jpg")).toBe(true);
     expect(NATIVE_IMAGE.test("image/svg+xml")).toBe(true);
     expect(NATIVE_IMAGE.test("image/bmp")).toBe(true);
