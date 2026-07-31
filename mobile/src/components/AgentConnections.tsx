@@ -261,7 +261,7 @@ export function AddAgentFlow({
   initialKind?: AddKind | null;
   initialIssued?: string | null;
 }) {
-  const session = useSession((s) => s.session)!;
+  const session = useSession((s) => s.session);
   const { width } = useWindowDimensions();
   const wide = width >= 700;
   const connectionMutations = useConnectionMutations();
@@ -272,6 +272,8 @@ export function AddAgentFlow({
   const [url, setUrl] = useState("");
   const [connectionToken, setConnectionToken] = useState("");
   const [issued, setIssued] = useState<string | null>(initialIssued);
+
+  if (!session) return null;
 
   const select = (next: AddKind) => {
     setKind(next);
@@ -497,7 +499,12 @@ export function AddAgentFlow({
             }
           />
         ) : null}
-        <Pressable style={styles.secondary} onPress={onDone}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="View connections"
+          style={styles.secondary}
+          onPress={onDone}
+        >
           <Text style={styles.secondaryText}>View connections</Text>
         </Pressable>
       </View>
@@ -523,6 +530,8 @@ export function AddAgentFlow({
       </View>
       {guideUrl ? (
         <Pressable
+          accessibilityRole="link"
+          accessibilityLabel="Open full setup guide"
           style={styles.guideLink}
           onPress={() =>
             void Linking.openURL(guideUrl).catch((error) =>

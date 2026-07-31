@@ -43,10 +43,20 @@ class RecordingApi extends ApiClient {
       return {
         connections: [
           {
-            name: "Disabled Pantheo",
+            name: "Home",
             url: "wss://pantheo.example/agora/connect",
             enabled: false,
             status: null,
+          },
+          {
+            name: "Office",
+            url: "wss://offline.example/agora/connect",
+            enabled: true,
+            status: {
+              connected: false,
+              agents: [],
+              last_error: "Connection refused",
+            },
           },
         ],
       } as T;
@@ -56,7 +66,7 @@ class RecordingApi extends ApiClient {
         tokens: [
           {
             token: "codex-token",
-            name: "Codex laptop",
+            name: "Laptop",
             kind: "codex",
             created_at: 1,
           },
@@ -83,16 +93,26 @@ function renderFlow(
   if (seedList) {
     queryClient.setQueryData(keys.connections, [
       {
-        name: "Disabled Pantheo",
+        name: "Home",
         url: "wss://pantheo.example/agora/connect",
         enabled: false,
         status: null,
+      },
+      {
+        name: "Office",
+        url: "wss://offline.example/agora/connect",
+        enabled: true,
+        status: {
+          connected: false,
+          agents: [],
+          last_error: "Connection refused",
+        },
       },
     ]);
     queryClient.setQueryData(keys.pairing, [
       {
         token: "codex-token",
-        name: "Codex laptop",
+        name: "Laptop",
         kind: "codex",
         created_at: 1,
       },
@@ -177,6 +197,48 @@ test("Another agent deliberately creates generic access without kind", async () 
   act(() => tree.unmount());
 });
 
+test("Pantheo link validates required fields and submits trimmed values", async () => {
+  const api = new RecordingApi();
+  const onDone = jest.fn();
+  const tree = renderFlow(
+    api,
+    React.createElement(AddAgentFlow, { initialKind: "pantheo", onDone }),
+  );
+
+  act(() => pressText(tree.root, "Link instance"));
+  expect(api.calls).toHaveLength(0);
+
+  act(() =>
+    tree.root
+      .findByProps({ placeholder: "e.g. Home" })
+      .props.onChangeText("  Office  "),
+  );
+  act(() =>
+    tree.root
+      .findByProps({ placeholder: "wss://pantheo.example/agora/connect" })
+      .props.onChangeText("  wss://office.example/agora/connect  "),
+  );
+  act(() =>
+    tree.root
+      .findByProps({ placeholder: "PANTHEO_API_TOKEN" })
+      .props.onChangeText("  secret  "),
+  );
+  await act(async () => pressText(tree.root, "Link instance"));
+
+  expect(api.calls).toEqual([
+    {
+      path: "/api/connections",
+      body: {
+        name: "Office",
+        url: "wss://office.example/agora/connect",
+        token: "secret",
+      },
+    },
+  ]);
+  expect(onDone).toHaveBeenCalledTimes(1);
+  act(() => tree.unmount());
+});
+
 test("success state shows the supplied token and remote socket address", () => {
   const tree = renderFlow(
     new RecordingApi(),
@@ -201,9 +263,10 @@ test("connection list distinguishes disabled links and unknown agent kinds", asy
   await act(async () => {});
   const rendered = JSON.stringify(tree.toJSON());
 
-  expect(rendered).toContain("Disabled Pantheo");
+  expect(rendered).toContain("Home");
   expect(rendered).toContain("Disabled");
   expect(rendered).not.toContain("Connecting…");
+  expect(rendered).toContain("Connection refused");
   expect(rendered).toContain("Codex");
   expect(rendered).toContain("Agent");
   act(() => tree.unmount());

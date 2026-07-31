@@ -18,6 +18,18 @@ const routes = {
           last_error: null,
         },
       },
+      {
+        name: "Office Pantheo",
+        url: "wss://offline.example/agora/connect",
+        enabled: true,
+        status: {
+          name: "Office Pantheo",
+          url: "wss://offline.example/agora/connect",
+          connected: false,
+          agents: [],
+          last_error: "Connection refused",
+        },
+      },
     ],
   },
   "GET /api/pairing": {
@@ -78,6 +90,16 @@ export const Success: Story = {
     <Frame>
       <AddAgentFlow
         initialKind="codex"
+        initialIssued="agora_pairing_example_please_keep_secret"
+      />
+    </Frame>
+  ),
+};
+export const RemoteSuccess: Story = {
+  render: () => (
+    <Frame>
+      <AddAgentFlow
+        initialKind="hermes"
         initialIssued="agora_pairing_example_please_keep_secret"
       />
     </Frame>
