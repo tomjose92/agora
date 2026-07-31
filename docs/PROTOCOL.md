@@ -121,13 +121,22 @@ Hermes wrapper, a shell script, whatever:
 {"type": "typing",   "agent_id": "claw-1", "channel_id": "...", "active": true}
 {"type": "progress", "agent_id": "claw-1", "channel_id": "...", "handle": "h1", "text": "thinking…"}
 
-// reactions on the inbound message, attributed to the agent's display name.
+// Reactions on the inbound message are keyed by agent_id, so they survive
+// agent display-name changes. Message payloads group them by emoji as
+// {emoji, users, reactors?}; reactors contains typed {type, id, name}
+// identities. Older servers may omit reactors, so clients fall back to users.
 // A useful lifecycle is 👀 while working and ☑️ when done.
 // If the message turns out to be for another agent, remove 👀 and do not add ☑️.
 {"type": "reaction", "agent_id": "claw-1", "channel_id": "...",
  "message_id": 123, "emoji": "👀", "action": "add"}
 {"type": "reaction", "agent_id": "claw-1", "channel_id": "...",
  "message_id": 123, "emoji": "👀", "action": "remove"}
+
+// Legacy migration limitation: rows written before typed reactor identities
+// cannot be safely attributed when a user and agent share the stored name,
+// two agents share that name, or the agent was forgotten before migration.
+// Those ambiguous rows remain user-typed rather than risking cross-identity
+// deletion. Fully namespacing the legacy reaction key is a future migration.
 
 // approval buttons: a post can carry `options` (each {id, label, style?}) plus a
 // stable `options_id`. The UI renders them as clickable buttons.

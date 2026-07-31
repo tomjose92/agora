@@ -3,7 +3,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  useApi, useMe, keys, replaceMessage,
+  hasMine, useApi, useMe, keys, replaceMessage,
   type Message, type MessagePages,
 } from "@agora/core";
 import { toast } from "../lib/toast";
@@ -22,7 +22,7 @@ export function useToggleReactionById() {
     }
     if (!message || !me) return;
     const mine = (message.reactions || []).some(r =>
-      r.emoji === emoji && (r.users || []).includes(me.username));
+      r.emoji === emoji && hasMine(r, me.username));
     const path = `/api/channels/${encodeURIComponent(message.channel_id)}`
       + `/messages/${mid}/reactions/${encodeURIComponent(emoji)}`;
     try {

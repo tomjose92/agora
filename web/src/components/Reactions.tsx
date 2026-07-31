@@ -2,7 +2,7 @@
    EmojiPicker. */
 
 import { useEffect, useRef, useState } from "react";
-import { useAgents, useMe, useToggleReaction, useUsers, type Message, type Reaction } from "@agora/core";
+import { hasMine, useAgents, useMe, useToggleReaction, useUsers, type Message, type Reaction } from "@agora/core";
 import { Icon } from "../lib/icons";
 import { withToken } from "../lib/files";
 
@@ -39,9 +39,7 @@ export function Reactions({ message, onPick }: {
     <div className="ago-reacts" ref={root}>
       {list.map(r => {
         const users = r.users || [];
-        const mine = !!me && (r.reactors
-          ? r.reactors.some(x => x.type === "user" && x.id === me.username)
-          : users.includes(me.username));
+        const mine = !!me && hasMine(r, me.username);
         const names = r.reactors?.map(reactor => reactor.name) ?? users;
         const reactors = `${names.join(", ")} reacted with ${r.emoji}`;
         return (
@@ -79,8 +77,8 @@ export function Reactions({ message, onPick }: {
 
 function ReactorPopover({ id, reaction }: { id: string; reaction: Reaction }) {
   const users = useUsers().data || [];
-  const agents = useAgents().data || [];
-  const reactors = reaction.reactors ?? reaction.users.map(name => ({ type: "user" as const, id: name, name }));
+  const agents = useAgents(60_000).data || [];
+  const reactors = reaction.reactors ?? (reaction.users || []).map(name => ({ type: "user" as const, id: name, name }));
   return <div id={id} className="ago-react-pop" role="tooltip">
     <strong>{reaction.emoji} reactions</strong>
     {reactors.map(r => {
