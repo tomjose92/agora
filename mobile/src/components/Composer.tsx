@@ -821,7 +821,10 @@ export function Composer({
           groupId={groupId}
           visible={templateSheet}
           draft={text}
-          onClose={() => setTemplateSheet(false)}
+          onClose={() => {
+            setTemplateSheet(false);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
           onChoose={insertTemplate}
         />
       ) : null}

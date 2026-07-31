@@ -19,6 +19,7 @@ import {
 import { Pencil, Plus, Trash2, X } from "lucide-react-native";
 import {
   MAX_MESSAGE_CHARS,
+  MAX_TEMPLATE_LABEL_CHARS,
   useCreateTemplate,
   useDeleteTemplate,
   useTemplates,
@@ -108,7 +109,7 @@ export function TemplateSheet({ groupId, visible, draft, onChoose, onClose }: {
                 <TextInput
                   value={label}
                   onChangeText={setLabel}
-                  maxLength={80}
+                  maxLength={MAX_TEMPLATE_LABEL_CHARS}
                   placeholder="Optional label"
                   placeholderTextColor={colors.faint}
                   style={s.input}

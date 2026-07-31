@@ -240,7 +240,7 @@
           ? "Sign in with an allowed Google account."
           : admin
             ? "Admin sign-in: paste this server's admin key (printed in its log)."
-            : "Admin sign-in is disabled on this server.";
+            : "No interactive sign-in method is enabled on this server. Contact its administrator.";
         show("signin");
       } catch (e) {
         setStatus(String(e), "error");

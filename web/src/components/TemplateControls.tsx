@@ -5,6 +5,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   MAX_MESSAGE_CHARS,
+  MAX_TEMPLATE_LABEL_CHARS,
   useCreateTemplate,
   useDeleteTemplate,
   useTemplates,
@@ -179,7 +180,7 @@ export function TemplateControls({ groupId, draft, onChoose }: {
             {editing ? (
               <>
                 <label>Label
-                  <input value={label} maxLength={80} placeholder="Optional label"
+                  <input value={label} maxLength={MAX_TEMPLATE_LABEL_CHARS} placeholder="Optional label"
                     onChange={e => setLabel(e.target.value)} />
                 </label>
                 <label>Message

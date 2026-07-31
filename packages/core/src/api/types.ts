@@ -486,3 +486,6 @@ export interface InviteLink {
 /* The server rejects messages and templates longer than this (MAX_MESSAGE_CHARS
    in agora-core), so both clients cap their inputs at the same number. */
 export const MAX_MESSAGE_CHARS = 20_000;
+
+/* Keep template labels aligned with MAX_TEMPLATE_LABEL_CHARS in the server. */
+export const MAX_TEMPLATE_LABEL_CHARS = 80;
