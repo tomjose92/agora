@@ -18,7 +18,7 @@ import { rememberServer } from "./servers";
 /* Shared with the background poller, which reads credentials without the store. */
 export const KEY_URL = "agora_server_url";
 export const KEY_TOKEN = "agora_admin_key";
-const KEY_INSTANCE_ADMIN = "agora_instance_admin";
+export const KEY_INSTANCE_ADMIN = "agora_instance_admin";
 /** Pre-rename keychain slot ("owner token" era); migrated in load(). */
 const KEY_TOKEN_LEGACY = "agora_owner_token";
 

@@ -30,6 +30,12 @@ const routes = {
           last_error: "Connection refused",
         },
       },
+      {
+        name: "Paused Pantheo",
+        url: "wss://paused.example/agora/connect",
+        enabled: false,
+        status: null,
+      },
     ],
   },
   "GET /api/pairing": {

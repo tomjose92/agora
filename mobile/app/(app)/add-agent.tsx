@@ -22,6 +22,7 @@ type Tab = "connections" | "add";
 export default function AddAgentScreen() {
   const admin = useSession((s) => s.instanceAdmin);
   const adminKnown = useSession((s) => s.instanceAdminKnown);
+  const loadSession = useSession((s) => s.load);
   const [tab, setTab] = useState<Tab>("add");
   return (
     <>
@@ -32,6 +33,14 @@ export default function AddAgentScreen() {
         {!adminKnown ? (
           <View style={styles.denied}>
             <Text style={styles.deniedTitle}>Checking admin access…</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retry checking admin access"
+              style={styles.retry}
+              onPress={() => void loadSession()}
+            >
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
           </View>
         ) : !admin ? (
           <View style={styles.denied}>
@@ -120,4 +129,13 @@ const styles = StyleSheet.create({
   },
   deniedTitle: { color: colors.text, fontSize: 20, fontWeight: "800" },
   deniedCopy: { color: colors.dim, textAlign: "center", lineHeight: 20 },
+  retry: {
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+  },
+  retryText: { color: colors.a1, fontSize: 14, fontWeight: "700" },
 });

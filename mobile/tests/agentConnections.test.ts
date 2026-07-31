@@ -385,8 +385,13 @@ test("non-admins see the route denial instead of the management flow", () => {
 });
 
 test("unknown admin role renders a loading state instead of a denial", () => {
+  const load = jest.fn(async () => {});
   act(() =>
-    useSession.setState({ instanceAdmin: false, instanceAdminKnown: false }),
+    useSession.setState({
+      instanceAdmin: false,
+      instanceAdminKnown: false,
+      load,
+    }),
   );
   let tree!: TestRenderer.ReactTestRenderer;
   act(() => {
@@ -395,5 +400,7 @@ test("unknown admin role renders a loading state instead of a denial", () => {
   const rendered = JSON.stringify(tree.toJSON());
   expect(rendered).toContain("Checking admin access…");
   expect(rendered).not.toContain("Admin access required");
+  act(() => labelled(tree.root, "Retry checking admin access").props.onPress());
+  expect(load).toHaveBeenCalledTimes(1);
   act(() => tree.unmount());
 });

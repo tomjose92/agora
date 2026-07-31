@@ -164,6 +164,7 @@ function PrimaryButton({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -616,60 +617,66 @@ export function AgentConnectionsList() {
       <Text style={styles.sectionTitle}>Pantheo instances</Text>
       {(connections.data ?? []).map((connection) => (
         <View key={connection.name} style={styles.row}>
-          <AgentMark definition={byKind.pantheo} size={38} />
-          <View
-            style={[
-              styles.dot,
-              {
-                backgroundColor: !connection.enabled
-                  ? colors.faint
+          <View style={styles.rowTop}>
+            <View style={styles.markWrap}>
+              <AgentMark definition={byKind.pantheo} size={42} />
+              <View
+                style={[
+                  styles.markDot,
+                  {
+                    backgroundColor: !connection.enabled
+                      ? colors.faint
+                      : connection.status?.connected
+                        ? colors.green
+                        : colors.red,
+                  },
+                ]}
+              />
+            </View>
+            <View style={styles.rowMain}>
+              <Text style={styles.rowName}>{connection.name}</Text>
+              <Text numberOfLines={1} style={styles.rowMeta}>
+                {connection.url}
+              </Text>
+              <Text
+                numberOfLines={connection.status?.last_error ? 2 : undefined}
+                style={[
+                  styles.rowMeta,
+                  connection.enabled &&
+                    connection.status?.last_error &&
+                    styles.rowError,
+                ]}
+              >
+                {!connection.enabled
+                  ? "Disabled"
                   : connection.status?.connected
-                    ? colors.green
-                    : colors.red,
-              },
-            ]}
-          />
-          <View style={styles.rowMain}>
-            <Text style={styles.rowName}>{connection.name}</Text>
-            <Text numberOfLines={1} style={styles.rowMeta}>
-              {connection.url}
-            </Text>
-            <Text
-              numberOfLines={connection.status?.last_error ? 2 : undefined}
-              style={[
-                styles.rowMeta,
-                connection.enabled &&
-                  connection.status?.last_error &&
-                  styles.rowError,
-              ]}
-            >
-              {!connection.enabled
-                ? "Disabled"
-                : connection.status?.connected
-                  ? `${connection.status.agents.length} agent${connection.status.agents.length === 1 ? "" : "s"}`
-                  : connection.status?.last_error || "Connecting…"}
-            </Text>
+                    ? `${connection.status.agents.length} agent${connection.status.agents.length === 1 ? "" : "s"}`
+                    : connection.status?.last_error || "Connecting…"}
+              </Text>
+            </View>
+            <Switch
+              value={connection.enabled}
+              accessibilityLabel={`${connection.enabled ? "Disable" : "Enable"} ${connection.name}`}
+              onValueChange={(enabled) =>
+                connectionMutations.update.mutate(
+                  { name: connection.name, enabled },
+                  { onError: (e) => toastErr("Update failed", e) },
+                )
+              }
+              trackColor={{ false: colors.faint, true: colors.a1 }}
+            />
           </View>
-          <Switch
-            value={connection.enabled}
-            accessibilityLabel={`${connection.enabled ? "Disable" : "Enable"} ${connection.name}`}
-            onValueChange={(enabled) =>
-              connectionMutations.update.mutate(
-                { name: connection.name, enabled },
-                { onError: (e) => toastErr("Update failed", e) },
-              )
-            }
-            trackColor={{ false: colors.faint, true: colors.a1 }}
-          />
-          <ArmedButton
-            label="Remove"
-            accessibilityLabel={`Remove ${connection.name}`}
-            onConfirm={() =>
-              connectionMutations.remove.mutate(connection.name, {
-                onError: (e) => toastErr("Remove failed", e),
-              })
-            }
-          />
+          <View style={styles.rowFooterEnd}>
+            <ArmedButton
+              label="Remove"
+              accessibilityLabel={`Remove ${connection.name}`}
+              onConfirm={() =>
+                connectionMutations.remove.mutate(connection.name, {
+                  onError: (e) => toastErr("Remove failed", e),
+                })
+              }
+            />
+          </View>
         </View>
       ))}
       {connections.isError && !connections.data ? (
@@ -682,33 +689,39 @@ export function AgentConnectionsList() {
         const definition = definitionFor(token);
         return (
           <View key={token.token} style={styles.row}>
-            <AgentMark definition={definition} size={38} />
-            <View
-              style={[
-                styles.dot,
-                {
-                  backgroundColor: token.connected
-                    ? colors.green
-                    : colors.faint,
-                },
-              ]}
-            />
-            <View style={styles.rowMain}>
-              <View style={styles.nameLine}>
-                <Text style={styles.rowName}>{token.name}</Text>
-                <Text style={styles.kindBadge}>
-                  {definition?.shortTitle ?? "Agent"}
+            <View style={styles.rowTop}>
+              <View style={styles.markWrap}>
+                <AgentMark definition={definition} size={42} />
+                <View
+                  style={[
+                    styles.markDot,
+                    {
+                      backgroundColor: token.connected
+                        ? colors.green
+                        : colors.faint,
+                    },
+                  ]}
+                />
+              </View>
+              <View style={styles.rowMain}>
+                <View style={styles.nameLine}>
+                  <Text style={styles.rowName}>{token.name}</Text>
+                  <Text style={styles.kindBadge}>
+                    {definition?.shortTitle ?? "Agent"}
+                  </Text>
+                </View>
+                <Text style={styles.rowMeta}>
+                  {token.connected
+                    ? token.agents?.map((a) => a.name || a.id).join(", ") ||
+                      "Connected, registering…"
+                    : "Offline"}
+                </Text>
+                <Text style={styles.rowMeta}>
+                  Created {fmtTs(token.created_at)}
                 </Text>
               </View>
-              <Text style={styles.rowMeta}>
-                {token.connected
-                  ? token.agents?.map((a) => a.name || a.id).join(", ") ||
-                    "Connected, registering…"
-                  : "Offline"}
-              </Text>
-              <Text style={styles.rowMeta}>
-                Created {fmtTs(token.created_at)}
-              </Text>
+            </View>
+            <View style={styles.rowFooter}>
               <View style={styles.tokenActions}>
                 <Pressable
                   accessibilityRole="button"
@@ -720,7 +733,7 @@ export function AgentConnectionsList() {
                       .catch((error) => toastErr("Couldn't copy token", error))
                   }
                 >
-                  <Text style={styles.token}>
+                  <Text numberOfLines={1} style={styles.token}>
                     {token.token.slice(0, 10)}…{token.token.slice(-4)} · copy
                   </Text>
                 </Pressable>
@@ -737,16 +750,16 @@ export function AgentConnectionsList() {
                   <Share2 size={15} color={colors.a1} />
                 </Pressable>
               </View>
+              <ArmedButton
+                label="Revoke"
+                accessibilityLabel={`Revoke access for ${token.name}`}
+                onConfirm={() =>
+                  pairingMutations.revoke.mutate(token.token, {
+                    onError: (e) => toastErr("Revoke failed", e),
+                  })
+                }
+              />
             </View>
-            <ArmedButton
-              label="Revoke"
-              accessibilityLabel={`Revoke access for ${token.name}`}
-              onConfirm={() =>
-                pairingMutations.revoke.mutate(token.token, {
-                  onError: (e) => toastErr("Revoke failed", e),
-                })
-              }
-            />
           </View>
         );
       })}
@@ -918,20 +931,47 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    padding: 12,
+    gap: 12,
+    padding: 14,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.panel,
   },
+  rowTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  rowFooter: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingLeft: 54,
+  },
+  rowFooterEnd: {
+    minHeight: 44,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+  },
   rowMain: { flex: 1, minWidth: 0, gap: 2 },
-  rowName: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  rowName: { color: colors.text, fontSize: 15, fontWeight: "700" },
   rowMeta: { color: colors.dim, fontSize: 11.5 },
   rowError: { color: colors.red },
-  dot: { width: 8, height: 8, borderRadius: 4 },
+  markWrap: { position: "relative" },
+  markDot: {
+    position: "absolute",
+    right: -3,
+    bottom: -3,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
   nameLine: { flexDirection: "row", alignItems: "center", gap: 7 },
   kindBadge: {
     color: colors.a2,
@@ -945,13 +985,16 @@ const styles = StyleSheet.create({
   tokenActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    alignSelf: "flex-start",
+    gap: 2,
+    flex: 1,
+    minWidth: 0,
   },
   tokenButton: {
     minHeight: 44,
     justifyContent: "center",
+    flexShrink: 1,
+    minWidth: 0,
   },
-  token: { ...mono, color: colors.a1, fontSize: 10.5, marginTop: 3 },
+  token: { ...mono, color: colors.a1, fontSize: 10.5 },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 18 },
 });
