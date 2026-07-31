@@ -165,6 +165,19 @@ describe("attachment drafts", () => {
     expect(revoke).not.toHaveBeenCalled();
   });
 
+  it("does not revoke an entry that sendSucceeded did not remove", () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:ready");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("image")], "ready", 5).accepted;
+    draftAttachmentPreviewUrl(entry);
+
+    store.sendSucceeded("c:a", [entry.id]);
+
+    expect(useAttachmentDrafts.getState().byDraft["c:a"][0]).toBe(entry);
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
   it("does not create previews before a dropped file is ready", () => {
     const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:ready");
     const store = useAttachmentDrafts.getState();

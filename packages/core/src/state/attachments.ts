@@ -164,18 +164,22 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
 
   sendSucceeded: (draftKey, ids) => {
     sendingTransactions.delete(draftKey);
-    ids.forEach(revokePreviewUrl);
     const sent = new Set(ids);
+    const removed = new Set<string>();
     set((state) => {
       const current = state.byDraft[draftKey] ?? [];
-      const next = current.filter((entry) =>
-        !(sent.has(entry.id) && entry.status === "sending"));
+      const next = current.filter((entry) => {
+        const remove = sent.has(entry.id) && entry.status === "sending";
+        if (remove) removed.add(entry.id);
+        return !remove;
+      });
       if (next.length === current.length) return state;
       const byDraft = { ...state.byDraft };
       if (next.length) byDraft[draftKey] = next;
       else delete byDraft[draftKey];
       return { byDraft };
     });
+    removed.forEach(revokePreviewUrl);
   },
 
   sendFailed: (draftKey, ids) => {

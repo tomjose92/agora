@@ -83,12 +83,12 @@ async function toWebSafeImage(a: ImagePicker.ImagePickerAsset): Promise<LocalFil
   }
   const rendered = await ctx.renderAsync();
   const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
-  const info = await FileSystem.getInfoAsync(saved.uri);
+  const info = await FileSystem.getInfoAsync(saved.uri).catch(() => null);
   return {
     uri: saved.uri,
     name: name.replace(/\.[a-z0-9]+$/i, "") + ".jpg",
     type: "image/jpeg",
-    size: info.exists ? info.size : undefined,
+    size: info?.exists ? info.size : undefined,
   };
 }
 

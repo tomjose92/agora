@@ -11,8 +11,8 @@ export function ImagePreviewModal({ source, filename, onClose }: {
 }) {
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <View style={styles.content} pointerEvents="box-none">
+      <Pressable accessibilityRole="none" style={styles.backdrop} onPress={onClose}>
+        <View style={styles.content} pointerEvents="box-none" accessibilityViewIsModal>
           <Pressable accessibilityRole="button" accessibilityLabel="Close image preview"
             style={styles.close} onPress={onClose}>
             <Icon icon={X} size={22} color="#fff" />
