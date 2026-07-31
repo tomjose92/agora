@@ -235,6 +235,13 @@ export default function Connect() {
             <Text style={styles.serverChip}>
               Sign in to <Text style={styles.serverHost}>{base.replace(/^https?:\/\//, "")}</Text>
             </Text>
+            {!probed ? (
+              <Text style={styles.hint}>Checking available sign-in methods…</Text>
+            ) : !admin && !google && !apple ? (
+              <Text style={styles.hint}>
+                No interactive sign-in method is enabled on this server. Contact its administrator.
+              </Text>
+            ) : null}
             {probed && apple ? (
               <AppleAuthentication.AppleAuthenticationButton
                 buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}

@@ -763,7 +763,7 @@ impl Store {
             "SELECT COUNT(*) FROM message_templates WHERE username = ?1 AND group_id = ?2",
             params![username, group_id],
             |r| r.get(0),
-        ).unwrap_or(0);
+        )?;
         if count >= max_count {
             return Ok(None);
         }

@@ -2,7 +2,7 @@
    to"), and create/edit/delete live in a separate dialog so choosing a
    template stays a one-click path. Templates are private per user + group. */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   MAX_MESSAGE_CHARS,
   useCreateTemplate,
@@ -27,6 +27,7 @@ export function TemplateControls({ groupId, draft, onChoose }: {
   const updateTemplate = useUpdateTemplate(groupId);
   const deleteTemplate = useDeleteTemplate(groupId);
   const [open, setOpen] = useState(false);
+  const popoverId = useId();
   const [manage, setManage] = useState(false);
   /* "new" = the editor is open on an unsaved template. */
   const [editing, setEditing] = useState<MessageTemplate | "new" | null>(null);
@@ -125,12 +126,12 @@ export function TemplateControls({ groupId, draft, onChoose }: {
   return (
     <>
       <button ref={btnRef} className={`btn ago-template-btn ${open ? "active" : ""}`}
-        title="Message templates" aria-expanded={open} aria-controls="ago-template-pop"
+        title="Message templates" aria-expanded={open} aria-controls={popoverId}
         onClick={() => setOpen(!open)}>
         <Icon name="file-text" />
       </button>
       {open && (
-        <div ref={popRef} className="ago-template-pop" id="ago-template-pop">
+        <div ref={popRef} className="ago-template-pop" id={popoverId}>
           <div className="ago-template-head">
             <strong>Templates</strong>
             <button onClick={() => openManager()}>Manage</button>

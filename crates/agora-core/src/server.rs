@@ -975,7 +975,7 @@ async fn update_template(
     let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
     require_member(&state, &user, &group_id)?;
-    if payload.get("label").is_none() {
+    if payload.get("label").and_then(Value::as_str).is_none() {
         let label = state.hub.store.message_template_label(
             &template_id, &user.username, &group_id,
         ).ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown template"))?;
@@ -3693,6 +3693,17 @@ mod tests {
         .0;
         assert_eq!(updated["text"], "Today…");
         // PATCH without label preserves the deliberately chosen label.
+        assert_eq!(updated["label"], "Standup");
+        let updated = update_template(
+            State(state.clone()),
+            Path((gid.clone(), template_id.clone())),
+            q(),
+            session_headers(&state, "ana"),
+            Json(json!({"label": null, "text": "Tomorrow…"})),
+        )
+        .await
+        .unwrap()
+        .0;
         assert_eq!(updated["label"], "Standup");
         assert!(delete_template(
             State(state.clone()),
