@@ -15,7 +15,6 @@ import { colors } from "../lib/theme";
 import { Icon } from "./Icon";
 import { toastErr } from "./Toast";
 import { ImagePreviewModal } from "./ImagePreviewModal";
-import { NATIVE_IMAGE } from "../lib/files";
 
 async function downloadAndShare(session: Session, att: Attachment) {
   const target = `${FileSystem.cacheDirectory}${att.id}-${att.filename}`;
@@ -73,7 +72,7 @@ export function Attachments({
               uri: fileUrl(session, att.id),
               headers: authHeaders(session),
             };
-        return NATIVE_IMAGE.test(att.mime) ? (
+        return att.mime.startsWith("image/") ? (
           <Pressable key={att.id} accessibilityRole="button"
             accessibilityLabel={`Preview ${att.filename}`}
             onPress={() => setPreview({ source, filename: att.filename })}>
