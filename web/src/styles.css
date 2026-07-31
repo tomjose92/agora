@@ -1045,8 +1045,8 @@ a.btn { text-decoration: none; }
 .ago-file-icon.preparing { animation: ago-pending-pulse 1.1s ease-in-out infinite; }
 @keyframes ago-pending-pulse { 50% { opacity: .42; } }
 .ago-file-meta { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
-.ago-pending-chip .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ago-pending-chip .fsize { color: var(--faint); font-size: 10.5px; flex-shrink: 0; }
+.ago-file-meta .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ago-file-meta .fsize { color: var(--faint); font-size: 10.5px; }
 .ago-pending-chip .ago-x { align-self: flex-start; opacity: 1; }
 .ago-atts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .ago-att-img {
@@ -1095,11 +1095,9 @@ a.btn { text-decoration: none; }
   color: var(--text);
 }
 /* The card is an <a> inside .bubble; out-specify `.bubble a` so the filename
-   reads as card text rather than a underlined link. */
+   reads as card text rather than an underlined link. */
 .bubble a.ago-att-file { text-decoration: none; color: var(--text); }
 .ago-att-file:hover { border-color: var(--a1); }
-.ago-att-file .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ago-att-file .fsize { color: var(--faint); font-size: 10.5px; }
 
 /* ---------- sources (cited URLs as chips + viewer) ---------- */
 .ago-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
