@@ -27,12 +27,27 @@ type Story = StoryObj<typeof meta>;
 export const Populated: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const mine = await canvas.findByRole("button", { name: /tom, alice, Codex reacted with 👍/ });
+    const mine = await canvas.findByRole("button", { name: /Tom, Alice, Codex reacted with 👍/ });
     await expect(mine).toHaveClass("mine");
     await userEvent.hover(mine);
     await expect(canvas.getByRole("tooltip")).toHaveTextContent("Codex");
     await userEvent.unhover(mine);
     await userEvent.click(mine);
     await expect(removeReaction).toHaveBeenCalled();
+  },
+};
+
+export const LegacyServerPayload: Story = {
+  args: {
+    message: {
+      ...message,
+      reactions: [{ emoji: "👍", users: ["tom", "alice"] }],
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const chip = await within(canvasElement).findByRole("button", {
+      name: /tom, alice reacted with 👍/,
+    });
+    await expect(chip).toHaveClass("mine");
   },
 };

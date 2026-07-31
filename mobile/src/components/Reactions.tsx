@@ -23,6 +23,10 @@ function legacyReactors(r: Reaction): ReactionReactor[] {
   return r.reactors ?? r.users.map((name) => ({ type: "user", id: name, name }));
 }
 
+function reactorNames(r: Reaction): string[] {
+  return r.reactors?.map((reactor) => reactor.name) ?? r.users;
+}
+
 /** Returns react(message, emoji): adds the caller's reaction, or removes it
     when they already reacted with that emoji — picker taps are toggles. */
 export function useReactWith() {
@@ -93,7 +97,7 @@ export function Reactions({ message }: { message: Message }) {
             style={[styles.chip, isMine && styles.chipMine]}
             onPress={() => toggle.mutate({ message, emoji: r.emoji, on: !isMine })}
             onLongPress={() => setSelected(r)}
-            accessibilityLabel={`${r.users.join(", ")} reacted with ${r.emoji}`}
+            accessibilityLabel={`${reactorNames(r).join(", ")} reacted with ${r.emoji}`}
             accessibilityHint="Tap to toggle your reaction. Long press to see everyone who reacted."
             disabled={toggle.isPending}
           >
@@ -102,12 +106,26 @@ export function Reactions({ message }: { message: Message }) {
           </Pressable>
         );
       })}
-      {selected ? <ReactionDetailsSheet reactions={list} initialEmoji={selected.emoji} onClose={() => setSelected(null)} /> : null}
+      {selected ? (
+        <ReactionDetailsSheet
+          reactions={list}
+          initialEmoji={selected.emoji}
+          onClose={() => setSelected(null)}
+        />
+      ) : null}
     </View>
   );
 }
 
-export function ReactionDetailsSheet({ reactions, initialEmoji, onClose }: { reactions: Reaction[]; initialEmoji: string; onClose: () => void }) {
+export function ReactionDetailsSheet({
+  reactions,
+  initialEmoji,
+  onClose,
+}: {
+  reactions: Reaction[];
+  initialEmoji: string;
+  onClose: () => void;
+}) {
   const [emoji, setEmoji] = useState(initialEmoji);
   const users = useUsers();
   const agents = useAgents();
@@ -120,12 +138,45 @@ export function ReactionDetailsSheet({ reactions, initialEmoji, onClose }: { rea
     <Pressable style={styles.backdrop} onPress={onClose}>
       <Pressable style={styles.sheet} accessibilityViewIsModal onPress={() => undefined}>
         <View style={styles.handle} />
-        <View style={styles.tabs}>{reactions.map((r) => <Pressable key={r.emoji} style={[styles.tab, r.emoji === reaction?.emoji && styles.tabActive]} onPress={() => setEmoji(r.emoji)} accessibilityRole="tab"><Text style={styles.tabText}>{r.emoji} {r.users.length}</Text></Pressable>)}</View>
+        <View style={styles.tabs}>
+          {reactions.map((r) => {
+            const selected = r.emoji === reaction?.emoji;
+            return (
+              <Pressable
+                key={r.emoji}
+                style={[styles.tab, selected && styles.tabActive]}
+                onPress={() => setEmoji(r.emoji)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+              >
+                <Text style={styles.tabText}>{r.emoji} {r.users.length}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
         <Text style={styles.title}>{reaction?.emoji} reactions</Text>
-        <ScrollView style={styles.reactorList}>{reactors.map((r) => { const name = nameFor(r); return <View key={`${r.type}:${r.id}`} style={styles.reactorRow}>
-          {r.type === "agent" ? <AgentAvatar agentId={r.id} size={44} /> : <View style={styles.personAvatar}><Text style={styles.personInitial}>{name[0]?.toUpperCase() || "?"}</Text></View>}
-          <View><Text style={styles.reactorName}>{name}</Text><Text style={styles.reactorKind}>@{r.id} · {r.type === "agent" ? "agent" : "person"}</Text></View>
-        </View>; })}</ScrollView>
+        <ScrollView style={styles.reactorList}>
+          {reactors.map((r) => {
+            const name = nameFor(r);
+            return (
+              <View key={`${r.type}:${r.id}`} style={styles.reactorRow}>
+                {r.type === "agent" ? (
+                  <AgentAvatar agentId={r.id} size={44} />
+                ) : (
+                  <View style={styles.personAvatar}>
+                    <Text style={styles.personInitial}>{name[0]?.toUpperCase() || "?"}</Text>
+                  </View>
+                )}
+                <View>
+                  <Text style={styles.reactorName}>{name}</Text>
+                  <Text style={styles.reactorKind}>
+                    @{r.id} · {r.type === "agent" ? "agent" : "person"}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
       </Pressable>
     </Pressable>
   </Modal>;

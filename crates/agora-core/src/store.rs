@@ -3573,6 +3573,24 @@ mod tests {
     }
 
     #[test]
+    fn legacy_key_allows_only_one_same_named_user_or_agent_reaction() {
+        let s = store();
+        s.create_user("Echo", "Echo Person", None, "member").unwrap();
+        s.upsert_agent("echo-agent", "Echo", "test", false, false, 0);
+        let g = s.create_group("G", "", None);
+        let c = s.create_channel(g["id"].as_str().unwrap(), "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let m = s.add_message(cid, "root", "user", "tom", None, None, &[]);
+        let mid = m["id"].as_i64().unwrap();
+
+        assert!(s.add_reaction("Echo", cid, mid, "👍"));
+        assert!(!s.add_agent_reaction("echo-agent", "Echo", cid, mid, "👍"));
+        assert_eq!(s.message(mid).unwrap()["reactions"][0]["reactors"], json!([
+            {"type": "user", "id": "Echo", "name": "Echo Person"}
+        ]));
+    }
+
+    #[test]
     fn reaction_migration_classifies_only_unambiguous_legacy_agents() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("legacy.db");

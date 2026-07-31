@@ -13,31 +13,55 @@ export function Reactions({ message, onPick }: {
   const me = useMe().data;
   const toggle = useToggleReaction();
   const [open, setOpen] = useState<string | null>(null);
+  const root = useRef<HTMLDivElement>(null);
   const hold = useRef<number | null>(null);
   const held = useRef(false);
+  const clearHold = () => {
+    if (hold.current !== null) window.clearTimeout(hold.current);
+    hold.current = null;
+  };
   useEffect(() => {
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(null); };
+    const closeOutside = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(null);
+    };
     window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
+    document.addEventListener("pointerdown", closeOutside);
+    return () => {
+      window.removeEventListener("keydown", close);
+      document.removeEventListener("pointerdown", closeOutside);
+      clearHold();
+    };
   }, []);
   const list = message.reactions || [];
   if (!list.length) return null;
   return (
-    <div className="ago-reacts">
+    <div className="ago-reacts" ref={root}>
       {list.map(r => {
         const users = r.users || [];
         const mine = !!me && (r.reactors
           ? r.reactors.some(x => x.type === "user" && x.id === me.username)
           : users.includes(me.username));
-        const reactors = `${users.join(", ")} reacted with ${r.emoji}`;
+        const names = r.reactors?.map(reactor => reactor.name) ?? users;
+        const reactors = `${names.join(", ")} reacted with ${r.emoji}`;
         return (
           <span key={r.emoji} className="ago-react-wrap" onMouseEnter={() => setOpen(r.emoji)} onMouseLeave={() => setOpen(null)}>
             <button className={`ago-react ${mine ? "mine" : ""}`}
               aria-label={reactors} aria-describedby={open === r.emoji ? `reactors-${message.id}-${r.emoji}` : undefined}
               onFocus={() => setOpen(r.emoji)} onBlur={() => setOpen(null)}
-              onPointerDown={() => { held.current = false; hold.current = window.setTimeout(() => { held.current = true; setOpen(r.emoji); }, 450); }}
-              onPointerUp={() => { if (hold.current) window.clearTimeout(hold.current); }}
-              onPointerCancel={() => { if (hold.current) window.clearTimeout(hold.current); }}
+              onPointerDown={(event) => {
+                held.current = false;
+                if (event.pointerType === "touch") {
+                  hold.current = window.setTimeout(() => {
+                    held.current = true;
+                    setOpen(r.emoji);
+                  }, 450);
+                }
+              }}
+              onPointerUp={clearHold}
+              onPointerCancel={clearHold}
+              onPointerLeave={clearHold}
+              onLostPointerCapture={clearHold}
               onClick={() => { if (held.current) { held.current = false; return; } toggle.mutate({ message, emoji: r.emoji, on: !mine }); }}>
               {r.emoji}<span className="rc">{users.length}</span>
             </button>
