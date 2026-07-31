@@ -976,7 +976,7 @@ a.btn { text-decoration: none; }
   background: rgba(139,124,255,.14); border-color: rgba(139,124,255,.5); color: #cfc8ff;
 }
 .ago-react .rc { font-size: 11px; font-weight: 700; }
-.ago-react-wrap { position: relative; display: inline-flex; }
+.ago-react-wrap { display: inline-flex; }
 .ago-react-pop {
   position: fixed; z-index: 80;
   width: max-content; min-width: 220px; max-width: min(320px, calc(100vw - 16px));
