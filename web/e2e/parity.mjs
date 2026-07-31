@@ -168,11 +168,11 @@ async function main() {
     const body = "reusable parity template body";
     const openPicker = async () => {
       await page.click(".ago-template-btn");
-      await page.waitForSelector("#ago-template-pop", { timeout: 5000 });
+      await page.waitForSelector(".ago-template-pop", { timeout: 5000 });
     };
     // Create one through the manage dialog.
     await openPicker();
-    await page.click("#ago-template-pop .ago-template-add");
+    await page.click(".ago-template-pop .ago-template-add");
     await page.waitForSelector(".ago-template-dialog", { timeout: 5000 });
     await page.fill(".ago-template-dialog input", label);
     await page.fill(".ago-template-dialog textarea", body);
@@ -184,7 +184,7 @@ async function main() {
     // Choosing it inserts at the caret without dropping the typed draft.
     await page.fill("#ago-msg", "Draft: ");
     await openPicker();
-    await page.locator("#ago-template-pop .ago-template-opt", { hasText: label }).first().click();
+    await page.locator(".ago-template-pop .ago-template-opt", { hasText: label }).first().click();
     await page.waitForFunction(
       expected => document.getElementById("ago-msg")?.value === expected,
       `Draft: ${body}`,
@@ -193,7 +193,7 @@ async function main() {
 
     // Delete is a two-step armed click, like the rest of the UI.
     await openPicker();
-    await page.locator("#ago-template-pop .ago-template-head button").click();
+    await page.locator(".ago-template-pop .ago-template-head button").click();
     const row = page.locator(".ago-template-manage-row", { hasText: label }).first();
     await row.locator("button.danger").click();
     await row.locator("button.danger", { hasText: "Sure?" }).click();
