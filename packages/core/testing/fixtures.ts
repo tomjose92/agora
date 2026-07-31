@@ -174,8 +174,12 @@ export const fixtureAgentMessage: Message = {
   ts: 1_750_000_120,
   attachments: [],
   reactions: [
-    { emoji: "👍", users: ["tom", "alice"] },
-    { emoji: "🎉", users: ["alice"] },
+    { emoji: "👍", users: ["tom", "alice", "Codex"], reactors: [
+      { type: "user", id: "tom", name: "Tom" },
+      { type: "user", id: "alice", name: "Alice" },
+      { type: "agent", id: "codex", name: "Codex" },
+    ] },
+    { emoji: "🎉", users: ["alice"], reactors: [{ type: "user", id: "alice", name: "Alice" }] },
   ],
   meta: {
     tldr: "Real panes now use deterministic fixtures.",

@@ -1454,7 +1454,7 @@ impl Hub {
                     return;
                 };
                 let changed = if frame["action"].as_str() == Some("remove") {
-                    self.store.remove_reaction(&agent_name, message_id, emoji)
+                    self.store.remove_agent_reaction(&agent_id, message_id, emoji)
                 } else {
                     let groups = message["reactions"].as_array().cloned().unwrap_or_default();
                     let already = groups.iter().any(|r| r["emoji"] == emoji);
@@ -1462,7 +1462,7 @@ impl Hub {
                         return;
                     }
                     self.store
-                        .add_reaction(&agent_name, &channel_id, message_id, emoji)
+                        .add_agent_reaction(&agent_id, &agent_name, &channel_id, message_id, emoji)
                 };
                 if changed {
                     if let Some(updated) = self.store.message(message_id) {
@@ -2396,10 +2396,11 @@ mod tests {
             "type": "reaction", "agent_id": "bot-a", "channel_id": cid,
             "message_id": mid, "emoji": "👀", "action": "add",
         }));
-        assert_eq!(
-            h.store.message(mid).unwrap()["reactions"],
-            json!([{"emoji": "👀", "users": ["Bot A"]}])
-        );
+        let reactions = h.store.message(mid).unwrap()["reactions"].clone();
+        assert_eq!(reactions[0]["users"], json!(["Bot A"]));
+        assert_eq!(reactions[0]["reactors"], json!([
+            {"type": "agent", "id": "bot-a", "name": "Bot A"}
+        ]));
         assert_eq!(rx.try_recv().unwrap()["type"], "message_update");
 
         // A connected agent that is not a member cannot react in the room.
