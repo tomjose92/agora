@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { inferPairingKind } from "../src/lib/agentKinds";
+import { agentWsUrl, inferPairingKind } from "../src/lib/agentKinds";
 
 describe("inferPairingKind", () => {
   it("prefers explicit metadata", () => {
-    expect(inferPairingKind({ name: "anything", kind: "cursor" })).toBe("cursor");
+    expect(inferPairingKind({ name: "anything", kind: "cursor" })).toBe(
+      "cursor",
+    );
   });
 
   it("rejects unknown explicit metadata", () => {
-    expect(inferPairingKind({ name: "anything", kind: "future-agent" })).toBeNull();
+    expect(
+      inferPairingKind({ name: "anything", kind: "future-agent" }),
+    ).toBeNull();
   });
 
   it.each([
@@ -24,5 +28,19 @@ describe("inferPairingKind", () => {
   it("does not infer from incidental substrings", () => {
     expect(inferPairingKind({ name: "my-codex" })).toBeNull();
     expect(inferPairingKind({ name: "custom integration" })).toBeNull();
+  });
+});
+
+describe("agentWsUrl", () => {
+  it("preserves a path-mounted https server and encodes the credential", () => {
+    expect(agentWsUrl("https://agora.example/app/", "token with spaces")).toBe(
+      "wss://agora.example/app/agent/ws?token=token%20with%20spaces",
+    );
+  });
+
+  it("keeps local http servers on ws", () => {
+    expect(agentWsUrl("http://localhost:8787", "abc")).toBe(
+      "ws://localhost:8787/agent/ws?token=abc",
+    );
   });
 });
