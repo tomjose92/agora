@@ -8,7 +8,7 @@ import {
   esc, mdliteHtml, fmtTs, useAskAi, useGroups, useMe, useSearch, useSearchMore,
   type AskResponse, type FileFilter, type SearchMessageHit, type SearchScope,
 } from "@agora/core";
-import { Icon, iconSvg } from "../lib/icons";
+import { Icon } from "../lib/icons";
 import { fileUrl, humanSize } from "../lib/files";
 import { toast } from "../lib/toast";
 import { useJump } from "../state/jump";
@@ -67,11 +67,15 @@ function MsgRow({ m, num, sel, onClick }: {
           {(m.attachments || []).map(f => (
             <a key={f.id} className="ago-att-file" href={fileUrl(f.id)} download={f.filename}
               target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
-              dangerouslySetInnerHTML={{
-                __html: `<span class="ago-file-icon">${iconSvg((f.mime || "").startsWith("image/") ? "image" : "file-text")}</span>`
-                  + `<span class="ago-file-meta"><span class="fname">${esc(f.filename)}</span>`
-                  + `<span class="fsize">${humanSize(f.size)}</span></span>`,
-              }} />
+              title={`Download ${f.filename}`}>
+              <span className="ago-file-icon">
+                <Icon name={(f.mime || "").startsWith("image/") ? "image" : "file-text"} />
+              </span>
+              <span className="ago-file-meta">
+                <span className="fname">{f.filename}</span>
+                <span className="fsize">{humanSize(f.size)}</span>
+              </span>
+            </a>
           ))}
         </div>
       )}

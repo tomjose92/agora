@@ -1025,11 +1025,12 @@ a.btn { text-decoration: none; }
 .chat-input .ago-thread-ask { flex-shrink: 0; }
 .ago-thread-ask.active { border-color: var(--a1); color: var(--a1); }
 .ago-pending { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 14px 0; }
-.ago-pending-chip {
-  position: relative; display: inline-flex; align-items: center; gap: 8px; max-width: 280px;
+.ago-pending-chip, .ago-att-file {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 280px;
   min-height: 58px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 10px;
   background: rgba(255,255,255,.04); font-size: 12px;
 }
+.ago-pending-chip { position: relative; }
 .ago-pending-chip.image { padding: 4px; }
 .ago-pending-thumb {
   display: block; width: 72px; height: 54px; flex: 0 0 auto; overflow: hidden;
@@ -1086,13 +1087,8 @@ a.btn { text-decoration: none; }
   max-width: 80vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: rgba(255,255,255,.82); font-size: 12px;
 }
-/* Same card geometry as .ago-pending-chip: a posted document should look like
-   the draft the sender just saw in the composer. */
 .ago-att-file {
-  display: inline-flex; align-items: center; gap: 8px; max-width: 280px;
-  min-height: 58px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 10px;
-  background: rgba(255,255,255,.04); font-size: 12px; text-decoration: none;
-  color: var(--text);
+  text-decoration: none; color: var(--text);
 }
 /* The card is an <a> inside .bubble; out-specify `.bubble a` so the filename
    reads as card text rather than an underlined link. */
