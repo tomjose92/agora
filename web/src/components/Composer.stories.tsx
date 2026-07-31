@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { Composer } from "./Composer";
 import { me, message } from "../stories/fixtures/data";
 import { useAttachmentDrafts } from "@agora/core";
@@ -89,9 +89,11 @@ export const ImagePreview: Story = {
       name: "Image preview: release-dashboard.svg",
     })).resolves.toBeVisible();
     await userEvent.keyboard("{Escape}");
-    await expect(body.queryByRole("dialog", {
-      name: "Image preview: release-dashboard.svg",
-    })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(body.queryByRole("dialog", {
+        name: "Image preview: release-dashboard.svg",
+      })).not.toBeInTheDocument();
+    });
   },
 };
 
