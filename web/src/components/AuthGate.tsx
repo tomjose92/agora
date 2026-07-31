@@ -28,8 +28,11 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
       }
       setProbed(true);
     }).catch(() => setProbed(true));
-    inputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (probed && adminEnabled && showTokenForm) inputRef.current?.focus();
+  }, [probed, adminEnabled, showTokenForm]);
 
   const submit = async () => {
     const t = (inputRef.current?.value || "").trim();

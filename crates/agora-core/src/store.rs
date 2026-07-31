@@ -753,7 +753,7 @@ impl Store {
         label: &str,
         text: &str,
         max_count: i64,
-    ) -> Option<Value> {
+    ) -> Result<Option<Value>, rusqlite::Error> {
         // Labels are free text, so they can slugify to nothing (emoji-only);
         // fall back so the id never degenerates to a bare random suffix.
         let seed = if slugify(label).is_empty() { "template" } else { label };
@@ -765,7 +765,7 @@ impl Store {
             |r| r.get(0),
         ).unwrap_or(0);
         if count >= max_count {
-            return None;
+            return Ok(None);
         }
         // Human labels repeat heavily and new_id has a short random suffix.
         // Retry the only expected constraint failure instead of dropping the
@@ -785,12 +785,17 @@ impl Store {
                 }
                 Err(rusqlite::Error::SqliteFailure(e, _))
                     if e.code == ErrorCode::ConstraintViolation => continue,
-                Err(e) => panic!("message template insert failed: {e}"),
+                Err(e) => return Err(e),
             }
         }
-        let id = inserted.expect("message template id collided after three attempts");
-        Some(json!({"id": id, "group_id": group_id, "label": label, "text": text,
-               "created_at": ts, "updated_at": ts}))
+        let Some(id) = inserted else {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+                Some("message template id collided after three attempts".into()),
+            ));
+        };
+        Ok(Some(json!({"id": id, "group_id": group_id, "label": label, "text": text,
+               "created_at": ts, "updated_at": ts})))
     }
 
     /// `None` when the row is not this user's template in this group — the
@@ -3004,7 +3009,8 @@ mod tests {
         let c = s.create_channel(gid, "workouts", "daily");
         let cid = c["id"].as_str().unwrap();
         s.add_message(cid, "hello", "user", "tom", Some("Tom"), None, &[]);
-        s.create_message_template("tom", gid, "Daily", "Daily update", 50);
+        s.create_message_template("tom", gid, "Daily", "Daily update", 50)
+            .unwrap();
         assert_eq!(s.messages(cid, None, None, 50).len(), 1);
         assert!(s.delete_group(gid));
         assert!(s.group(gid).is_none());
@@ -3018,10 +3024,12 @@ mod tests {
         let s = store();
         let g1 = s.create_group("One", "", Some("tom"));
         let g2 = s.create_group("Two", "", Some("tom"));
-        let a = s.create_message_template("tom", g1["id"].as_str().unwrap(), "First", "alpha", 50).unwrap();
-        let b = s.create_message_template("tom", g1["id"].as_str().unwrap(), "Second", "beta", 50).unwrap();
-        s.create_message_template("ana", g1["id"].as_str().unwrap(), "Other", "private", 50);
-        s.create_message_template("tom", g2["id"].as_str().unwrap(), "Elsewhere", "hidden", 50);
+        let a = s.create_message_template("tom", g1["id"].as_str().unwrap(), "First", "alpha", 50).unwrap().unwrap();
+        let b = s.create_message_template("tom", g1["id"].as_str().unwrap(), "Second", "beta", 50).unwrap().unwrap();
+        s.create_message_template("ana", g1["id"].as_str().unwrap(), "Other", "private", 50)
+            .unwrap();
+        s.create_message_template("tom", g2["id"].as_str().unwrap(), "Elsewhere", "hidden", 50)
+            .unwrap();
         assert_eq!(s.message_templates("tom", g1["id"].as_str().unwrap()).len(), 2);
         assert!(s.message_templates("ana", g2["id"].as_str().unwrap()).is_empty());
         let updated = s.update_message_template(a["id"].as_str().unwrap(), "tom", g1["id"].as_str().unwrap(), "First edit", "changed").unwrap();
@@ -3059,7 +3067,8 @@ mod tests {
         s.mark_read("tom", cid, Some(other_id));
         s.mark_thread_read("tom", root_id, Some(root_id));
         s.hide_thread("tom", root_id);
-        s.create_message_template("tom", gid, "Mine", "private draft", 50);
+        s.create_message_template("tom", gid, "Mine", "private draft", 50)
+            .unwrap();
         let file_id = root["attachments"][0]["id"].as_str().unwrap().to_string();
 
         s.delete_user_data("tom");
@@ -3153,7 +3162,8 @@ mod tests {
         assert!(s.user_in_group("tom", gid));
         assert!(!s.user_in_group("alice", gid));
         s.add_member(gid, "user", "alice", "member", None);
-        s.create_message_template("alice", gid, "Standup", "Status update", 50);
+        s.create_message_template("alice", gid, "Standup", "Status update", 50)
+            .unwrap();
         s.remove_member(gid, "user", "alice", None);
         assert_eq!(s.message_templates("alice", gid).len(), 1);
 

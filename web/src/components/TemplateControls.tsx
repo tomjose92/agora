@@ -125,11 +125,12 @@ export function TemplateControls({ groupId, draft, onChoose }: {
   return (
     <>
       <button ref={btnRef} className={`btn ago-template-btn ${open ? "active" : ""}`}
-        title="Message templates" onClick={() => setOpen(!open)}>
+        title="Message templates" aria-expanded={open} aria-controls="ago-template-pop"
+        onClick={() => setOpen(!open)}>
         <Icon name="file-text" />
       </button>
       {open && (
-        <div ref={popRef} className="ago-template-pop" id="ago-template-pop">
+        <div ref={popRef} className="ago-template-pop" id="ago-template-pop" role="menu">
           <div className="ago-template-head">
             <strong>Templates</strong>
             <button onClick={() => openManager()}>Manage</button>

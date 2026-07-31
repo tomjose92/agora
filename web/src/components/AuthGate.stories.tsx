@@ -52,6 +52,7 @@ export const AdminKey: Story = {
     signedIn.mockClear();
     const canvas = within(canvasElement);
     const input = await canvas.findByLabelText("Admin key");
+    await waitFor(() => expect(input).toHaveFocus());
     await userEvent.type(input, "storybook-token{Enter}");
     await expect(signedIn).toHaveBeenCalled();
   },

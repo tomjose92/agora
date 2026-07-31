@@ -956,9 +956,12 @@ async fn create_template(
     let (label, text) = template_fields(&payload)?;
     state.hub.store.create_message_template(
         &user.username, &group_id, &label, &text, MAX_TEMPLATES_PER_GROUP as i64,
-    ).map(Json).ok_or_else(|| err(
+    ).map_err(|e| {
+        tracing::error!("message template insert failed: {e}");
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Could not save template")
+    })?.map(Json).ok_or_else(|| err(
         StatusCode::CONFLICT,
-        "Up to 50 templates per group — delete one first",
+        &format!("Up to {MAX_TEMPLATES_PER_GROUP} templates per group — delete one first"),
     ))
 }
 
@@ -3629,6 +3632,20 @@ mod tests {
                 .await
                 .unwrap_err()
                 .0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            create_template(
+                State(state.clone()), Path(gid.clone()), q(), session_headers(&state, "mal"),
+                Json(json!({"text": "not mine"})),
+            ).await.unwrap_err().0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            delete_template(
+                State(state.clone()), Path((gid.clone(), template_id.clone())), q(),
+                session_headers(&state, "mal"),
+            ).await.unwrap_err().0,
             StatusCode::FORBIDDEN
         );
         state.hub.store.add_member(&gid, "user", "mal", "member", None);

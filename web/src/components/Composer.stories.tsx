@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
-import { Composer } from "./Composer";
+import { Composer, useDrafts } from "./Composer";
 import { me, message } from "../stories/fixtures/data";
 import { useAttachmentDrafts } from "@agora/core";
 import { fixtureTemplates } from "@agora/core/testing/fixtures";
@@ -68,13 +68,22 @@ const withTemplateRoutes = {
 /* A chosen template lands at the caret, leaving the typed draft in place. */
 export const WithTemplates: Story = {
   parameters: { apiRoutes: withTemplateRoutes },
-  play: async ({ canvasElement }) => {
+  play: async ({ canvasElement, updateArgs }) => {
     const canvas = within(canvasElement);
     const input = canvas.getByPlaceholderText("Message #general") as HTMLTextAreaElement;
     await userEvent.type(input, "Draft: ");
+    input.setSelectionRange(3, 3);
+    input.dispatchEvent(new Event("select", { bubbles: true }));
     await userEvent.click(canvas.getByTitle("Message templates"));
     await userEvent.click(await canvas.findByText("Daily standup"));
-    await waitFor(() => expect(input).toHaveValue(`Draft: ${fixtureTemplates[0].text}`));
+    await waitFor(() => expect(input).toHaveValue(`Dra${fixtureTemplates[0].text}ft: `));
+
+    useDrafts.getState().set("c:random", "Second draft");
+    await updateArgs({ channelId: "random", channelName: "random" });
+    const next = canvas.getByPlaceholderText("Message #random") as HTMLTextAreaElement;
+    await userEvent.click(canvas.getByTitle("Message templates"));
+    await userEvent.click(await canvas.findByText("Daily standup"));
+    await waitFor(() => expect(next).toHaveValue(`Second draft${fixtureTemplates[0].text}`));
   },
 };
 
