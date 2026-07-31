@@ -33,13 +33,13 @@ export function AgoraLayout() {
   const [locationKey, setLocationKey] = useState(0);
   const resolvedLocation = useRef<string | null>(null);
   useAgoraSocket(me?.username || "", (m) => {
-    // Live voice: an agent reply in the session's scope closes the turn and
-    // gets spoken; the 🔊 toggle reads out other agent replies unless a live
-    // session already speaks for the selected channel (agoIngestMessage).
+    // Live voice owns the shared audio element globally while active; outside
+    // a live session, the 🔊 toggle reads agent replies aloud.
     liveOnAgentMessage(m);
     const scope = useLiveVoice.getState().scope;
-    const liveHere = !!scope && scope.channelId === useUiState.getState().sel.c;
-    if (useSpeak.getState().on && !liveHere) speakEnqueue(m.id);
+    // Both features share one unlocked audio element. A live session owns it
+    // globally even if the user navigates to another channel.
+    if (useSpeak.getState().on && !scope) speakEnqueue(m.id);
   });
   const toggleReaction = useToggleReactionById();
 

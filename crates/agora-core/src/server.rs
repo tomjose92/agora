@@ -48,12 +48,145 @@ const MAX_IMPORT_BYTES: usize = 256 * 1024 * 1024;
 /// stop against arbitrary blobs going to the transcription API.
 const MAX_VOICE_BYTES: usize = 15 * 1024 * 1024;
 
-/// Synthesized speech per message, LRU-evicted, so replays and multiple
-/// listeners don't re-bill the TTS API. ~64 clips of a few hundred KB each.
-const SPEECH_CACHE_MAX: usize = 64;
+/// Synthesized speech, LRU-evicted by bytes rather than entry count because
+/// sentence chunks vary substantially in size.
+const SPEECH_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
 
-/// message_id -> mp3 bytes, most-recently-used last.
-type SpeechCache = std::sync::Mutex<Vec<(i64, Vec<u8>)>>;
+#[derive(Clone)]
+pub(crate) struct SpeechCacheEntry {
+    key: SpeechCacheKey,
+    audio: axum::body::Bytes,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct SpeechCacheKey {
+    message_id: i64,
+    /// `None` is the compatibility whole-message endpoint.
+    chunk_index: Option<usize>,
+}
+
+#[derive(Default)]
+struct SpeechCacheState {
+    /// Most-recently-used entry last.
+    entries: Vec<SpeechCacheEntry>,
+    in_flight: HashMap<
+        SpeechCacheKey,
+        tokio::sync::watch::Sender<Option<Result<axum::body::Bytes, String>>>,
+    >,
+}
+
+#[derive(Default)]
+pub(crate) struct SpeechCache(std::sync::Mutex<SpeechCacheState>);
+
+enum SpeechCacheClaim {
+    Hit(axum::body::Bytes),
+    Lead(tokio::sync::watch::Sender<Option<Result<axum::body::Bytes, String>>>),
+    Wait(tokio::sync::watch::Receiver<Option<Result<axum::body::Bytes, String>>>),
+}
+
+fn speech_cache_claim(cache: &SpeechCache, key: SpeechCacheKey) -> SpeechCacheClaim {
+    let mut state = cache.0.lock().unwrap();
+    if let Some(i) = state
+        .entries
+        .iter()
+        .position(|entry| entry.key == key)
+    {
+        let entry = state.entries.remove(i);
+        let audio = entry.audio.clone();
+        state.entries.push(entry);
+        return SpeechCacheClaim::Hit(audio);
+    }
+    if let Some(tx) = state.in_flight.get(&key) {
+        return SpeechCacheClaim::Wait(tx.subscribe());
+    }
+    let (tx, _) = tokio::sync::watch::channel(None);
+    state.in_flight.insert(key, tx.clone());
+    SpeechCacheClaim::Lead(tx)
+}
+
+fn speech_cache_finish(
+    cache: &SpeechCache,
+    key: SpeechCacheKey,
+    result: Result<Vec<u8>, String>,
+    tx: tokio::sync::watch::Sender<Option<Result<axum::body::Bytes, String>>>,
+) -> Result<axum::body::Bytes, String> {
+    let result = result.map(axum::body::Bytes::from);
+    let mut state = cache.0.lock().unwrap();
+    state.in_flight.remove(&key);
+    if let Ok(audio) = &result {
+        if audio.len() <= SPEECH_CACHE_MAX_BYTES {
+            state.entries.retain(|entry| entry.key != key);
+            state.entries.push(SpeechCacheEntry { key, audio: audio.clone() });
+            let mut bytes: usize = state.entries.iter().map(|entry| entry.audio.len()).sum();
+            while bytes > SPEECH_CACHE_MAX_BYTES && state.entries.len() > 1 {
+                bytes -= state.entries.remove(0).audio.len();
+            }
+        }
+    }
+    let _ = tx.send(Some(result.clone()));
+    result
+}
+
+async fn synthesize_cached_speech(
+    cache: Arc<SpeechCache>,
+    key: SpeechCacheKey,
+    api_key: String,
+    text: String,
+    normalized_chunk: bool,
+) -> Result<axum::body::Bytes, ApiError> {
+    loop {
+        match speech_cache_claim(&cache, key) {
+            SpeechCacheClaim::Hit(audio) => return Ok(audio),
+            SpeechCacheClaim::Wait(mut rx) => {
+                rx.changed()
+                    .await
+                    .map_err(|_| err(StatusCode::BAD_GATEWAY, "Speech synthesis failed — try again"))?;
+                let result = rx.borrow().clone().ok_or_else(|| {
+                    err(StatusCode::BAD_GATEWAY, "Speech synthesis failed — try again")
+                })?;
+                return result.map_err(|detail| {
+                    tracing::error!("speech synthesis failed: {detail}");
+                    err(StatusCode::BAD_GATEWAY, "Speech synthesis failed — try again")
+                });
+            }
+            SpeechCacheClaim::Lead(tx) => {
+                let mut rx = tx.subscribe();
+                let task_cache = Arc::clone(&cache);
+                // Completion owns cache publication independently of this HTTP
+                // request, so one disconnected listener cannot strand the
+                // single-flight key or discard a billable successful result.
+                tokio::spawn(async move {
+                    let started = Instant::now();
+                    let result = tokio::task::spawn_blocking(move || {
+                        if normalized_chunk {
+                            crate::voice::synthesize_chunk(&api_key, &text)
+                        } else {
+                            crate::voice::synthesize(&api_key, &text)
+                        }
+                    })
+                    .await
+                    .map_err(|_| "speech task failed".to_string())
+                    .and_then(|result| result.map_err(|e| e.to_string()));
+                    tracing::info!(
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "speech synthesis complete"
+                    );
+                    let _ = speech_cache_finish(&task_cache, key, result, tx);
+                });
+                rx.changed()
+                    .await
+                    .map_err(|_| err(StatusCode::BAD_GATEWAY, "Speech synthesis failed — try again"))?;
+                let result = rx.borrow().clone().ok_or_else(|| {
+                    err(StatusCode::BAD_GATEWAY, "Speech synthesis failed — try again")
+                })?;
+                return result.map_err(|detail| {
+                    tracing::error!("speech synthesis failed: {detail}");
+                    err(StatusCode::BAD_GATEWAY, "Speech synthesis failed — try again")
+                });
+            }
+        }
+    }
+}
 
 /// Requests per client per window on the auth surface (Google sign-in): enough
 /// for a real round-trip and retries, low enough to blunt automated abuse of an
@@ -118,8 +251,8 @@ pub struct AppState {
     /// server leaves this unset (the supervisor restarts it after exit 0);
     /// the desktop shell installs a relaunch here.
     pub restart_handler: Arc<std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>>,
-    /// TTS output per message id (see [`SPEECH_CACHE_MAX`]).
-    pub speech_cache: Arc<SpeechCache>,
+    /// Byte-bounded, single-flight TTS output by message/chunk.
+    pub(crate) speech_cache: Arc<SpeechCache>,
     /// Per-client fixed-window limiter for the Google sign-in surface.
     pub auth_limiter: Arc<RateLimiter>,
     /// Per-client fixed-window limiter for the upload surface.
@@ -338,6 +471,14 @@ pub fn router(state: AppState) -> Router {
             post(submit_message_form),
         )
         .route("/api/messages/{message_id}/speech", get(message_speech))
+        .route(
+            "/api/messages/{message_id}/speech/manifest",
+            get(message_speech_manifest),
+        )
+        .route(
+            "/api/messages/{message_id}/speech/chunks/{chunk_index}",
+            get(message_speech_chunk),
+        )
         .route("/api/search", get(search))
         .route("/api/search/ask", post(search_ask))
         .route("/api/threads", get(list_threads))
@@ -1480,6 +1621,7 @@ async fn post_voice_message(
         return Err(err(StatusCode::BAD_REQUEST, "Voice recording too large"));
     }
     let thread_id = resolve_thread(&state, &channel_id, thread_id)?;
+    let transcription_started = Instant::now();
     let text = tokio::task::spawn_blocking(move || crate::voice::transcribe(&key, &audio, &filename))
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Transcription task failed"))?
@@ -1487,6 +1629,10 @@ async fn post_voice_message(
             tracing::error!("voice transcription failed: {e}");
             err(StatusCode::BAD_GATEWAY, "Transcription failed — try again")
         })?;
+    tracing::info!(
+        elapsed_ms = transcription_started.elapsed().as_millis() as u64,
+        "voice transcription complete"
+    );
     if text.is_empty() {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -1536,47 +1682,84 @@ async fn message_speech(
 ) -> Result<Response, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     let message = require_message_visible(&state, &user, message_id)?;
+    let text = message["text"].as_str().unwrap_or_default();
+    if crate::voice::clip_for_tts(text).is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Nothing to speak"));
+    }
     let Some(key) = crate::voice::api_key() else {
         return Err(err(
             StatusCode::BAD_REQUEST,
             "Spoken replies need OPENAI_API_KEY on the server (text-to-speech is not configured)",
         ));
     };
-    let cached = {
-        let mut cache = state.speech_cache.lock().unwrap();
-        match cache.iter().position(|(id, _)| *id == message_id) {
-            Some(i) => {
-                let entry = cache.remove(i);
-                let audio = entry.1.clone();
-                cache.push(entry); // bump to most-recently-used
-                Some(audio)
-            }
-            None => None,
-        }
+    let audio = synthesize_cached_speech(
+        Arc::clone(&state.speech_cache),
+        SpeechCacheKey { message_id, chunk_index: None },
+        key,
+        text.to_string(),
+        false,
+    )
+    .await?;
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert("content-type", "audio/mpeg".parse().unwrap());
+    Ok((resp_headers, audio).into_response())
+}
+
+/// Describe the immutable sentence chunks for a visible message. Chunking is
+/// deterministic, so clients never need to poll synthesis state.
+async fn message_speech_manifest(
+    State(state): State<AppState>,
+    Path(message_id): Path<i64>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    let message = require_message_visible(&state, &user, message_id)?;
+    let chunks = crate::voice::chunks_for_tts(message["text"].as_str().unwrap_or_default());
+    if chunks.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Nothing to speak"));
+    }
+    if crate::voice::api_key().is_none() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Spoken replies need OPENAI_API_KEY on the server (text-to-speech is not configured)",
+        ));
+    }
+    Ok(Json(json!({ "count": chunks.len() })))
+}
+
+/// Synthesize one deterministic sentence chunk. The route remains separately
+/// visibility-checked because clients may request chunks concurrently.
+async fn message_speech_chunk(
+    State(state): State<AppState>,
+    Path((message_id, chunk_index)): Path<(i64, usize)>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    let message = require_message_visible(&state, &user, message_id)?;
+    let chunks = crate::voice::chunks_for_tts(message["text"].as_str().unwrap_or_default());
+    if chunks.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Nothing to speak"));
+    }
+    let text = chunks
+        .get(chunk_index)
+        .cloned()
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown speech chunk"))?;
+    let Some(key) = crate::voice::api_key() else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Spoken replies need OPENAI_API_KEY on the server (text-to-speech is not configured)",
+        ));
     };
-    let audio = match cached {
-        Some(audio) => audio,
-        None => {
-            let text = message["text"].as_str().unwrap_or_default().to_string();
-            if crate::voice::clip_for_tts(&text).is_empty() {
-                return Err(err(StatusCode::BAD_REQUEST, "Nothing to speak"));
-            }
-            let audio = tokio::task::spawn_blocking(move || crate::voice::synthesize(&key, &text))
-                .await
-                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Speech task failed"))?
-                .map_err(|e| {
-                    tracing::error!("speech synthesis failed: {e}");
-                    err(StatusCode::BAD_GATEWAY, "Speech synthesis failed — try again")
-                })?;
-            let mut cache = state.speech_cache.lock().unwrap();
-            cache.retain(|(id, _)| *id != message_id);
-            cache.push((message_id, audio.clone()));
-            if cache.len() > SPEECH_CACHE_MAX {
-                cache.remove(0);
-            }
-            audio
-        }
-    };
+    let audio = synthesize_cached_speech(
+        Arc::clone(&state.speech_cache),
+        SpeechCacheKey { message_id, chunk_index: Some(chunk_index) },
+        key,
+        text,
+        true,
+    )
+    .await?;
     let mut resp_headers = HeaderMap::new();
     resp_headers.insert("content-type", "audio/mpeg".parse().unwrap());
     Ok((resp_headers, audio).into_response())
@@ -3141,7 +3324,7 @@ mod tests {
             ui_dir: None,
             data_dir: dir.path().to_path_buf(),
             restart_handler: Arc::new(std::sync::Mutex::new(None)),
-            speech_cache: Arc::new(std::sync::Mutex::new(Vec::new())),
+            speech_cache: Arc::new(SpeechCache::default()),
             auth_limiter,
             upload_limiter,
         };
@@ -3460,6 +3643,80 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("authorization", format!("Bearer {token}").parse().unwrap());
         h
+    }
+
+    #[tokio::test]
+    async fn speech_manifest_rejects_empty_normalized_messages_without_synthesis() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store
+            .create_user("ana", "Ana", None, "member")
+            .unwrap();
+        let group = store.create_group("Team", "", Some("ana"));
+        let group_id = group["id"].as_str().unwrap();
+        store.add_member(group_id, "user", "ana", "admin", None);
+        let channel = store.create_channel(group_id, "general", "");
+        let message = store.add_message(
+            channel["id"].as_str().unwrap(),
+            "```rust\nprintln!(\"visual only\");\n```",
+            "agent",
+            "bot",
+            Some("Bot"),
+            None,
+            &[],
+        );
+
+        let result = message_speech_manifest(
+            State(state.clone()),
+            Path(message["id"].as_i64().unwrap()),
+            Query(HashMap::new()),
+            session_headers(&state, "ana"),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn speech_cache_keys_whole_messages_and_chunks_separately() {
+        let cache = SpeechCache::default();
+        let put = |key, audio| {
+            let SpeechCacheClaim::Lead(tx) = speech_cache_claim(&cache, key) else {
+                panic!("new key should lead");
+            };
+            speech_cache_finish(&cache, key, Ok(audio), tx).unwrap();
+        };
+        let whole = SpeechCacheKey { message_id: 7, chunk_index: None };
+        let first = SpeechCacheKey { message_id: 7, chunk_index: Some(0) };
+        let second = SpeechCacheKey { message_id: 7, chunk_index: Some(1) };
+        put(whole, vec![1]);
+        put(first, vec![2]);
+        put(second, vec![3]);
+        let hit = |key| match speech_cache_claim(&cache, key) {
+            SpeechCacheClaim::Hit(audio) => Some(audio),
+            _ => None,
+        };
+        assert_eq!(hit(whole).as_deref(), Some(&[1][..]));
+        assert_eq!(hit(first).as_deref(), Some(&[2][..]));
+        assert_eq!(hit(second).as_deref(), Some(&[3][..]));
+        assert!(hit(SpeechCacheKey { message_id: 8, chunk_index: Some(0) }).is_none());
+    }
+
+    #[tokio::test]
+    async fn speech_cache_single_flights_same_chunk() {
+        let cache = SpeechCache::default();
+        let key = SpeechCacheKey { message_id: 9, chunk_index: Some(0) };
+        let SpeechCacheClaim::Lead(tx) = speech_cache_claim(&cache, key) else {
+            panic!("first caller should synthesize");
+        };
+        let SpeechCacheClaim::Wait(mut rx) = speech_cache_claim(&cache, key) else {
+            panic!("concurrent caller should wait");
+        };
+        let audio = speech_cache_finish(&cache, key, Ok(vec![4, 2]), tx).unwrap();
+        assert_eq!(&audio[..], &[4, 2]);
+        rx.changed().await.unwrap();
+        let waited = rx.borrow().clone().unwrap().unwrap();
+        assert_eq!(&waited[..], &[4, 2]);
+        assert!(matches!(speech_cache_claim(&cache, key), SpeechCacheClaim::Hit(_)));
     }
 
     #[tokio::test]
