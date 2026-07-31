@@ -16,7 +16,7 @@ export function withToken(url: string): string {
 
 /* Image formats <img> can decode everywhere. HEIC/HEIF/AVIF render as
    download chips instead of broken inline images. */
-export const BROWSER_IMAGE = /^image\/(jpeg|png|gif|webp|svg\+xml|bmp)$/;
+export const BROWSER_IMAGE = /^image\/(jpeg|png|gif|webp|svg\+xml|bmp)$/i;
 
 export function humanSize(bytes: number): string {
   if (!bytes && bytes !== 0) return "";

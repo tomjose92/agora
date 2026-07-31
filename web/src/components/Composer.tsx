@@ -5,16 +5,17 @@
 import { useEffect, useRef, useState } from "react";
 import {
   DROP_HEAP_MAX_BYTES, DroppedFileError, dropMaterializationLimit,
-  materializeDroppedFile, useAgents, useAttachmentDrafts, useMe, useSendMessage,
+  draftAttachmentPreviewUrl, materializeDroppedFile, useAgents, useAttachmentDrafts, useMe, useSendMessage,
   type ChannelAgent, type DraftAttachment, type OutgoingFile,
 } from "@agora/core";
 import { create } from "zustand";
 import { Icon } from "../lib/icons";
 import { autoGrow } from "../lib/autoGrow";
-import { humanSize, withToken } from "../lib/files";
+import { BROWSER_IMAGE, humanSize, withToken } from "../lib/files";
 import { slugify } from "../lib/mentions";
 import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
+import { ImageLightbox } from "./ImageLightbox";
 
 const MAX_FILES = 5;
 const ATTACHMENT_UPLOAD_TIMEOUT_MS = 120_000;
@@ -101,6 +102,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const attachments = useAttachmentDrafts(s => s.byDraft[draftKey] ?? NO_ATTACHMENTS);
   const [mention, setMention] = useState<{ items: MentionCandidate[]; active: number; start: number } | null>(null);
   const [addrOpen, setAddrOpen] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const addrSel = useAddressing(s => s.addr[draftKey] ?? NO_ADDR);
   const addrToggle = useAddressing(s => s.toggle);
   const addrClear = useAddressing(s => s.clear);
@@ -122,6 +124,8 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const selectedAgents = addrSel
     .map(id => agents.find(a => a.id === id))
     .filter(Boolean) as ChannelAgent[];
+  const previewEntry = attachments.find(entry => entry.id === previewId) ?? null;
+  const previewUrl = previewEntry ? draftAttachmentPreviewUrl(previewEntry) : null;
 
   // Click-away closes the addressing popup (button/popup exempt).
   useEffect(() => {
@@ -351,10 +355,28 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       )}
       {attachments.length > 0 && (
         <div className="ago-pending">
-          {attachments.map(entry => (
-            <span key={entry.id} className="ago-pending-chip" title={entry.name}>
-              <Icon name={(entry.type || "").startsWith("image/") ? "image" : "file-text"} />
-              <span className="fname">
+          {attachments.map(entry => {
+            const imageType = (entry.type || "").startsWith("image/");
+            const previewable = BROWSER_IMAGE.test(entry.type || "");
+            const url = previewable ? draftAttachmentPreviewUrl(entry) : null;
+            return (
+            <span key={entry.id} className={`ago-pending-chip ${url ? "image" : "file"}`} title={entry.name}>
+              {url ? (
+                <button
+                  type="button"
+                  className="ago-pending-thumb"
+                  aria-label={`Preview ${entry.name}`}
+                  onClick={() => setPreviewId(entry.id)}
+                >
+                  <img src={url} alt="" />
+                </button>
+              ) : (
+                <span className={`ago-pending-file-icon ${entry.status === "preparing" ? "preparing" : ""}`}>
+                  <Icon name={imageType ? "image" : "file-text"} />
+                </span>
+              )}
+              <span className="ago-pending-meta">
+                <span className="fname">
                 {entry.status === "preparing"
                   ? `Preparing ${entry.name}…`
                   : entry.status === "sending"
@@ -362,8 +384,9 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
                   : entry.status === "failed"
                     ? entry.error || `Could not read ${entry.name}`
                     : entry.name}
+                </span>
+                {entry.status === "ready" && <span className="fsize">{humanSize(entry.size)}</span>}
               </span>
-              {entry.status === "ready" && <span className="fsize">{humanSize(entry.size)}</span>}
               <button className="ago-x"
                 title={entry.status === "sending"
                   ? "Cancel upload"
@@ -374,8 +397,12 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
                 <Icon name="x" />
               </button>
             </span>
-          ))}
+          )})}
         </div>
+      )}
+      {previewEntry && previewUrl && (
+        <ImageLightbox url={previewUrl} filename={previewEntry.name}
+          onClose={() => setPreviewId(null)} />
       )}
       <div className="chat-input"
         onDragOver={e => e.preventDefault()}

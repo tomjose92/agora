@@ -41,6 +41,30 @@ interface AttachmentDraftState {
 
 let sequence = 0;
 const sendingTransactions = new Map<string, { ids: Set<string>; abort: () => void }>();
+const previewUrls = new Map<string, { file: File; url: string }>();
+
+function revokePreviewUrl(id: string): void {
+  const preview = previewUrls.get(id);
+  if (!preview) return;
+  URL.revokeObjectURL(preview.url);
+  previewUrls.delete(id);
+}
+
+/** Lazily create the browser URL for a ready image draft. The draft store owns
+    its lifetime because composer components unmount while per-channel drafts
+    remain alive. */
+export function draftAttachmentPreviewUrl(entry: DraftAttachment): string | null {
+  if ((entry.status !== "ready" && entry.status !== "sending") || !entry.file || typeof URL === "undefined"
+      || typeof URL.createObjectURL !== "function") {
+    return null;
+  }
+  const current = previewUrls.get(entry.id);
+  if (current?.file === entry.file) return current.url;
+  if (current) revokePreviewUrl(entry.id);
+  const url = URL.createObjectURL(entry.file);
+  previewUrls.set(entry.id, { file: entry.file, url });
+  return url;
+}
 
 function nextAttachmentId(): string {
   sequence += 1;
@@ -139,16 +163,21 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
   sendSucceeded: (draftKey, ids) => {
     sendingTransactions.delete(draftKey);
     const sent = new Set(ids);
+    const removed = new Set<string>();
     set((state) => {
       const current = state.byDraft[draftKey] ?? [];
-      const next = current.filter((entry) =>
-        !(sent.has(entry.id) && entry.status === "sending"));
+      const next = current.filter((entry) => {
+        const remove = sent.has(entry.id) && entry.status === "sending";
+        if (remove) removed.add(entry.id);
+        return !remove;
+      });
       if (next.length === current.length) return state;
       const byDraft = { ...state.byDraft };
       if (next.length) byDraft[draftKey] = next;
       else delete byDraft[draftKey];
       return { byDraft };
     });
+    removed.forEach(revokePreviewUrl);
   },
 
   sendFailed: (draftKey, ids) => {
@@ -184,12 +213,14 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
       else delete byDraft[draftKey];
       return { byDraft };
     });
+    if (removed) revokePreviewUrl(id);
     return removed;
   },
 
   reset: () => {
     for (const transaction of sendingTransactions.values()) transaction.abort();
     sendingTransactions.clear();
+    for (const id of [...previewUrls.keys()]) revokePreviewUrl(id);
     set({ byDraft: {} });
   },
 }));

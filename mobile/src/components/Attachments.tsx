@@ -3,7 +3,7 @@
 
 import React, { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { Image } from "expo-image";
+import { Image, type ImageSource } from "expo-image";
 // The legacy API is the one with documented header support on downloads.
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -14,6 +14,7 @@ import { fmtSize } from "@agora/core";
 import { colors } from "../lib/theme";
 import { Icon } from "./Icon";
 import { toastErr } from "./Toast";
+import { ImagePreviewModal } from "./ImagePreviewModal";
 
 async function downloadAndShare(session: Session, att: Attachment) {
   const target = `${FileSystem.cacheDirectory}${att.id}-${att.filename}`;
@@ -62,25 +63,26 @@ export function Attachments({
   /** Story/testing seam for deterministic inline images; production omits it. */
   imageSource?: (attachment: Attachment) => { uri: string; headers?: Record<string, string> };
 }) {
+  const [preview, setPreview] = useState<{ source: ImageSource; filename: string } | null>(null);
   if (!attachments || attachments.length === 0) return null;
   return (
     <View style={styles.wrap}>
-      {attachments.map((att) =>
-        att.mime.startsWith("image/") ? (
-          <Image
-            key={att.id}
-            source={imageSource?.(att) ?? {
+      {attachments.map((att) => {
+        const source = imageSource?.(att) ?? {
               uri: fileUrl(session, att.id),
               headers: authHeaders(session),
-            }}
-            style={styles.image}
-            contentFit="cover"
-            transition={100}
-          />
+            };
+        return att.mime.startsWith("image/") ? (
+          <Pressable key={att.id} accessibilityRole="button" style={{ alignSelf: "flex-start" }}
+            accessibilityLabel={`Preview ${att.filename}`}
+            onPress={() => setPreview({ source, filename: att.filename })}>
+            <Image source={source} style={styles.image} contentFit="cover" transition={100} />
+          </Pressable>
         ) : (
           <FileChip key={att.id} session={session} att={att} />
-        ),
-      )}
+        );
+      })}
+      {preview ? <ImagePreviewModal {...preview} onClose={() => setPreview(null)} /> : null}
     </View>
   );
 }

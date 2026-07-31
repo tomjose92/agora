@@ -28,12 +28,14 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
+import { Image } from "expo-image";
 import {
   ArrowUp,
   Bot,
   Camera,
   Check,
   ClipboardPaste,
+  FileText,
   Image as ImageIcon,
   MessageSquareReply,
   Mic,
@@ -42,7 +44,7 @@ import {
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "@agora/core";
-import { slugify } from "@agora/core";
+import { fmtSize, slugify } from "@agora/core";
 import { toOutgoing, type LocalFile } from "../api/voice";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
@@ -50,6 +52,8 @@ import { useAddressed } from "@agora/core";
 import { AgentAvatar } from "./AgentAvatar";
 import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
+import { ImagePreviewModal } from "./ImagePreviewModal";
+import { NATIVE_IMAGE, WEB_SAFE_IMAGE } from "../lib/files";
 
 const NONE_ADDRESSED: string[] = [];
 
@@ -58,10 +62,6 @@ const MAX_FILES = 5;
 /** Keep-awake tag for voice notes: the screen must not auto-lock mid-take. */
 const REC_KEEP_AWAKE = "composer-voice-note";
 
-/* Image types the rest of the stack digests: browsers render them and the
-   vision APIs accept them. Everything else (HEIC on every iPhone, AVIF...)
-   is re-encoded to JPEG on device before upload. */
-const WEB_SAFE_IMAGE = /^image\/(jpe?g|png|gif|webp)$/i;
 /** Longest edge for uploads; keeps photos comfortably under server caps. */
 const MAX_IMAGE_EDGE = 2048;
 
@@ -70,7 +70,7 @@ async function toWebSafeImage(a: ImagePicker.ImagePickerAsset): Promise<LocalFil
   const name = a.fileName ?? `photo-${Date.now()}.jpg`;
   const oversize = Math.max(a.width ?? 0, a.height ?? 0) > MAX_IMAGE_EDGE;
   if (WEB_SAFE_IMAGE.test(type) && !oversize) {
-    return { uri: a.uri, name, type };
+    return { uri: a.uri, name, type, size: a.fileSize };
   }
   const ctx = ImageManipulator.manipulate(a.uri);
   if (oversize) {
@@ -80,10 +80,12 @@ async function toWebSafeImage(a: ImagePicker.ImagePickerAsset): Promise<LocalFil
   }
   const rendered = await ctx.renderAsync();
   const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
+  const info = await FileSystem.getInfoAsync(saved.uri).catch(() => null);
   return {
     uri: saved.uri,
     name: name.replace(/\.[a-z0-9]+$/i, "") + ".jpg",
     type: "image/jpeg",
+    size: info?.exists ? info.size : undefined,
   };
 }
 
@@ -101,6 +103,7 @@ export function Composer({
   threadToggle,
   onSend,
   onSendVoice,
+  initialFiles = [],
 }: {
   placeholder: string;
   mentions: MentionCandidate[];
@@ -119,9 +122,12 @@ export function Composer({
       "talk to" prefix ("@a, @b") so the transcript addresses the same agents
       a typed message would. */
   onSendVoice?: (file: LocalFile, mentions?: string) => Promise<void>;
+  /** Deterministic initial attachments for component catalogs and tests. */
+  initialFiles?: LocalFile[];
 }) {
   const [text, setText] = useState("");
-  const [files, setFiles] = useState<LocalFile[]>([]);
+  const [files, setFiles] = useState<LocalFile[]>(initialFiles);
+  const [preview, setPreview] = useState<LocalFile | null>(null);
   const [focused, setFocused] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
   /* "Reply in thread": one message's ask, so it resets after each send. */
@@ -315,6 +321,7 @@ export function Composer({
           uri: a.uri,
           name: a.name ?? "file",
           type: a.mimeType ?? "application/octet-stream",
+          size: a.size,
         })),
       );
     } catch (e) {
@@ -429,19 +436,44 @@ export function Composer({
       ) : null}
       {files.length > 0 ? (
         <ScrollView horizontal style={styles.fileBar} keyboardShouldPersistTaps="always">
-          {files.map((f, i) => (
-            <Pressable
-              key={`${f.uri}-${i}`}
-              style={styles.fileChip}
-              onPress={() => setFiles(files.filter((_, j) => j !== i))}
-            >
-              <Text style={styles.fileText} numberOfLines={1}>
-                {f.name}
-              </Text>
-              <Icon icon={X} size={11} />
-            </Pressable>
-          ))}
+          {files.map((f, i) => {
+            const image = NATIVE_IMAGE.test(f.type);
+            return (
+              <View key={`${f.uri}-${i}`} style={[styles.fileChip, image && styles.imageChip]}>
+                {image ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Preview ${f.name}`}
+                    onPress={() => setPreview(f)}
+                  >
+                    <Image source={{ uri: f.uri }} style={styles.fileThumb} contentFit="cover" />
+                  </Pressable>
+                ) : (
+                  <View style={styles.fileIcon}><Icon icon={FileText} size={20} /></View>
+                )}
+                <View style={styles.fileMeta}>
+                  <Text style={styles.fileText} numberOfLines={1}>{f.name}</Text>
+                  {f.size != null ? <Text style={styles.fileSize}>{fmtSize(f.size)}</Text> : null}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${f.name}`}
+                  style={styles.fileRemove}
+                  onPress={() => setFiles(files.filter((_, j) => j !== i))}
+                >
+                  <Icon icon={X} size={14} />
+                </Pressable>
+              </View>
+            );
+          })}
         </ScrollView>
+      ) : null}
+      {preview ? (
+        <ImagePreviewModal
+          source={{ uri: preview.uri }}
+          filename={preview.name}
+          onClose={() => setPreview(null)}
+        />
       ) : null}
       {/* Slack-style: collapsed = one pill row (+ | input | 🎤); focused =
           full-width input with a toolbar row underneath. The TextInput keeps
@@ -707,15 +739,24 @@ const styles = StyleSheet.create({
   fileChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 8,
     backgroundColor: colors.panelStrong,
-    borderRadius: 8,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
+    borderRadius: 10,
+    minHeight: 58,
+    padding: 7,
     marginRight: 6,
-    maxWidth: 180,
+    width: 220,
   },
-  fileText: { color: colors.dim, fontSize: 12.5, flexShrink: 1 },
+  imageChip: { padding: 4 },
+  fileThumb: { width: 72, height: 54, borderRadius: 7, backgroundColor: colors.panel },
+  fileIcon: {
+    width: 40, height: 42, borderRadius: 7, alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(139,124,255,0.15)",
+  },
+  fileMeta: { flex: 1, minWidth: 0 },
+  fileText: { color: colors.text, fontSize: 12.5, fontWeight: "600" },
+  fileSize: { marginTop: 2, color: colors.faint, fontSize: 10.5 },
+  fileRemove: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   row: { flexDirection: "row", alignItems: "flex-end", padding: 10, gap: 8 },
   colFocused: { paddingHorizontal: 12, paddingTop: 8 },
   iconBtn: { paddingBottom: 9 },

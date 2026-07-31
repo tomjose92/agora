@@ -29,6 +29,32 @@ type Story = StoryObj<typeof meta>;
 
 export const Empty: Story = {};
 
+export const ImageAndDocuments: Story = {
+  args: {
+    initialFiles: [
+      {
+        uri: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+          + "AAAADUlEQVR42mNk+M/wHwAEAQH/2qP8WQAAAABJRU5ErkJggg==",
+        name: "release-dashboard.png",
+        type: "image/png",
+        size: 128_000,
+      },
+      {
+        uri: "file:///storybook/release-plan.pdf",
+        name: "release-plan.pdf",
+        type: "application/pdf",
+        size: 2_842_113,
+      },
+      {
+        uri: "file:///storybook/very-long-document.docx",
+        name: `${"responsive-attachment-review-".repeat(3)}.docx`,
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        size: 543_210,
+      },
+    ],
+  },
+};
+
 export const AddressedToAgents: Story = {
   parameters: {
     setup: () => useAddressed.setState({ byConvo: { general: ["codex", "claude"] } }),
