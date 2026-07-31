@@ -1,7 +1,7 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiClient, ApiProvider } from "@agora/core";
+import { ApiClient, ApiProvider, keys } from "@agora/core";
 import {
   AddAgentFlow,
   AgentConnectionsList,
@@ -75,10 +75,34 @@ class RecordingApi extends ApiClient {
 function renderFlow(
   api: RecordingApi,
   element = React.createElement(AddAgentFlow),
+  seedList = false,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  if (seedList) {
+    queryClient.setQueryData(keys.connections, [
+      {
+        name: "Disabled Pantheo",
+        url: "wss://pantheo.example/agora/connect",
+        enabled: false,
+        status: null,
+      },
+    ]);
+    queryClient.setQueryData(keys.pairing, [
+      {
+        token: "codex-token",
+        name: "Codex laptop",
+        kind: "codex",
+        created_at: 1,
+      },
+      {
+        token: "custom-token",
+        name: "Custom integration",
+        created_at: 2,
+      },
+    ]);
+  }
   let tree!: TestRenderer.ReactTestRenderer;
   act(() => {
     tree = TestRenderer.create(
@@ -172,10 +196,9 @@ test("connection list distinguishes disabled links and unknown agent kinds", asy
   const tree = renderFlow(
     new RecordingApi(),
     React.createElement(AgentConnectionsList),
+    true,
   );
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await act(async () => {});
   const rendered = JSON.stringify(tree.toJSON());
 
   expect(rendered).toContain("Disabled Pantheo");
