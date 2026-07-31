@@ -1036,13 +1036,15 @@ a.btn { text-decoration: none; }
   padding: 0; border: 0; border-radius: 7px; background: var(--panel); cursor: zoom-in;
 }
 .ago-pending-thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
-.ago-pending-file-icon {
+/* Shared card internals: a composer draft and a posted attachment present the
+   same icon tile + stacked name/size, so only their container differs. */
+.ago-file-icon {
   display: grid; place-items: center; width: 38px; height: 42px; flex: 0 0 auto;
   border-radius: 7px; background: rgba(139,124,255,.12); color: var(--a1);
 }
-.ago-pending-file-icon.preparing { animation: ago-pending-pulse 1.1s ease-in-out infinite; }
+.ago-file-icon.preparing { animation: ago-pending-pulse 1.1s ease-in-out infinite; }
 @keyframes ago-pending-pulse { 50% { opacity: .42; } }
-.ago-pending-meta { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.ago-file-meta { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .ago-pending-chip .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ago-pending-chip .fsize { color: var(--faint); font-size: 10.5px; flex-shrink: 0; }
 .ago-pending-chip .ago-x { align-self: flex-start; opacity: 1; }
@@ -1084,15 +1086,20 @@ a.btn { text-decoration: none; }
   max-width: 80vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: rgba(255,255,255,.82); font-size: 12px;
 }
+/* Same card geometry as .ago-pending-chip: a posted document should look like
+   the draft the sender just saw in the composer. */
 .ago-att-file {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-  padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 8px; max-width: 280px;
+  min-height: 58px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 10px;
   background: rgba(255,255,255,.04); font-size: 12px; text-decoration: none;
   color: var(--text);
 }
+/* The card is an <a> inside .bubble; out-specify `.bubble a` so the filename
+   reads as card text rather than a underlined link. */
+.bubble a.ago-att-file { text-decoration: none; color: var(--text); }
 .ago-att-file:hover { border-color: var(--a1); }
 .ago-att-file .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ago-att-file .fsize { color: var(--faint); font-size: 10.5px; flex-shrink: 0; }
+.ago-att-file .fsize { color: var(--faint); font-size: 10.5px; }
 
 /* ---------- sources (cited URLs as chips + viewer) ---------- */
 .ago-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }

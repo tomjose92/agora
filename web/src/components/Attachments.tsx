@@ -26,9 +26,13 @@ export function Attachments({ message }: { message: Message }) {
         return (
           <a key={f.id} className="ago-att-file" href={url} download={f.filename}
             title={`Download ${f.filename}`}>
-            <Icon name={(f.mime || "").startsWith("image/") ? "image" : "file-text"} />
-            {" "}<span className="fname">{f.filename}</span>{" "}
-            <span className="fsize">{humanSize(f.size)}</span>
+            <span className="ago-file-icon">
+              <Icon name={(f.mime || "").startsWith("image/") ? "image" : "file-text"} />
+            </span>
+            <span className="ago-file-meta">
+              <span className="fname">{f.filename}</span>
+              <span className="fsize">{humanSize(f.size)}</span>
+            </span>
           </a>
         );
       })}

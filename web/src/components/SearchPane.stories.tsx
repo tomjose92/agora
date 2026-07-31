@@ -13,6 +13,11 @@ const hit = {
   channel_name: "storybook",
   group_id: "product",
   group_name: "Product",
+  // Search rows build their attachment card as an HTML string, so a story has
+  // to render one for that markup to be covered at all.
+  attachments: [
+    { id: "spec", filename: "search-result-spec.pdf", mime: "application/pdf", size: 262_144 },
+  ],
   snippet: "The real panes use \u0001fixture\u0002 data.",
 };
 
@@ -65,5 +70,8 @@ export const ResultsAndKeyboardNavigation: Story = {
     await userEvent.clear(reopened);
     await userEvent.type(reopened, "fixture");
     await expect(canvas.findByText("Product planning")).resolves.toBeVisible();
+    // Proves the hand-built card markup parses: both spans reach the DOM.
+    await expect(canvas.findByText("search-result-spec.pdf")).resolves.toBeVisible();
+    await expect(canvas.findByText("256.0 KB")).resolves.toBeVisible();
   },
 };

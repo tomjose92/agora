@@ -68,7 +68,9 @@ function MsgRow({ m, num, sel, onClick }: {
             <a key={f.id} className="ago-att-file" href={fileUrl(f.id)} download={f.filename}
               target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
               dangerouslySetInnerHTML={{
-                __html: `${iconSvg((f.mime || "").startsWith("image/") ? "image" : "file-text")} <span class="fname">${esc(f.filename)}</span> <span class="fsize">${humanSize(f.size)}</span>`,
+                __html: `<span class="ago-file-icon">${iconSvg((f.mime || "").startsWith("image/") ? "image" : "file-text")}</span>`
+                  + `<span class="ago-file-meta"><span class="fname">${esc(f.filename)}</span>`
+                  + `<span class="fsize">${humanSize(f.size)}</span></span>`,
               }} />
           ))}
         </div>
