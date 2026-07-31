@@ -22,7 +22,12 @@ jest.mock("expo-constants", () => ({
 
 import * as SecureStore from "expo-secure-store";
 import { KEY_RECENT } from "../src/state/servers";
-import { KEY_URL, useSession } from "../src/state/session";
+import {
+  KEY_INSTANCE_ADMIN,
+  KEY_TOKEN,
+  KEY_URL,
+  useSession,
+} from "../src/state/session";
 
 function resp(body: unknown, status = 200, url = ""): Response {
   return {
@@ -73,4 +78,41 @@ describe("signIn", () => {
       useSession.getState().signIn("http://192.168.1.10:8890", "bad"),
     ).rejects.toThrow("Authentication required");
   });
+});
+
+describe("cached instance role", () => {
+  it.each([
+    ["true", true, true],
+    ["false", false, true],
+    [null, false, false],
+  ] as const)(
+    "hydrates cached value %s as admin=%s known=%s",
+    async (cached, admin, known) => {
+      (SecureStore.getItemAsync as jest.Mock).mockImplementation(async (key) => {
+        if (key === KEY_URL) return "https://a.example";
+        if (key === KEY_TOKEN) return "tok";
+        if (key === KEY_INSTANCE_ADMIN) return cached;
+        return null;
+      });
+      jest.spyOn(global, "fetch").mockImplementation(
+        () => new Promise<Response>(() => {}),
+      );
+
+      await useSession.getState().load();
+
+      expect(useSession.getState().instanceAdmin).toBe(admin);
+      expect(useSession.getState().instanceAdminKnown).toBe(known);
+    },
+  );
+
+  it.each(["signOut", "forgetServer"] as const)(
+    "%s clears the cached role",
+    async (action) => {
+      useSession.setState({ session: null });
+      await useSession.getState()[action]();
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith(
+        KEY_INSTANCE_ADMIN,
+      );
+    },
+  );
 });

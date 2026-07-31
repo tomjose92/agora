@@ -1,6 +1,5 @@
-/* Settings: Pantheo connections (live status, add/toggle/remove), pairing
-   tokens for dial-in bridges, and the session (server info / sign out).
-   Polls every 4s while open, like the desktop connections pane. */
+/* Account, server session, and app settings. Agent administration has one
+   dedicated surface, linked here for instance admins. */
 
 import React, { useState } from "react";
 import {
@@ -8,105 +7,33 @@ import {
   Linking,
   Pressable,
   ScrollView,
-  Share,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
 import * as Application from "expo-application";
-import { Stack } from "expo-router";
+import { Link, Stack } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { keys, useApi } from "@agora/core";
-import {
-  useConnectionMutations,
-  useConnections,
-  usePairingMutations,
-  usePairingTokens,
-} from "@agora/core";
 import type { Me } from "@agora/core";
 import { ArmedButton } from "../../src/components/ArmedButton";
 import { toast, toastErr } from "../../src/components/Toast";
 import { compareVersions, lookupStoreVersion } from "../../src/lib/appVersion";
-import { fmtTs } from "@agora/core";
-import { colors, mono } from "../../src/lib/theme";
+import { colors } from "../../src/lib/theme";
 import { useSession } from "../../src/state/session";
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
       {children}
-    </View>
-  );
-}
-
-function AddConnection() {
-  const { add } = useConnectionMutations();
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [token, setToken] = useState("");
-  if (!open) {
-    return (
-      <Pressable style={styles.linkBtn} onPress={() => setOpen(true)}>
-        <Text style={styles.linkBtnText}>＋ Add connection</Text>
-      </Pressable>
-    );
-  }
-  return (
-    <View style={styles.form}>
-      <TextInput
-        style={styles.input}
-        value={name}
-        onChangeText={setName}
-        placeholder="name (e.g. home)"
-        placeholderTextColor={colors.faint}
-        autoCapitalize="none"
-      />
-      <TextInput
-        style={styles.input}
-        value={url}
-        onChangeText={setUrl}
-        placeholder="wss://pantheo.example.com/agora/connect"
-        placeholderTextColor={colors.faint}
-        autoCapitalize="none"
-        keyboardType="url"
-      />
-      <TextInput
-        style={styles.input}
-        value={token}
-        onChangeText={setToken}
-        placeholder="connection token"
-        placeholderTextColor={colors.faint}
-        autoCapitalize="none"
-        secureTextEntry
-      />
-      <View style={styles.formRow}>
-        <Pressable style={styles.linkBtn} onPress={() => setOpen(false)}>
-          <Text style={styles.linkBtnDim}>Cancel</Text>
-        </Pressable>
-        <Pressable
-          style={styles.linkBtn}
-          onPress={() =>
-            add.mutate(
-              { name: name.trim(), url: url.trim(), token: token.trim() },
-              {
-                onSuccess: () => {
-                  setOpen(false);
-                  setName("");
-                  setUrl("");
-                  setToken("");
-                },
-                onError: (e) => toastErr("Add failed", e),
-              },
-            )
-          }
-        >
-          <Text style={styles.linkBtnText}>Save</Text>
-        </Pressable>
-      </View>
     </View>
   );
 }
@@ -142,7 +69,9 @@ function DisplayNameRow() {
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{displayName || username}</Text>
-          <Text style={styles.meta}>How your name appears on new messages.</Text>
+          <Text style={styles.meta}>
+            How your name appears on new messages.
+          </Text>
         </View>
         <Pressable
           style={styles.linkBtn}
@@ -172,7 +101,11 @@ function DisplayNameRow() {
       <Pressable style={styles.linkBtn} onPress={() => setEditing(false)}>
         <Text style={styles.linkBtnDim}>Cancel</Text>
       </Pressable>
-      <Pressable style={styles.linkBtn} onPress={() => void save()} disabled={saving}>
+      <Pressable
+        style={styles.linkBtn}
+        onPress={() => void save()}
+        disabled={saving}
+      >
         <Text style={[styles.linkBtnText, saving && { opacity: 0.4 }]}>
           {saving ? "Saving…" : "Save"}
         </Text>
@@ -187,13 +120,11 @@ export default function SettingsScreen() {
   const signOut = useSession((s) => s.signOut);
   const forgetServer = useSession((s) => s.forgetServer);
   const instanceAdmin = useSession((s) => s.instanceAdmin);
-  const me = useQuery({ queryKey: keys.me, queryFn: () => api.get<Me>("/api/me") });
+  const me = useQuery({
+    queryKey: keys.me,
+    queryFn: () => api.get<Me>("/api/me"),
+  });
   // Connections & pairing are operator surfaces; members never see them.
-  const connections = useConnections(instanceAdmin, instanceAdmin);
-  const { update, remove } = useConnectionMutations();
-  const pairing = usePairingTokens(instanceAdmin);
-  const pairingMut = usePairingMutations();
-  const [bridgeName, setBridgeName] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
@@ -215,7 +146,12 @@ export default function SettingsScreen() {
           [
             { text: "Later", style: "cancel" },
             ...(listing.url
-              ? [{ text: "Open App Store", onPress: () => void Linking.openURL(listing.url) }]
+              ? [
+                  {
+                    text: "Open App Store",
+                    onPress: () => void Linking.openURL(listing.url),
+                  },
+                ]
               : []),
           ],
         );
@@ -264,112 +200,18 @@ export default function SettingsScreen() {
       <Stack.Screen options={{ title: "Settings", headerShown: true }} />
       <ScrollView style={styles.root} contentContainerStyle={styles.content}>
         {instanceAdmin ? (
-        <Section title="Connections">
-          {(connections.data ?? []).map((c) => {
-            const status = c.status;
-            const dot = !c.enabled
-              ? colors.faint
-              : status?.connected
-                ? colors.green
-                : colors.red;
-            return (
-              <View key={c.name} style={styles.row}>
-                <View style={[styles.dot, { backgroundColor: dot }]} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.name}>{c.name}</Text>
-                  <Text style={styles.meta} numberOfLines={1}>
-                    {c.url}
-                  </Text>
-                  {c.enabled && status && !status.connected && status.last_error ? (
-                    <Text style={styles.err} numberOfLines={2}>
-                      {status.last_error}
-                    </Text>
-                  ) : null}
-                  {status?.connected && status.agents.length > 0 ? (
-                    <Text style={styles.meta}>
-                      {status.agents.length} agent{status.agents.length === 1 ? "" : "s"}
-                    </Text>
-                  ) : null}
-                </View>
-                <Switch
-                  value={c.enabled}
-                  onValueChange={(enabled) =>
-                    update.mutate(
-                      { name: c.name, enabled },
-                      { onError: (e) => toastErr("Update failed", e) },
-                    )
-                  }
-                  trackColor={{ true: colors.a1, false: colors.faint }}
-                />
-                <ArmedButton
-                  label="Remove"
-                  onConfirm={() =>
-                    remove.mutate(c.name, { onError: (e) => toastErr("Remove failed", e) })
-                  }
-                />
-              </View>
-            );
-          })}
-          {connections.isSuccess && connections.data.length === 0 ? (
-            <Text style={styles.empty}>
-              No connections. Link a Pantheo instance to bring its agents in.
-            </Text>
-          ) : null}
-          <AddConnection />
-        </Section>
-        ) : null}
-
-        {instanceAdmin ? (
-        <Section title="Pairing tokens">
-          {(pairing.data ?? []).map((t) => (
-            <View key={t.token} style={styles.row}>
+          <Link href="/(app)/add-agent" asChild>
+            <Pressable style={styles.agentHub} accessibilityRole="button">
               <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{t.name}</Text>
-                <Text style={styles.meta}>created {fmtTs(t.created_at)}</Text>
-                <Pressable onPress={() => void Share.share({ message: t.token })}>
-                  <Text style={styles.tokenText} numberOfLines={1}>
-                    {t.token.slice(0, 10)}… (tap to share)
-                  </Text>
-                </Pressable>
+                <Text style={styles.agentHubTitle}>Agents & connections</Text>
+                <Text style={styles.meta}>
+                  Guided setup for coding agents, integrations, and Pantheo.
+                </Text>
               </View>
-              <ArmedButton
-                label="Revoke"
-                onConfirm={() =>
-                  pairingMut.revoke.mutate(t.token, {
-                    onError: (e) => toastErr("Revoke failed", e),
-                  })
-                }
-              />
-            </View>
-          ))}
-          <View style={styles.formRow}>
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              value={bridgeName}
-              onChangeText={setBridgeName}
-              placeholder="bridge name"
-              placeholderTextColor={colors.faint}
-              autoCapitalize="none"
-            />
-            <Pressable
-              style={styles.linkBtn}
-              onPress={() =>
-                pairingMut.create.mutate({ name: bridgeName.trim() || "agent" }, {
-                  onSuccess: (r) => {
-                    setBridgeName("");
-                    void Share.share({ message: r.token });
-                    toast("Pairing token created");
-                  },
-                  onError: (e) => toastErr("Create failed", e),
-                })
-              }
-            >
-              <Text style={styles.linkBtnText}>Issue</Text>
+              <Text style={styles.agentHubArrow}>›</Text>
             </Pressable>
-          </View>
-        </Section>
+          </Link>
         ) : null}
-
         <Section title="Session">
           <DisplayNameRow />
           <View style={styles.row}>
@@ -392,13 +234,21 @@ export default function SettingsScreen() {
             <Text style={[styles.meta, { flex: 1 }]}>
               Connect this app to a different Agora server.
             </Text>
-            <ArmedButton label="Switch server" onConfirm={() => void forgetServer()} />
+            <ArmedButton
+              label="Switch server"
+              onConfirm={() => void forgetServer()}
+            />
           </View>
           <View style={styles.row}>
             <Text style={[styles.meta, { flex: 1 }]}>
-              Permanently delete your data on this server and sign out everywhere.
+              Permanently delete your data on this server and sign out
+              everywhere.
             </Text>
-            <Pressable style={styles.linkBtn} onPress={deleteAccount} disabled={deleting}>
+            <Pressable
+              style={styles.linkBtn}
+              onPress={deleteAccount}
+              disabled={deleting}
+            >
               <Text style={[styles.deleteText, deleting && { opacity: 0.4 }]}>
                 {deleting ? "Deleting…" : "Delete account"}
               </Text>
@@ -413,8 +263,14 @@ export default function SettingsScreen() {
                 Agora {appVersion} (build {appBuild})
               </Text>
             </View>
-            <Pressable style={styles.linkBtn} onPress={checkForUpdates} disabled={checkingUpdate}>
-              <Text style={[styles.linkBtnText, checkingUpdate && { opacity: 0.4 }]}>
+            <Pressable
+              style={styles.linkBtn}
+              onPress={checkForUpdates}
+              disabled={checkingUpdate}
+            >
+              <Text
+                style={[styles.linkBtnText, checkingUpdate && { opacity: 0.4 }]}
+              >
                 {checkingUpdate ? "Checking…" : "Check for updates"}
               </Text>
             </Pressable>
@@ -423,14 +279,20 @@ export default function SettingsScreen() {
           <View style={styles.row}>
             <Pressable
               style={styles.linkBtn}
-              onPress={() => void Linking.openURL("https://tomjose92.github.io/agora/privacy.html")}
+              onPress={() =>
+                void Linking.openURL(
+                  "https://tomjose92.github.io/agora/privacy.html",
+                )
+              }
             >
               <Text style={styles.linkBtnText}>Privacy policy</Text>
             </Pressable>
             <View style={{ flex: 1 }} />
             <Pressable
               style={styles.linkBtn}
-              onPress={() => void Linking.openURL("https://tomjose92.github.io/agora/")}
+              onPress={() =>
+                void Linking.openURL("https://tomjose92.github.io/agora/")
+              }
             >
               <Text style={styles.linkBtnText}>Support</Text>
             </Pressable>
@@ -463,14 +325,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
   },
-  dot: { width: 9, height: 9, borderRadius: 5 },
   name: { color: colors.text, fontSize: 14, fontWeight: "700" },
   meta: { color: colors.dim, fontSize: 12 },
-  err: { color: colors.red, fontSize: 11.5, marginTop: 2 },
-  tokenText: { ...mono, color: colors.a2, fontSize: 12, marginTop: 3 },
-  empty: { color: colors.dim, fontSize: 13, paddingVertical: 8 },
-  form: { gap: 8 },
-  formRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   input: {
     backgroundColor: colors.panelStrong,
     borderWidth: 1,
@@ -485,4 +341,22 @@ const styles = StyleSheet.create({
   linkBtnText: { color: colors.a1, fontSize: 14, fontWeight: "700" },
   linkBtnDim: { color: colors.dim, fontSize: 14, fontWeight: "600" },
   deleteText: { color: colors.red, fontSize: 14, fontWeight: "700" },
+  agentHub: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 72,
+    padding: 15,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(56,225,200,0.22)",
+    backgroundColor: "rgba(56,225,200,0.06)",
+  },
+  agentHubTitle: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 3,
+  },
+  agentHubArrow: { color: colors.a2, fontSize: 28, lineHeight: 30 },
 });

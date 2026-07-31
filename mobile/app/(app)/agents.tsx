@@ -2,22 +2,53 @@
    the desktop (the server refuses to forget a connected agent). */
 
 import React from "react";
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Stack } from "expo-router";
+import {
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { Link, Stack } from "expo-router";
+import { Plus } from "lucide-react-native";
 import { useAgents, useForgetAgent } from "@agora/core";
 import { AgentAvatar } from "../../src/components/AgentAvatar";
 import { ArmedButton } from "../../src/components/ArmedButton";
 import { toastErr } from "../../src/components/Toast";
 import { fmtTs } from "@agora/core";
 import { colors } from "../../src/lib/theme";
+import { useSession } from "../../src/state/session";
 
 export default function AgentsScreen() {
   const agents = useAgents();
   const forget = useForgetAgent();
+  const admin = useSession((s) => s.instanceAdmin);
+  const adminKnown = useSession((s) => s.instanceAdminKnown);
 
   return (
     <>
-      <Stack.Screen options={{ title: "Agents", headerShown: true }} />
+      <Stack.Screen
+        options={{
+          title: "Agents",
+          headerShown: true,
+          headerRight: admin
+            ? () => (
+                <Link href="/(app)/add-agent" asChild>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Add agent"
+                    hitSlop={10}
+                    style={styles.addHeader}
+                  >
+                    <Plus size={18} color={colors.a1} />
+                    <Text style={styles.addHeaderText}>Add</Text>
+                  </Pressable>
+                </Link>
+              )
+            : undefined,
+        }}
+      />
       <ScrollView
         style={styles.root}
         contentContainerStyle={styles.content}
@@ -45,7 +76,9 @@ export default function AgentsScreen() {
               <ArmedButton
                 label="Forget"
                 onConfirm={() =>
-                  forget.mutate(a.id, { onError: (e) => toastErr("Forget failed", e) })
+                  forget.mutate(a.id, {
+                    onError: (e) => toastErr("Forget failed", e),
+                  })
                 }
               />
             ) : null}
@@ -53,9 +86,25 @@ export default function AgentsScreen() {
         ))}
         {agents.isSuccess && agents.data.length === 0 ? (
           <Text style={styles.empty}>
-            No agents yet. Add a connection (Settings) or pair a bridge, and agents will
-            appear here when they dial in.
+            {!adminKnown
+              ? "Checking whether you can add agents…"
+              : admin
+                ? "No agents yet. Use Add agent to connect one; it will appear here when it dials in."
+                : "No agents are available yet. Ask an instance admin to connect one."}
           </Text>
+        ) : null}
+        {admin ? (
+          <Link href="/(app)/add-agent" asChild>
+            <Pressable style={styles.addCard} accessibilityRole="button">
+              <Plus size={20} color={colors.a2} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.addTitle}>Add an agent</Text>
+                <Text style={styles.meta}>
+                  Connect a coding agent, integration, or Pantheo instance.
+                </Text>
+              </View>
+            </Pressable>
+          </Link>
         ) : null}
       </ScrollView>
     </>
@@ -81,5 +130,30 @@ const styles = StyleSheet.create({
   dotOff: { backgroundColor: colors.faint },
   name: { color: colors.text, fontSize: 14.5, fontWeight: "700" },
   meta: { color: colors.dim, fontSize: 12 },
-  empty: { color: colors.dim, textAlign: "center", paddingVertical: 24, lineHeight: 20 },
+  empty: {
+    color: colors.dim,
+    textAlign: "center",
+    paddingVertical: 24,
+    lineHeight: 20,
+  },
+  addHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    minHeight: 40,
+  },
+  addHeaderText: { color: colors.a1, fontSize: 14, fontWeight: "700" },
+  addCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "rgba(56,225,200,0.22)",
+    backgroundColor: "rgba(56,225,200,0.06)",
+    borderRadius: 14,
+    padding: 14,
+    minHeight: 66,
+  },
+  addTitle: { color: colors.text, fontSize: 14.5, fontWeight: "800" },
 });

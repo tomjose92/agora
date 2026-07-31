@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   type PairingKind,
   type PairingToken,
+  agentWsUrl,
   inferPairingKind,
   useConnectionMutations, useConnectionsInfo, usePairingMutations, usePairingTokens,
   useRenameInstance,
@@ -89,13 +90,6 @@ function displayDefinition(token: PairingToken): AddDefinition | null {
 
 function guidePath(definition: AddDefinition): string | null {
   return definition.local ? `/docs/coding-agents/${definition.kind}.html` : null;
-}
-
-function agentWsUrl(token: string): string {
-  const url = new URL("/agent/ws", window.location.origin);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("token", token);
-  return url.toString();
 }
 
 function AgentMark({ definition, small = false }: { definition: AddDefinition | null; small?: boolean }) {
@@ -405,7 +399,7 @@ export function ConnectionsPane() {
           </p>
           <CommandBlock text={issued.token} label="Token" />
           {!definition.local && (
-            <CommandBlock text={agentWsUrl(issued.token)} label="Connection address" />
+            <CommandBlock text={agentWsUrl(window.location.origin, issued.token)} label="Connection address" />
           )}
           <div className="conn-issued-actions">
             {guide && (
