@@ -32,6 +32,7 @@ import type {
   Me,
   Member,
   Message,
+  MessageTemplate,
   PairingToken,
   PinnedMessage,
   SearchResponse,
@@ -41,6 +42,49 @@ import type {
 } from "./types";
 
 const PAGE_SIZE = 50;
+
+/* ------------------------------------------------------- message templates */
+
+export function useTemplates(groupId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.templates(groupId),
+    queryFn: async () => (await api.get<{ templates: MessageTemplate[] }>(
+      `/api/groups/${encodeURIComponent(groupId)}/templates`,
+    )).templates,
+    enabled: !!groupId,
+  });
+}
+
+export function useCreateTemplate(groupId: string) {
+  const api = useApi(); const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { label: string; text: string }) => api.post<MessageTemplate>(
+      `/api/groups/${encodeURIComponent(groupId)}/templates`, v,
+    ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.templates(groupId) }),
+  });
+}
+
+export function useUpdateTemplate(groupId: string) {
+  const api = useApi(); const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; label: string; text: string }) => api.patch<MessageTemplate>(
+      `/api/groups/${encodeURIComponent(groupId)}/templates/${encodeURIComponent(v.id)}`, v,
+    ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.templates(groupId) }),
+  });
+}
+
+export function useDeleteTemplate(groupId: string) {
+  const api = useApi(); const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ ok: boolean }>(
+      `/api/groups/${encodeURIComponent(groupId)}/templates/${encodeURIComponent(id)}`,
+    ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.templates(groupId) }),
+  });
+}
 
 /* ------------------------------------------------------------- me */
 

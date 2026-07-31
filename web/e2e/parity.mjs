@@ -163,6 +163,45 @@ async function main() {
     if (!atBottom) throw new Error("log not at bottom after send");
   });
 
+  await check("templates: create, insert at the caret, delete", async () => {
+    const label = "Parity template";
+    const body = "reusable parity template body";
+    const openPicker = async () => {
+      await page.click(".ago-template-btn");
+      await page.waitForSelector("#ago-template-pop", { timeout: 5000 });
+    };
+    // Create one through the manage dialog.
+    await openPicker();
+    await page.click("#ago-template-pop .ago-template-add");
+    await page.waitForSelector(".ago-template-dialog", { timeout: 5000 });
+    await page.fill(".ago-template-dialog input", label);
+    await page.fill(".ago-template-dialog textarea", body);
+    await page.locator(".ago-template-actions .btn.primary").click();
+    await page.locator(".ago-template-manage-row", { hasText: label })
+      .first().waitFor({ timeout: 8000 });
+    await page.locator(".ago-template-dialog button[aria-label='Close']").click();
+
+    // Choosing it inserts at the caret without dropping the typed draft.
+    await page.fill("#ago-msg", "Draft: ");
+    await openPicker();
+    await page.locator("#ago-template-pop .ago-template-opt", { hasText: label }).first().click();
+    await page.waitForFunction(
+      expected => document.getElementById("ago-msg")?.value === expected,
+      `Draft: ${body}`,
+      { timeout: 8000 });
+    await page.fill("#ago-msg", "");
+
+    // Delete is a two-step armed click, like the rest of the UI.
+    await openPicker();
+    await page.locator("#ago-template-pop .ago-template-head button").click();
+    const row = page.locator(".ago-template-manage-row", { hasText: label }).first();
+    await row.locator("button.danger").click();
+    await row.locator("button.danger", { hasText: "Sure?" }).click();
+    await page.locator(".ago-template-dialog .ago-template-manage-row", { hasText: label })
+      .waitFor({ state: "detached", timeout: 8000 });
+    await page.locator(".ago-template-dialog button[aria-label='Close']").click();
+  });
+
   await check("live: message posted via API appears without reload", async () => {
     const text = `live echo ${Date.now() % 100000}`;
     await api(`/api/channels/${SEED.channel}/messages`, { text });

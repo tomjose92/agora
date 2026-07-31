@@ -8,6 +8,7 @@ import type {
   Me,
   Member,
   Message,
+  MessageTemplate,
   ThreadRow,
   UserInfo,
 } from "../src/api/types";
@@ -218,6 +219,26 @@ export const fixtureReplies: Message[] = [
 ];
 
 export const fixtureMessages: Message[] = [fixtureRootMessage, fixtureAgentMessage];
+
+/* Private per-user message templates for the group above. */
+export const fixtureTemplates: MessageTemplate[] = [
+  {
+    id: "standup",
+    group_id: "product",
+    label: "Daily standup",
+    text: "Yesterday I completed…\nToday I will…\nBlocked by…",
+    created_at: 1_750_000_100,
+    updated_at: 1_750_000_100,
+  },
+  {
+    id: "release-check",
+    group_id: "product",
+    label: "Release checklist",
+    text: "Storybook builds ✅\nPlaywright green ✅\nVersion bumped ✅",
+    created_at: 1_750_000_200,
+    updated_at: 1_750_000_200,
+  },
+];
 
 export const fixtureThreads: ThreadRow[] = [{
   root: fixtureRootMessage,

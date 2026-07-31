@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-native";
 import { fn } from "storybook/test";
 import { useAddressed } from "@agora/core";
+import { fixtureTemplates } from "@agora/core/testing/fixtures";
 import { Composer } from "./Composer";
 
 const agents = [
@@ -18,9 +19,15 @@ const meta = {
     mentions,
     agents,
     addressKey: "general",
+    groupId: "product",
     sending: false,
     threadToggle: true,
     onSend: send,
+  },
+  parameters: {
+    /* The templates button prefetches its list, so every composer story needs
+       the route — FixtureApiClient throws on unmocked paths. */
+    apiRoutes: { "GET /api/groups/product/templates": { templates: fixtureTemplates } },
   },
 } satisfies Meta<typeof Composer>;
 

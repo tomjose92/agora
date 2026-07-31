@@ -1777,6 +1777,23 @@ a.btn { text-decoration: none; }
   display: inline-block; vertical-align: baseline; background: #34d399; margin-right: 2px;
 }
 
+.ago-template-pop { position: fixed; z-index: 80; width: min(340px, calc(100vw - 16px)); max-height: 420px; overflow: auto; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); box-shadow: 0 14px 40px rgba(0,0,0,.38); }
+.ago-template-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 6px 9px; }
+.ago-template-head > button:not(.btn), .ago-template-state button { border: 0; background: none; color: var(--a1); cursor: pointer; }
+.ago-template-opt, .ago-template-add { display: flex; width: 100%; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; border-radius: 8px; padding: 9px; }
+.ago-template-opt { flex-direction: column; gap: 3px; }
+.ago-template-opt:hover, .ago-template-add:hover { background: rgba(255,255,255,.06); }
+.ago-template-opt span, .ago-template-manage-row span { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ago-template-add { color: var(--a1); font-weight: 700; border-top: 1px solid var(--border); margin-top: 4px; }
+.ago-template-state { color: var(--dim); padding: 18px 9px; text-align: center; }
+.ago-template-state.error { color: var(--red); }
+.ago-template-dialog { width: min(580px, calc(100vw - 24px)); max-height: min(720px, calc(100vh - 24px)); overflow: auto; padding: 16px; }
+.ago-template-dialog label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; color: var(--dim); font-size: 12px; font-weight: 700; }
+.ago-template-dialog input, .ago-template-dialog textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--bg); color: var(--text); font: inherit; resize: vertical; }
+.ago-template-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ago-template-manage-row { display: flex; align-items: center; gap: 8px; padding: 10px 4px; border-bottom: 1px solid var(--border); }
+.ago-template-manage-row > div { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+
 @media (max-width: 760px) {
   .ago-map-overlay { padding: 8px; align-items: stretch; }
   .ago-map-panel { height: calc(100vh - 16px); height: calc(100dvh - 16px); max-height: none; }

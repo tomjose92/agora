@@ -3,6 +3,7 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { Composer } from "./Composer";
 import { me, message } from "../stories/fixtures/data";
 import { useAttachmentDrafts } from "@agora/core";
+import { fixtureTemplates } from "@agora/core/testing/fixtures";
 
 const agents = [
   { id: "codex", name: "Codex" },
@@ -34,6 +35,7 @@ const meta = {
   args: {
     channelId: "general",
     channelName: "general",
+    groupId: "product",
     threadId: null,
     agents,
     candidates,
@@ -45,6 +47,7 @@ const meta = {
     apiRoutes: {
       "GET /api/me": me,
       "GET /api/agents": { agents },
+      "GET /api/groups/product/templates": { templates: [] },
       "POST /api/channels/general/messages": sendMessage,
     },
   },
@@ -54,6 +57,41 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Empty: Story = {};
+
+const withTemplateRoutes = {
+  "GET /api/me": me,
+  "GET /api/agents": { agents },
+  "GET /api/groups/product/templates": { templates: fixtureTemplates },
+  "POST /api/channels/general/messages": sendMessage,
+};
+
+/* A chosen template lands at the caret, leaving the typed draft in place. */
+export const WithTemplates: Story = {
+  parameters: { apiRoutes: withTemplateRoutes },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const input = canvas.getByPlaceholderText("Message #general") as HTMLTextAreaElement;
+    await userEvent.type(input, "Draft: ");
+    await userEvent.click(canvas.getByTitle("Message templates"));
+    await userEvent.click(await canvas.findByText("Daily standup"));
+    await waitFor(() => expect(input).toHaveValue(`Draft: ${fixtureTemplates[0].text}`));
+  },
+};
+
+/* The manage dialog: deleting is a two-step armed click, like every other
+   destructive action in the web UI. */
+export const ManageTemplates: Story = {
+  parameters: { apiRoutes: withTemplateRoutes },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTitle("Message templates"));
+    await userEvent.click(await canvas.findByText("Manage"));
+    const dialog = within(await canvas.findByRole("dialog"));
+    await dialog.findByText(fixtureTemplates[0].label);
+    await userEvent.click(dialog.getAllByText("Delete")[0]);
+    await waitFor(() => expect(dialog.getByText("Sure?")).toBeInTheDocument());
+  },
+};
 
 const previewSvg = new File([
   '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320">'

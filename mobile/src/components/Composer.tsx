@@ -43,12 +43,13 @@ import {
   Image as ImageIcon,
   MessageSquareReply,
   Mic,
+  NotepadText,
   Paperclip,
   X,
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "@agora/core";
-import { fmtSize, slugify } from "@agora/core";
+import { fmtSize, MAX_MESSAGE_CHARS, slugify } from "@agora/core";
 import { toOutgoing, type LocalFile } from "../api/voice";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
@@ -58,6 +59,7 @@ import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
 import { ImagePreviewModal } from "./ImagePreviewModal";
 import { NATIVE_IMAGE, WEB_SAFE_IMAGE } from "../lib/files";
+import { TemplateSheet } from "./TemplateSheet";
 
 const NONE_ADDRESSED: string[] = [];
 
@@ -146,6 +148,7 @@ export function Composer({
   mentions,
   agents = [],
   addressKey,
+  groupId,
   sending,
   threadToggle,
   onSend,
@@ -159,6 +162,8 @@ export function Composer({
   /** Conversation key (channel id / channel:t<root>) the "talk to" selection
       is remembered under for the app session; unset hides the picker. */
   addressKey?: string;
+  /** Resolved containing group; templates stay hidden until it is known. */
+  groupId?: string;
   sending: boolean;
   /** Offer the per-message "reply in thread" ask (agents answer in a thread
       under the message). Channel composer only — a thread already is one. */
@@ -192,6 +197,8 @@ export function Composer({
   const toggleAddr = useAddressed((s) => s.toggle);
   const clearAddr = useAddressed((s) => s.clear);
   const [addrSheet, setAddrSheet] = useState(false);
+  const [templateSheet, setTemplateSheet] = useState(false);
+  const [forcedSelection, setForcedSelection] = useState<{ start: number; end: number }>();
   const addressedAgents = useMemo(
     () => agents.filter((a) => addressed.includes(a.id)),
     [agents, addressed],
@@ -200,6 +207,7 @@ export function Composer({
     if (addressKey) toggleAddr(addressKey, id);
   };
   const selection = useRef({ start: 0, end: 0 });
+  const hasSelection = useRef(false);
   const inputRef = useRef<TextInput>(null);
 
   /* A native paste finishes asynchronously. Invalidate in-flight work when
@@ -502,6 +510,30 @@ export function Composer({
     }
   };
 
+  /* Insert a template at the caret rather than replacing the draft. The sheet
+     blurs the input, so the last tracked selection is the insert point; RN
+     needs a controlled `selection` to move the caret, released again on the
+     next selection change so it never fights typing. */
+  const insertTemplate = (template: string) => {
+    // Clamp: the tracked selection can outlive the draft it was taken from
+    // (a send clears the text without a selection change).
+    const fallback = hasSelection.current ? selection.current : { start: text.length, end: text.length };
+    const start = Math.min(fallback.start, text.length);
+    const end = Math.min(Math.max(fallback.end, start), text.length);
+    const next = text.slice(0, start) + template + text.slice(end);
+    /* Count code points, like the server's chars().count(). */
+    if ([...next].length > MAX_MESSAGE_CHARS) {
+      toast(`Template would exceed the ${MAX_MESSAGE_CHARS.toLocaleString()}-character message limit`, "warn");
+      return;
+    }
+    const caret = start + template.length;
+    setText(next);
+    selection.current = { start: caret, end: caret };
+    setForcedSelection({ start: caret, end: caret });
+    setTemplateSheet(false);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
   const send = async () => {
     if (pasteOps > 0) return;
     const body = text.trim();
@@ -650,11 +682,14 @@ export function Composer({
             onBlur={() => setFocused(false)}
             onSelectionChange={(e) => {
               selection.current = e.nativeEvent.selection;
+              hasSelection.current = true;
+              if (forcedSelection) setForcedSelection(undefined);
             }}
+            selection={forcedSelection}
             placeholder={placeholder}
             placeholderTextColor={colors.faint}
             multiline
-            maxLength={20_000}
+            maxLength={MAX_MESSAGE_CHARS}
           />
         </PasteAwareInput>
         {/* Collapsed with a draft pending (e.g. after the picker stole focus):
@@ -704,6 +739,11 @@ export function Composer({
           {onSendVoice ? (
             <Pressable onPress={startRec} hitSlop={8} style={styles.toolBtn}>
               <Icon icon={Mic} size={22} />
+            </Pressable>
+          ) : null}
+          {groupId ? (
+            <Pressable onPress={() => setTemplateSheet(true)} hitSlop={8} style={styles.toolBtn} accessibilityRole="button" accessibilityLabel="Message templates">
+              <Icon icon={NotepadText} size={22} />
             </Pressable>
           ) : null}
           <View style={{ flex: 1 }} />
@@ -773,6 +813,17 @@ export function Composer({
             </Pressable>
           </Pressable>
         </Modal>
+      ) : null}
+      {/* Outside the `focused` block on purpose: opening the sheet blurs the
+          input, which collapses the toolbar the button lives in. */}
+      {groupId ? (
+        <TemplateSheet
+          groupId={groupId}
+          visible={templateSheet}
+          draft={text}
+          onClose={() => setTemplateSheet(false)}
+          onChoose={insertTemplate}
+        />
       ) : null}
       <Modal
         transparent

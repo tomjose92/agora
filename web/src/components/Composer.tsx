@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   DROP_HEAP_MAX_BYTES, DroppedFileError, dropMaterializationLimit,
-  draftAttachmentPreviewUrl, materializeDroppedFile, useAgents, useAttachmentDrafts, useMe, useSendMessage,
+  draftAttachmentPreviewUrl, materializeDroppedFile, MAX_MESSAGE_CHARS,
+  useAgents, useAttachmentDrafts, useMe, useSendMessage,
   type ChannelAgent, type DraftAttachment, type OutgoingFile,
 } from "@agora/core";
 import { create } from "zustand";
@@ -16,6 +17,7 @@ import { slugify } from "../lib/mentions";
 import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
 import { ImageLightbox } from "./ImageLightbox";
+import { TemplateControls } from "./TemplateControls";
 
 const MAX_FILES = 5;
 const ATTACHMENT_UPLOAD_TIMEOUT_MS = 120_000;
@@ -81,9 +83,10 @@ function AgentAv({ a, cls }: { a: { id: string; avatar?: string }; cls: string }
   return <span className={`ago-av ${cls}`}><Icon name="bot" /></span>;
 }
 
-export function Composer({ channelId, channelName, threadId, agents = [], candidates = [], voiceOK, replyInThread, onSetReplyInThread }: {
+export function Composer({ channelId, channelName, groupId, threadId, agents = [], candidates = [], voiceOK, replyInThread, onSetReplyInThread }: {
   channelId: string;
   channelName: string;
+  groupId: string;
   threadId: number | null;
   /** Live member agents of the channel (addressing picker + mention list). */
   agents?: ChannelAgent[];
@@ -107,7 +110,13 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
   const addrToggle = useAddressing(s => s.toggle);
   const addrClear = useAddressing(s => s.clear);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  /* Whether the caret in this draft is the user's. One textarea is reused
+     across channels/threads, so a stale selection from the previous
+     conversation must not decide where a template lands. */
+  const hasCaret = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { hasCaret.current = false; }, [draftKey]);
 
   const inThread = threadId != null;
   const readyAttachments = attachments.filter(
@@ -334,6 +343,32 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
   };
 
+  /* Insert a template at the caret rather than replacing the draft — the
+     picker steals focus, so the textarea's last selection is the insert
+     point. Deliberately does not run updateMention: an "@name" inside a
+     template should not open the mention popup. */
+  const insertTemplate = (template: string) => {
+    const input = taRef.current;
+    const start = hasCaret.current ? (input?.selectionStart ?? text.length) : text.length;
+    const end = hasCaret.current ? (input?.selectionEnd ?? start) : start;
+    const next = text.slice(0, start) + template + text.slice(end);
+    /* Count code points, like the server's chars().count(). */
+    if ([...next].length > MAX_MESSAGE_CHARS) {
+      toast(`Template would exceed the ${MAX_MESSAGE_CHARS.toLocaleString()}-character message limit`,
+        { variant: "warn" });
+      return;
+    }
+    const caret = start + template.length;
+    setText(draftKey, next);
+    /* The value lands on the next render; focus/caret/autogrow after it. */
+    requestAnimationFrame(() => {
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(caret, caret);
+      autoGrow(input);
+    });
+  };
+
   return (
     <>
       {selectedAgents.length > 0 && (
@@ -422,11 +457,13 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           title="@mention an agent to address it directly"
           value={text}
           onChange={e => {
+            hasCaret.current = true;
             setText(draftKey, e.target.value);
             autoGrow(e.target);
             updateMention(e.target.value, e.target.selectionStart ?? e.target.value.length);
           }}
           onKeyDown={onKeyDown}
+          onSelect={() => { hasCaret.current = true; }}
           onBlur={() => setTimeout(() => setMention(null), 150)}
           onPaste={e => {
             const items = Array.from(e.clipboardData?.files || []);
@@ -453,6 +490,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
           onClick={() => fileRef.current?.click()}>
           <Icon name="paperclip" />
         </button>
+        <TemplateControls groupId={groupId} draft={text} onChoose={insertTemplate} />
         {voiceOK && <MicButton channelId={channelId} threadId={threadId} />}
         {!inThread && onSetReplyInThread && (
           <button className={`btn ago-thread-ask ${replyInThread ? "active" : ""}`} id="ago-thread-ask"

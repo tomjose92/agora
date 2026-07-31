@@ -610,6 +610,7 @@ export default function ChannelScreen() {
           mentions={mentionCandidates}
           agents={agentCandidates}
           addressKey={channelId}
+          groupId={groupId}
           sending={send.isPending}
           threadToggle
           onSend={async ({ text, files, replyInThread }) => {

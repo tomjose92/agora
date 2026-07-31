@@ -399,6 +399,7 @@ export default function ThreadScreen() {
           mentions={mentionCandidates}
           agents={agentCandidates}
           addressKey={threadAddressKey(channelId, rootId)}
+          groupId={groupId ?? undefined}
           sending={send.isPending}
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: rootId, files });
