@@ -17,7 +17,7 @@ describe("probeAuth", () => {
   it("reports methods and the origin the server actually answered from", async () => {
     jest.spyOn(global, "fetch").mockResolvedValue(
       resp(
-        { google: { enabled: true }, apple: { enabled: false } },
+        { google: { enabled: true }, apple: { enabled: false }, admin: { enabled: false } },
         200,
         "https://agoras.up.railway.app/api/auth/config",
       ),
@@ -26,6 +26,7 @@ describe("probeAuth", () => {
     expect(await probeAuth("http://agoras.up.railway.app")).toEqual({
       google: true,
       apple: false,
+      admin: false,
       origin: "https://agoras.up.railway.app",
     });
   });
@@ -43,12 +44,14 @@ describe("probeAuth", () => {
     expect(await probeAuth("https://a.example")).toEqual({
       google: false,
       apple: false,
+      admin: true,
       origin: "https://a.example",
     });
     jest.spyOn(global, "fetch").mockRejectedValue(new Error("offline"));
     expect(await probeAuth("https://a.example")).toEqual({
       google: false,
       apple: false,
+      admin: true,
       origin: "https://a.example",
     });
   });
@@ -59,6 +62,6 @@ describe("authMethods", () => {
     jest.spyOn(global, "fetch").mockResolvedValue(
       resp({ google: { enabled: true }, apple: { enabled: true } }, 200),
     );
-    expect(await authMethods("https://a.example")).toEqual({ google: true, apple: true });
+    expect(await authMethods("https://a.example")).toEqual({ google: true, apple: true, admin: true });
   });
 });

@@ -1,7 +1,6 @@
 /* Login: the mobile flavor of the desktop connect page. Two steps —
    pick the server (first run only; a signed-out relaunch remembers it),
-   then sign in: Apple/Google when the server offers them, admin key
-   always. */
+   then sign in using the methods the server offers. */
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -40,6 +39,7 @@ export default function Connect() {
   const [base, setBase] = useState(savedUrl); // normalized, probed URL
   const [google, setGoogle] = useState(false);
   const [apple, setApple] = useState(false);
+  const [admin, setAdmin] = useState(true);
   const [showToken, setShowToken] = useState(false);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -77,7 +77,8 @@ export default function Connect() {
     const appleOk = methods.apple && (await appleAvailable());
     setGoogle(methods.google);
     setApple(appleOk);
-    setShowToken(!methods.google && !appleOk); // token-only servers show the form outright
+    setAdmin(methods.admin);
+    setShowToken(methods.admin && !methods.google && !appleOk);
   }, []);
 
   useEffect(() => {
@@ -253,7 +254,7 @@ export default function Connect() {
                 )}
               </Pressable>
             ) : null}
-            {showToken ? (
+            {admin && (showToken ? (
               <>
                 <TextInput
                   style={styles.input}
@@ -286,7 +287,7 @@ export default function Connect() {
               >
                 <Text style={styles.btnGhostText}>Sign in as admin</Text>
               </Pressable>
-            )}
+            ))}
             {error ? <Text style={styles.error}>{error}</Text> : null}
             <Pressable
               style={[styles.btnSubtle, busy && styles.btnOff]}

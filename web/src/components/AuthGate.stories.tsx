@@ -1,9 +1,9 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { AuthGate } from "./AuthGate";
 
-type AuthMode = "admin" | "google" | "invalid";
+type AuthMode = "admin" | "google" | "admin-hidden" | "invalid";
 const signedIn = fn();
 
 function AuthSurface({ mode }: { mode: AuthMode }) {
@@ -15,6 +15,7 @@ function AuthSurface({ mode }: { mode: AuthMode }) {
     if (path === "/api/auth/config") {
       return new Response(JSON.stringify({
         google: { enabled: modeRef.current === "google" },
+        admin: { enabled: modeRef.current !== "admin-hidden" },
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (path === "/api/me") {
@@ -83,5 +84,16 @@ export const InvalidAdminKey: Story = {
     const page = within(canvasElement.ownerDocument.body);
     await expect(page.findByText("That token didn't work")).resolves.toBeVisible();
     await expect(signedIn).not.toHaveBeenCalled();
+  },
+};
+
+export const AdminLoginHidden: Story = {
+  args: { mode: "admin-hidden" },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => {
+      expect(canvas.queryByLabelText("Admin key")).not.toBeInTheDocument();
+      expect(canvas.queryByRole("button", { name: "Sign in as admin" })).not.toBeInTheDocument();
+    });
   },
 };

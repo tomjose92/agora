@@ -1,5 +1,5 @@
-/* Sign-in card. Google leads when the server offers it; the admin key is
-   always available. */
+/* Sign-in card. Google leads when offered; operators may hide the admin-key
+   form from interactive clients without invalidating the key itself. */
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -9,6 +9,7 @@ import { toast } from "../lib/toast";
 
 export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [adminEnabled, setAdminEnabled] = useState(true);
   const [showTokenForm, setShowTokenForm] = useState(true);
   const [error] = useState(() =>
     AUTH_ERROR ? (AUTH_ERROR_TEXT[AUTH_ERROR] || "Google sign-in failed — try again.") : "");
@@ -16,8 +17,12 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
 
   useEffect(() => {
     fetch("/api/auth/config").then(r => r.json()).then(cfg => {
+      const admin = cfg.admin?.enabled !== false;
+      setAdminEnabled(admin);
       if (cfg.google && cfg.google.enabled) {
         setGoogleEnabled(true);
+        setShowTokenForm(false);
+      } else if (!admin) {
         setShowTokenForm(false);
       }
     }).catch(() => {});
@@ -57,7 +62,7 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
           </button>
         )}
         {googleEnabled && showTokenForm && <div className="auth-divider" id="auth-divider">or</div>}
-        {showTokenForm && (
+        {adminEnabled && showTokenForm && (
           <div id="auth-token-form">
             <label htmlFor="auth-token">Admin key</label>
             <input id="auth-token" ref={inputRef} type="password"
@@ -67,7 +72,7 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
             <button className="btn primary" onClick={() => void submit()}>Sign in as admin</button>
           </div>
         )}
-        {googleEnabled && !showTokenForm && (
+        {adminEnabled && googleEnabled && !showTokenForm && (
           <button className="auth-link" id="auth-token-toggle"
             onClick={() => { setShowTokenForm(true); setTimeout(() => inputRef.current?.focus(), 0); }}>
             Sign in as admin

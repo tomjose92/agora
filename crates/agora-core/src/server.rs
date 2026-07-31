@@ -2895,6 +2895,7 @@ async fn auth_config(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "google": {"enabled": state.config.google().is_some()},
         "apple": {"enabled": state.config.apple().is_some()},
+        "admin": {"enabled": state.config.snapshot().admin_login_enabled},
     }))
 }
 
