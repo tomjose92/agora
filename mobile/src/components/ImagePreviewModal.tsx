@@ -11,14 +11,14 @@ export function ImagePreviewModal({ source, filename, onClose }: {
 }) {
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Close image preview"
-        style={styles.backdrop} onPress={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose}>
         <View style={styles.content} pointerEvents="box-none">
           <Pressable accessibilityRole="button" accessibilityLabel="Close image preview"
             style={styles.close} onPress={onClose}>
             <Icon icon={X} size={22} color="#fff" />
           </Pressable>
-          <Image source={source} style={styles.image} contentFit="contain" />
+          <Image source={source} style={styles.image} contentFit="contain"
+            accessibilityLabel={filename} />
           <Text style={styles.filename} numberOfLines={1}>{filename}</Text>
         </View>
       </Pressable>

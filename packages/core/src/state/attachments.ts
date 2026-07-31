@@ -54,7 +54,7 @@ function revokePreviewUrl(id: string): void {
     its lifetime because composer components unmount while per-channel drafts
     remain alive. */
 export function draftAttachmentPreviewUrl(entry: DraftAttachment): string | null {
-  if (entry.status !== "ready" || !entry.file || typeof URL === "undefined"
+  if ((entry.status !== "ready" && entry.status !== "sending") || !entry.file || typeof URL === "undefined"
       || typeof URL.createObjectURL !== "function") {
     return null;
   }
@@ -97,8 +97,6 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
   },
 
   complete: (draftKey, id, file) => {
-    // A promised drop may replace the original File object.
-    revokePreviewUrl(id);
     let completed = false;
     set((state) => {
       const current = state.byDraft[draftKey] ?? [];
@@ -118,6 +116,8 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
         ? { byDraft: { ...state.byDraft, [draftKey]: next } }
         : state;
     });
+    // A promised drop may replace the original File object.
+    if (completed) revokePreviewUrl(id);
     return completed;
   },
 

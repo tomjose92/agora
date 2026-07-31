@@ -15,7 +15,7 @@ import { colors } from "../lib/theme";
 import { Icon } from "./Icon";
 import { toastErr } from "./Toast";
 import { ImagePreviewModal } from "./ImagePreviewModal";
-import { WEB_SAFE_IMAGE } from "../lib/files";
+import { BROWSER_IMAGE } from "../lib/files";
 
 async function downloadAndShare(session: Session, att: Attachment) {
   const target = `${FileSystem.cacheDirectory}${att.id}-${att.filename}`;
@@ -73,7 +73,7 @@ export function Attachments({
               uri: fileUrl(session, att.id),
               headers: authHeaders(session),
             };
-        return WEB_SAFE_IMAGE.test(att.mime) ? (
+        return BROWSER_IMAGE.test(att.mime) ? (
           <Pressable key={att.id} accessibilityRole="button"
             accessibilityLabel={`Preview ${att.filename}`}
             onPress={() => setPreview({ source, filename: att.filename })}>

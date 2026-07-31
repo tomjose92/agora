@@ -110,6 +110,20 @@ export const PreparingAndFailed: Story = {
   },
 };
 
+export const SendingImage: Story = {
+  parameters: {
+    setup: () => {
+      const [entry] = useAttachmentDrafts.getState().stage(
+        "c:general",
+        [previewSvg],
+        "ready",
+        5,
+      ).accepted;
+      useAttachmentDrafts.getState().beginSend("c:general", [entry.id], () => {});
+    },
+  },
+};
+
 export const DraftWithMention: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

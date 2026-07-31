@@ -122,6 +122,22 @@ describe("attachment drafts", () => {
     expect(revoke).toHaveBeenCalledWith("blob:preview");
   });
 
+  it("keeps a ready preview visible while its upload is sending", () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:sending");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const store = useAttachmentDrafts.getState();
+    const [entry] = store.stage("c:a", [file("image")], "ready", 5).accepted;
+    expect(draftAttachmentPreviewUrl(entry)).toBe("blob:sending");
+
+    expect(store.beginSend("c:a", [entry.id], () => {})).toBe(true);
+    const sending = useAttachmentDrafts.getState().byDraft["c:a"][0];
+    expect(draftAttachmentPreviewUrl(sending)).toBe("blob:sending");
+    expect(revoke).not.toHaveBeenCalled();
+
+    store.sendSucceeded("c:a", [entry.id]);
+    expect(revoke).toHaveBeenCalledWith("blob:sending");
+  });
+
   it("does not create previews before a dropped file is ready", () => {
     const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:ready");
     const store = useAttachmentDrafts.getState();

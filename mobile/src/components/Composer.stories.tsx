@@ -33,9 +33,10 @@ export const ImageAndDocuments: Story = {
   args: {
     initialFiles: [
       {
-        uri: "https://picsum.photos/seed/agora-composer/480/320",
-        name: "release-dashboard.jpg",
-        type: "image/jpeg",
+        uri: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+          + "AAAADUlEQVR42mNk+M/wHwAEAQH/2qP8WQAAAABJRU5ErkJggg==",
+        name: "release-dashboard.png",
+        type: "image/png",
         size: 128_000,
       },
       {

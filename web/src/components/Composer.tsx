@@ -11,12 +11,11 @@ import {
 import { create } from "zustand";
 import { Icon } from "../lib/icons";
 import { autoGrow } from "../lib/autoGrow";
-import { humanSize, withToken } from "../lib/files";
+import { BROWSER_IMAGE, humanSize, withToken } from "../lib/files";
 import { slugify } from "../lib/mentions";
 import { toast } from "../lib/toast";
 import { MicButton } from "./VoiceControls";
 import { ImageLightbox } from "./ImageLightbox";
-import { BROWSER_IMAGE } from "../lib/files";
 
 const MAX_FILES = 5;
 const ATTACHMENT_UPLOAD_TIMEOUT_MS = 120_000;
@@ -355,10 +354,11 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
       {attachments.length > 0 && (
         <div className="ago-pending">
           {attachments.map(entry => {
-            const image = BROWSER_IMAGE.test(entry.type || "");
-            const url = image ? draftAttachmentPreviewUrl(entry) : null;
+            const imageType = (entry.type || "").startsWith("image/");
+            const previewable = BROWSER_IMAGE.test(entry.type || "");
+            const url = previewable ? draftAttachmentPreviewUrl(entry) : null;
             return (
-            <span key={entry.id} className={`ago-pending-chip ${image ? "image" : "file"}`} title={entry.name}>
+            <span key={entry.id} className={`ago-pending-chip ${previewable ? "image" : "file"}`} title={entry.name}>
               {url ? (
                 <button
                   type="button"
@@ -370,7 +370,7 @@ export function Composer({ channelId, channelName, threadId, agents = [], candid
                 </button>
               ) : (
                 <span className={`ago-pending-file-icon ${entry.status === "preparing" ? "preparing" : ""}`}>
-                  <Icon name={image ? "image" : "file-text"} />
+                  <Icon name={imageType ? "image" : "file-text"} />
                 </span>
               )}
               <span className="ago-pending-meta">
