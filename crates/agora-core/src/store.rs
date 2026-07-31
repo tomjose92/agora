@@ -3598,16 +3598,22 @@ mod tests {
         let legacy = SCHEMA.replace("    reactor_type TEXT NOT NULL DEFAULT 'user',\n", "")
             .replace("    reactor_id TEXT NOT NULL DEFAULT '',\n", "");
         conn.execute_batch(&legacy).unwrap();
-        conn.execute("INSERT INTO agents (id, name, last_seen) VALUES ('solo-id', 'Solo', 0), ('bob-agent', 'bob', 0)", []).unwrap();
+        conn.execute("INSERT INTO agents (id, name, last_seen) VALUES \
+            ('solo-id', 'Solo', 0), ('bob-agent', 'bob', 0), \
+            ('dup-a', 'Duplicate', 0), ('dup-b', 'Duplicate', 0)", []).unwrap();
         conn.execute("INSERT INTO users (username, display_name, created_at) VALUES ('bob', 'Bob', 0)", []).unwrap();
-        conn.execute("INSERT INTO reactions (channel_id, message_id, username, emoji, reacted_at) VALUES ('c', 1, 'Solo', '👀', 1), ('c', 1, 'bob', '👍', 2)", []).unwrap();
+        conn.execute("INSERT INTO reactions (channel_id, message_id, username, emoji, reacted_at) VALUES \
+            ('c', 1, 'Solo', '👀', 1), ('c', 1, 'bob', '👍', 2), \
+            ('c', 1, 'Duplicate', '🎉', 3)", []).unwrap();
         drop(conn);
         let store = Store::open(&path).unwrap();
         let conn = store.conn.lock().unwrap();
         let solo: (String, String) = conn.query_row("SELECT reactor_type, reactor_id FROM reactions WHERE username = 'Solo'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         let bob: (String, String) = conn.query_row("SELECT reactor_type, reactor_id FROM reactions WHERE username = 'bob'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let duplicate: (String, String) = conn.query_row("SELECT reactor_type, reactor_id FROM reactions WHERE username = 'Duplicate'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(solo, ("agent".into(), "solo-id".into()));
         assert_eq!(bob, ("user".into(), "bob".into()));
+        assert_eq!(duplicate, ("user".into(), "Duplicate".into()));
     }
 
     #[test]

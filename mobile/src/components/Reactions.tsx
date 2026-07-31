@@ -12,20 +12,9 @@ import { colors } from "../lib/theme";
 import { useSession } from "../state/session";
 import { Icon } from "./Icon";
 import { AgentAvatar } from "./AgentAvatar";
+import { hasMine, legacyReactors, reactorNames } from "../lib/reactions";
 
-function hasMine(r: Reaction, username: string): boolean {
-  return r.reactors
-    ? r.reactors.some((x) => x.type === "user" && x.id === username)
-    : r.users.includes(username);
-}
-
-function legacyReactors(r: Reaction): ReactionReactor[] {
-  return r.reactors ?? r.users.map((name) => ({ type: "user", id: name, name }));
-}
-
-function reactorNames(r: Reaction): string[] {
-  return r.reactors?.map((reactor) => reactor.name) ?? r.users;
-}
+export { hasMine, legacyReactors, reactorNames } from "../lib/reactions";
 
 /** Returns react(message, emoji): adds the caller's reaction, or removes it
     when they already reacted with that emoji — picker taps are toggles. */
@@ -138,21 +127,27 @@ export function ReactionDetailsSheet({
     <Pressable style={styles.backdrop} onPress={onClose}>
       <Pressable style={styles.sheet} accessibilityViewIsModal onPress={() => undefined}>
         <View style={styles.handle} />
-        <View style={styles.tabs}>
-          {reactions.map((r) => {
-            const selected = r.emoji === reaction?.emoji;
-            return (
-              <Pressable
-                key={r.emoji}
-                style={[styles.tab, selected && styles.tabActive]}
-                onPress={() => setEmoji(r.emoji)}
-                accessibilityRole="tab"
-                accessibilityState={{ selected }}
-              >
-                <Text style={styles.tabText}>{r.emoji} {r.users.length}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={styles.tabBorder}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabs}
+          >
+            {reactions.map((r) => {
+              const selected = r.emoji === reaction?.emoji;
+              return (
+                <Pressable
+                  key={r.emoji}
+                  style={[styles.tab, selected && styles.tabActive]}
+                  onPress={() => setEmoji(r.emoji)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected }}
+                >
+                  <Text style={styles.tabText}>{r.emoji} {r.users.length}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
         <Text style={styles.title}>{reaction?.emoji} reactions</Text>
         <ScrollView style={styles.reactorList}>
@@ -222,7 +217,8 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.55)" },
   sheet: { maxHeight: "72%", backgroundColor: "#14161d", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 20, paddingBottom: 36 },
   handle: { alignSelf: "center", width: 42, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: 16 },
-  tabs: { flexDirection: "row", gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  tabBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  tabs: { flexDirection: "row", gap: 8 },
   tab: { paddingHorizontal: 18, paddingBottom: 12, borderBottomWidth: 2, borderBottomColor: "transparent" },
   tabActive: { borderBottomColor: colors.a1 },
   tabText: { color: colors.text, fontSize: 17 },

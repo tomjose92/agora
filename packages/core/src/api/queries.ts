@@ -670,12 +670,13 @@ export function useSeedActivity(channelId: string) {
   }, [channelId, query.data, seed]);
 }
 
-export function useAgents() {
+export function useAgents(staleTime?: number) {
   const api = useApi();
   return useQuery({
     queryKey: keys.agents,
     queryFn: async () =>
       (await api.get<{ agents: AgentInfo[] }>("/api/agents")).agents,
+    staleTime,
   });
 }
 
