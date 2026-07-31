@@ -989,7 +989,7 @@ a.btn { text-decoration: none; }
   line-height: 1.35; white-space: normal; box-shadow: 0 8px 24px rgba(0,0,0,.45);
 }
 .ago-react-pop::after {
-  content: ""; position: absolute; left: var(--ago-anchor-x); width: 8px; height: 8px;
+  content: ""; position: absolute; left: var(--ago-anchor-x, 50%); width: 8px; height: 8px;
   background: #171b26; border: solid var(--border-strong); transform: translateX(-50%) rotate(45deg);
 }
 .ago-react-pop[data-placement="above"]::after {

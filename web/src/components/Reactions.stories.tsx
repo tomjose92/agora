@@ -59,6 +59,31 @@ export const RightViewportEdge: Story = {
   play: async ({ canvasElement }) => { await openAndCheckViewport(canvasElement); },
 };
 
+export const FlipsBelowNearTop: Story = {
+  decorators: [(Story) => <div style={{ position: "fixed", left: 180, top: 0 }}><Story /></div>],
+  play: async ({ canvasElement }) => {
+    const { tooltip } = await openAndCheckViewport(canvasElement);
+    await expect(tooltip).toHaveAttribute("data-placement", "below");
+  },
+};
+
+export const StaysAboveNearBottom: Story = {
+  decorators: [(Story) => <div style={{ position: "fixed", left: 180, bottom: 0 }}><Story /></div>],
+  play: async ({ canvasElement }) => {
+    const { tooltip } = await openAndCheckViewport(canvasElement);
+    await expect(tooltip).toHaveAttribute("data-placement", "above");
+  },
+};
+
+export const InsideOverflowContainer: Story = {
+  decorators: [(Story) => (
+    <div style={{ width: 360, height: 42, overflow: "hidden", margin: 120 }}>
+      <Story />
+    </div>
+  )],
+  play: async ({ canvasElement }) => { await openAndCheckViewport(canvasElement); },
+};
+
 export const LongReactorList: Story = {
   args: {
     message: {
@@ -76,7 +101,9 @@ export const LongReactorList: Story = {
   },
   play: async ({ canvasElement }) => {
     const { tooltip } = await openAndCheckViewport(canvasElement);
-    await expect(tooltip).toHaveTextContent("Person 18");
+    const body = tooltip.querySelector<HTMLElement>(".ago-react-pop-body");
+    await expect(body).not.toBeNull();
+    await expect(body!.scrollHeight).toBeGreaterThan(body!.clientHeight);
   },
 };
 
