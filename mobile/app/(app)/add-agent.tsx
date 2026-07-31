@@ -21,6 +21,7 @@ type Tab = "connections" | "add";
 
 export default function AddAgentScreen() {
   const admin = useSession((s) => s.instanceAdmin);
+  const adminKnown = useSession((s) => s.instanceAdminKnown);
   const [tab, setTab] = useState<Tab>("add");
   return (
     <>
@@ -28,7 +29,11 @@ export default function AddAgentScreen() {
         options={{ title: "Agents & connections", headerShown: true }}
       />
       <SafeAreaView edges={["bottom"]} style={styles.root}>
-        {!admin ? (
+        {!adminKnown ? (
+          <View style={styles.denied}>
+            <Text style={styles.deniedTitle}>Checking admin access…</Text>
+          </View>
+        ) : !admin ? (
           <View style={styles.denied}>
             <Text style={styles.deniedTitle}>Admin access required</Text>
             <Text style={styles.deniedCopy}>

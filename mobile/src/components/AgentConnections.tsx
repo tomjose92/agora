@@ -634,7 +634,15 @@ export function AgentConnectionsList() {
             <Text numberOfLines={1} style={styles.rowMeta}>
               {connection.url}
             </Text>
-            <Text style={styles.rowMeta}>
+            <Text
+              numberOfLines={connection.status?.last_error ? 2 : undefined}
+              style={[
+                styles.rowMeta,
+                connection.enabled &&
+                  connection.status?.last_error &&
+                  styles.rowError,
+              ]}
+            >
               {!connection.enabled
                 ? "Disabled"
                 : connection.status?.connected
@@ -922,6 +930,7 @@ const styles = StyleSheet.create({
   rowMain: { flex: 1, minWidth: 0, gap: 2 },
   rowName: { color: colors.text, fontSize: 14, fontWeight: "700" },
   rowMeta: { color: colors.dim, fontSize: 11.5 },
+  rowError: { color: colors.red },
   dot: { width: 8, height: 8, borderRadius: 4 },
   nameLine: { flexDirection: "row", alignItems: "center", gap: 7 },
   kindBadge: {

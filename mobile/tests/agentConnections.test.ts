@@ -186,6 +186,7 @@ beforeEach(() => {
     username: "admin",
     displayName: "Admin",
     instanceAdmin: true,
+    instanceAdminKnown: true,
   });
 });
 
@@ -380,5 +381,19 @@ test("non-admins see the route denial instead of the management flow", () => {
   });
   expect(JSON.stringify(tree.toJSON())).toContain("Admin access required");
   expect(JSON.stringify(tree.toJSON())).not.toContain("Add agent");
+  act(() => tree.unmount());
+});
+
+test("unknown admin role renders a loading state instead of a denial", () => {
+  act(() =>
+    useSession.setState({ instanceAdmin: false, instanceAdminKnown: false }),
+  );
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(AddAgentScreen));
+  });
+  const rendered = JSON.stringify(tree.toJSON());
+  expect(rendered).toContain("Checking admin access…");
+  expect(rendered).not.toContain("Admin access required");
   act(() => tree.unmount());
 });

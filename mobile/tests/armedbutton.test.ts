@@ -9,11 +9,13 @@ describe("ArmedButton", () => {
   function render(onConfirm = jest.fn()) {
     let tree!: TestRenderer.ReactTestRenderer;
     act(() => {
-      tree = TestRenderer.create(React.createElement(ArmedButton, {
-        label: "Remove",
-        armedLabel: "Tap again",
-        onConfirm,
-      }));
+      tree = TestRenderer.create(
+        React.createElement(ArmedButton, {
+          label: "Remove",
+          armedLabel: "Tap again",
+          onConfirm,
+        }),
+      );
     });
     return { tree, onConfirm };
   }
@@ -28,6 +30,8 @@ describe("ArmedButton", () => {
 
     act(() => button(tree).props.onPress());
     expect(rendered(tree)).toContain("Tap again");
+    expect(button(tree).props.accessibilityLabel).toBe("Confirm: Remove");
+    expect(button(tree).props.accessibilityHint).toContain("five seconds");
     expect(onConfirm).not.toHaveBeenCalled();
 
     act(() => button(tree).props.onPress());

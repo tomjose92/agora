@@ -24,6 +24,7 @@ export default function AgentsScreen() {
   const agents = useAgents();
   const forget = useForgetAgent();
   const admin = useSession((s) => s.instanceAdmin);
+  const adminKnown = useSession((s) => s.instanceAdminKnown);
 
   return (
     <>
@@ -85,9 +86,11 @@ export default function AgentsScreen() {
         ))}
         {agents.isSuccess && agents.data.length === 0 ? (
           <Text style={styles.empty}>
-            {admin
-              ? "No agents yet. Use Add agent to connect one; it will appear here when it dials in."
-              : "No agents are available yet. Ask an instance admin to connect one."}
+            {!adminKnown
+              ? "Checking whether you can add agents…"
+              : admin
+                ? "No agents yet. Use Add agent to connect one; it will appear here when it dials in."
+                : "No agents are available yet. Ask an instance admin to connect one."}
           </Text>
         ) : null}
         {admin ? (

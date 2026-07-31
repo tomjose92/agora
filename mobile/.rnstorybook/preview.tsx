@@ -89,6 +89,7 @@ const preview: Preview = {
       username: fixtureMe.username,
       displayName: fixtureMe.display_name,
       instanceAdmin: fixtureMe.instance_admin,
+      instanceAdminKnown: true,
       voiceOk: fixtureMe.voice,
       savedUrl: session.baseUrl,
     });

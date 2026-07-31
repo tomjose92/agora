@@ -41,7 +41,14 @@ export function ArmedButton({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
+      accessibilityLabel={
+        armed
+          ? `Confirm: ${accessibilityLabel ?? label}`
+          : (accessibilityLabel ?? label)
+      }
+      accessibilityHint={
+        armed ? "Activate again within five seconds to confirm" : undefined
+      }
       onPress={press}
       style={[styles.btn, armed && styles.armed, style]}
     >
@@ -52,6 +59,8 @@ export function ArmedButton({
 
 const styles = StyleSheet.create({
   btn: {
+    minHeight: 44,
+    justifyContent: "center",
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,

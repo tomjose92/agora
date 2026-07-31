@@ -18,6 +18,7 @@ import { rememberServer } from "./servers";
 /* Shared with the background poller, which reads credentials without the store. */
 export const KEY_URL = "agora_server_url";
 export const KEY_TOKEN = "agora_admin_key";
+const KEY_INSTANCE_ADMIN = "agora_instance_admin";
 /** Pre-rename keychain slot ("owner token" era); migrated in load(). */
 const KEY_TOKEN_LEGACY = "agora_owner_token";
 
@@ -30,6 +31,8 @@ interface SessionState {
   displayName: string;
   /** Operator powers (me.instance_admin) — gates connections/pairing UI. */
   instanceAdmin: boolean;
+  /** False only while an existing session's cached/server role is unresolved. */
+  instanceAdminKnown: boolean;
   /** Server-side STT/TTS available (me.voice) — gates all voice UI. */
   voiceOk: boolean;
   /** Last known server URL. Survives a sign-out (an expired Google session
@@ -49,13 +52,15 @@ export const useSession = create<SessionState>((set) => ({
   username: "",
   displayName: "",
   instanceAdmin: false,
+  instanceAdminKnown: false,
   voiceOk: false,
   savedUrl: "",
 
   async load() {
-    let [baseUrl, token] = await Promise.all([
+    let [baseUrl, token, cachedAdmin] = await Promise.all([
       SecureStore.getItemAsync(KEY_URL),
       SecureStore.getItemAsync(KEY_TOKEN),
+      SecureStore.getItemAsync(KEY_INSTANCE_ADMIN),
     ]);
     // One-time keychain migration from the pre-rename slot.
     if (!token) {
@@ -67,19 +72,32 @@ export const useSession = create<SessionState>((set) => ({
       }
     }
     if (!baseUrl || !token) {
-      set({ status: "signedOut", session: null, savedUrl: baseUrl || "" });
+      set({
+        status: "signedOut",
+        session: null,
+        savedUrl: baseUrl || "",
+        instanceAdminKnown: false,
+      });
       return;
     }
     // Trust stored credentials without a network round-trip so the app opens
     // offline; a 401 later drops back to the connect screen via onUnauthorized.
     const session: Session = { baseUrl, token };
-    set({ status: "signedIn", session, savedUrl: baseUrl });
+    set({
+      status: "signedIn",
+      session,
+      savedUrl: baseUrl,
+      instanceAdmin: cachedAdmin === "true",
+      instanceAdminKnown: cachedAdmin !== null,
+    });
     // Background /api/me: resolves the username (the WS reducer needs it for
     // unread bookkeeping) and heals a stale scheme — sessions stored before
     // redirect canonicalization keep http:// for hosts that are really
     // https, which silently kills the live socket. Best-effort: offline is
     // fine, 401 signs out.
-    fetch(`${baseUrl}/api/me`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${baseUrl}/api/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then(async (res) => {
         if (res.status === 401) {
           void useSession.getState().signOut();
@@ -96,8 +114,13 @@ export const useSession = create<SessionState>((set) => ({
           username: me.username,
           displayName: me.display_name || me.username,
           instanceAdmin: !!me.instance_admin,
+          instanceAdminKnown: true,
           voiceOk: !!me.voice,
         });
+        await SecureStore.setItemAsync(
+          KEY_INSTANCE_ADMIN,
+          String(!!me.instance_admin),
+        );
       })
       .catch(() => {
         /* offline — keep the stored session */
@@ -120,10 +143,14 @@ export const useSession = create<SessionState>((set) => ({
     });
     if (!res.ok) throw await parseError(res);
     const me = (await res.json()) as Me;
-    const session: Session = { baseUrl: originOf(res.url, guess), token: trimmed };
+    const session: Session = {
+      baseUrl: originOf(res.url, guess),
+      token: trimmed,
+    };
     await Promise.all([
       SecureStore.setItemAsync(KEY_URL, session.baseUrl),
       SecureStore.setItemAsync(KEY_TOKEN, session.token),
+      SecureStore.setItemAsync(KEY_INSTANCE_ADMIN, String(!!me.instance_admin)),
       // The recent-servers list feeds "Change server"; it outlives
       // signOut/forgetServer on purpose.
       rememberServer(session.baseUrl),
@@ -134,6 +161,7 @@ export const useSession = create<SessionState>((set) => ({
       username: me.username,
       displayName: me.display_name || me.username,
       instanceAdmin: !!me.instance_admin,
+      instanceAdminKnown: true,
       voiceOk: !!me.voice,
       savedUrl: session.baseUrl,
     });
@@ -143,13 +171,17 @@ export const useSession = create<SessionState>((set) => ({
     const session = useSession.getState().session;
     await unregisterPushToken(session);
     // Keep KEY_URL: the login screen should only ask for credentials again.
-    await SecureStore.deleteItemAsync(KEY_TOKEN);
+    await Promise.all([
+      SecureStore.deleteItemAsync(KEY_TOKEN),
+      SecureStore.deleteItemAsync(KEY_INSTANCE_ADMIN),
+    ]);
     set({
       status: "signedOut",
       session: null,
       username: "",
       displayName: "",
       instanceAdmin: false,
+      instanceAdminKnown: false,
       voiceOk: false,
     });
   },
@@ -160,6 +192,7 @@ export const useSession = create<SessionState>((set) => ({
     await Promise.all([
       SecureStore.deleteItemAsync(KEY_URL),
       SecureStore.deleteItemAsync(KEY_TOKEN),
+      SecureStore.deleteItemAsync(KEY_INSTANCE_ADMIN),
     ]);
     set({
       status: "signedOut",
@@ -167,6 +200,7 @@ export const useSession = create<SessionState>((set) => ({
       username: "",
       displayName: "",
       instanceAdmin: false,
+      instanceAdminKnown: false,
       voiceOk: false,
       savedUrl: "",
     });
