@@ -1,5 +1,6 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
+import { Text } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, ApiProvider, keys } from "@agora/core";
 import {
@@ -28,8 +29,10 @@ jest.mock("expo-router", () => ({
 
 class RecordingApi extends ApiClient {
   calls: Array<{ path: string; body: unknown }> = [];
+  puts: Array<{ path: string; body: unknown }> = [];
+  deletes: string[] = [];
 
-  constructor() {
+  constructor(private readonly failGets = false) {
     super({ baseUrl: "https://agora.example", token: "test" });
   }
 
@@ -39,6 +42,7 @@ class RecordingApi extends ApiClient {
   }
 
   override async get<T>(path: string): Promise<T> {
+    if (this.failGets) throw new Error("offline");
     if (path === "/api/connections") {
       return {
         connections: [
@@ -80,17 +84,27 @@ class RecordingApi extends ApiClient {
     }
     throw new Error(`Unexpected GET ${path}`);
   }
+
+  override async put<T>(path: string, body?: unknown): Promise<T> {
+    this.puts.push({ path, body });
+    return {} as T;
+  }
+
+  override async delete<T>(path: string): Promise<T> {
+    this.deletes.push(path);
+    return {} as T;
+  }
 }
 
 function renderFlow(
   api: RecordingApi,
   element = React.createElement(AddAgentFlow),
-  seedList = false,
+  seedList: false | "data" | "error" = false,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  if (seedList) {
+  if (seedList === "data") {
     queryClient.setQueryData(keys.connections, [
       {
         name: "Home",
@@ -122,6 +136,22 @@ function renderFlow(
         created_at: 2,
       },
     ]);
+  } else if (seedList === "error") {
+    for (const queryKey of [keys.connections, keys.pairing]) {
+      const query = queryClient.getQueryCache().build(queryClient, {
+        queryKey,
+        queryFn: async () => {
+          throw new Error("offline");
+        },
+      });
+      query.setState({
+        ...query.state,
+        error: new Error("offline"),
+        errorUpdatedAt: Date.now(),
+        fetchStatus: "idle",
+        status: "error",
+      });
+    }
   }
   let tree!: TestRenderer.ReactTestRenderer;
   act(() => {
@@ -141,7 +171,7 @@ function labelled(root: TestRenderer.ReactTestInstance, label: string) {
 }
 
 function pressText(root: TestRenderer.ReactTestInstance, text: string) {
-  const label = root.findByProps({ children: text });
+  const label = root.findAllByProps({ children: text })[0];
   let current = label;
   while (current.parent && typeof current.props.onPress !== "function") {
     current = current.parent;
@@ -258,7 +288,7 @@ test("connection list distinguishes disabled links and unknown agent kinds", asy
   const tree = renderFlow(
     new RecordingApi(),
     React.createElement(AgentConnectionsList),
-    true,
+    "data",
   );
   await act(async () => {});
   const rendered = JSON.stringify(tree.toJSON());
@@ -268,7 +298,54 @@ test("connection list distinguishes disabled links and unknown agent kinds", asy
   expect(rendered).not.toContain("Connecting…");
   expect(rendered).toContain("Connection refused");
   expect(rendered).toContain("Codex");
-  expect(rendered).toContain("Agent");
+  expect(
+    tree.root.findAll(
+      (node) => node.type === Text && node.props.children === "Agent",
+    ),
+  ).toHaveLength(1);
+  act(() => tree.unmount());
+});
+
+test("connection list reports query failures distinctly", async () => {
+  const tree = renderFlow(
+    new RecordingApi(true),
+    React.createElement(AgentConnectionsList),
+  );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  const rendered = JSON.stringify(tree.toJSON());
+  expect(rendered).toContain("Couldn't load linked instances.");
+  expect(rendered).toContain("Couldn't load agent access.");
+  act(() => tree.unmount());
+});
+
+test("connection management controls target the expected API resources", async () => {
+  const api = new RecordingApi();
+  const tree = renderFlow(
+    api,
+    React.createElement(AgentConnectionsList),
+    "data",
+  );
+
+  await act(async () =>
+    labelled(tree.root, "Enable Home").props.onValueChange(true),
+  );
+  act(() => pressText(tree.root, "Remove"));
+  await act(async () => pressText(tree.root, "Sure?"));
+  act(() => pressText(tree.root, "Revoke"));
+  await act(async () => pressText(tree.root, "Sure?"));
+
+  expect(api.puts).toContainEqual({
+    path: "/api/connections/Home",
+    body: { name: "Home", enabled: true },
+  });
+  expect(api.deletes).toEqual(
+    expect.arrayContaining([
+      "/api/connections/Home",
+      "/api/pairing/codex-token",
+    ]),
+  );
   act(() => tree.unmount());
 });
 

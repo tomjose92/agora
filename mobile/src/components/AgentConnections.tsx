@@ -27,6 +27,7 @@ import {
 } from "lucide-react-native";
 import {
   agentWsUrl,
+  fmtTs,
   inferPairingKind,
   type PairingKind,
   type PairingToken,
@@ -654,7 +655,9 @@ export function AgentConnectionsList() {
           />
         </View>
       ))}
-      {connections.isSuccess && !connections.data.length ? (
+      {connections.isError ? (
+        <Text style={styles.empty}>Couldn't load linked instances.</Text>
+      ) : connections.isSuccess && !connections.data.length ? (
         <Text style={styles.empty}>No linked instances yet.</Text>
       ) : null}
       <Text style={styles.sectionTitle}>Connected agents</Text>
@@ -685,6 +688,9 @@ export function AgentConnectionsList() {
                   ? token.agents?.map((a) => a.name || a.id).join(", ") ||
                     "Connected, registering…"
                   : "Offline"}
+              </Text>
+              <Text style={styles.rowMeta}>
+                Created {fmtTs(token.created_at)}
               </Text>
               <View style={styles.tokenActions}>
                 <Pressable
@@ -726,7 +732,9 @@ export function AgentConnectionsList() {
           </View>
         );
       })}
-      {pairing.isSuccess && !pairing.data.length ? (
+      {pairing.isError ? (
+        <Text style={styles.empty}>Couldn't load agent access.</Text>
+      ) : pairing.isSuccess && !pairing.data.length ? (
         <Text style={styles.empty}>No agent access created yet.</Text>
       ) : null}
     </View>
