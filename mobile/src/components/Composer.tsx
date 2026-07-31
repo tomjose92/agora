@@ -53,7 +53,7 @@ import { AgentAvatar } from "./AgentAvatar";
 import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
 import { ImagePreviewModal } from "./ImagePreviewModal";
-import { WEB_SAFE_IMAGE } from "../lib/files";
+import { NATIVE_IMAGE, WEB_SAFE_IMAGE } from "../lib/files";
 
 const NONE_ADDRESSED: string[] = [];
 
@@ -440,7 +440,7 @@ export function Composer({
       {files.length > 0 ? (
         <ScrollView horizontal style={styles.fileBar} keyboardShouldPersistTaps="always">
           {files.map((f, i) => {
-            const image = WEB_SAFE_IMAGE.test(f.type);
+            const image = NATIVE_IMAGE.test(f.type);
             return (
               <View key={`${f.uri}-${i}`} style={[styles.fileChip, image && styles.imageChip]}>
                 {image ? (

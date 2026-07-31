@@ -2,6 +2,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { Composer } from "../src/components/Composer";
+import { Attachments } from "../src/components/Attachments";
 
 jest.mock("expo-audio", () => ({
   AudioModule: { requestRecordingPermissionsAsync: jest.fn() },
@@ -19,7 +20,7 @@ jest.mock("lucide-react-native", () => new Proxy({}, {
 }));
 
 const files = [
-  { uri: "file:///image.png", name: "image.png", type: "image/png", size: 1_024 },
+  { uri: "file:///image.heic", name: "image.heic", type: "image/heic", size: 1_024 },
   { uri: "file:///middle.pdf", name: "middle.pdf", type: "application/pdf", size: 2_048 },
   { uri: "file:///last.txt", name: "last.txt", type: "text/plain" },
 ];
@@ -49,18 +50,50 @@ test("composer attachment cards preview images and remove the selected file", ()
     ));
   });
 
-  labelled(tree.root, "Preview image.png");
-  labelled(tree.root, "Remove image.png");
-  labelled(tree.root, "Remove middle.pdf");
-  labelled(tree.root, "Remove last.txt");
+  expect(labelled(tree.root, "Preview image.heic")).toBeDefined();
+  expect(labelled(tree.root, "Remove image.heic")).toBeDefined();
+  expect(labelled(tree.root, "Remove middle.pdf")).toBeDefined();
+  expect(labelled(tree.root, "Remove last.txt")).toBeDefined();
+  expect(tree.root.findAll((node) => node.props.accessibilityLabel === "Preview middle.pdf"))
+    .toHaveLength(0);
   expect(tree.root.findAllByProps({ children: "1.0 KB" }).length).toBeGreaterThan(0);
   expect(tree.root.findAllByProps({ children: "2.0 KB" }).length).toBeGreaterThan(0);
 
+  act(() => labelled(tree.root, "Preview image.heic").props.onPress());
+  expect(labelled(tree.root, "Close image preview")).toBeDefined();
+  act(() => labelled(tree.root, "Close image preview").props.onPress());
+  expect(tree.root.findAll((node) => node.props.accessibilityLabel === "Close image preview"))
+    .toHaveLength(0);
+
   act(() => labelled(tree.root, "Remove middle.pdf").props.onPress());
 
-  labelled(tree.root, "Remove image.png");
-  labelled(tree.root, "Remove last.txt");
+  expect(labelled(tree.root, "Remove image.heic")).toBeDefined();
+  expect(labelled(tree.root, "Remove last.txt")).toBeDefined();
   expect(tree.root.findAll((node) => node.props.accessibilityLabel === "Remove middle.pdf"))
+    .toHaveLength(0);
+  act(() => tree.unmount());
+});
+
+test("sent image attachments open and close the full-screen preview", () => {
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(Attachments, {
+      session: { baseUrl: "https://example.invalid", token: "test" },
+      attachments: [{
+        id: "image",
+        filename: "agent-diagram.svg",
+        mime: "image/svg+xml",
+        size: 4_096,
+      }],
+      imageSource: () => ({ uri: "data:image/svg+xml,<svg/>" }),
+    }));
+  });
+
+  expect(labelled(tree.root, "Preview agent-diagram.svg")).toBeDefined();
+  act(() => labelled(tree.root, "Preview agent-diagram.svg").props.onPress());
+  expect(labelled(tree.root, "Close image preview")).toBeDefined();
+  act(() => labelled(tree.root, "Close image preview").props.onPress());
+  expect(tree.root.findAll((node) => node.props.accessibilityLabel === "Close image preview"))
     .toHaveLength(0);
   act(() => tree.unmount());
 });
