@@ -1,6 +1,6 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { Text } from "react-native";
+import { Linking, Text } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, ApiProvider, keys } from "@agora/core";
 import {
@@ -266,6 +266,9 @@ test("Pantheo link validates required fields and submits trimmed values", async 
     },
   ]);
   expect(onDone).toHaveBeenCalledTimes(1);
+  expect(
+    tree.root.findByProps({ placeholder: "PANTHEO_API_TOKEN" }).props.value,
+  ).toBe("");
   act(() => tree.unmount());
 });
 
@@ -281,6 +284,26 @@ test("success state shows the supplied token and remote socket address", () => {
   expect(JSON.stringify(tree.toJSON())).toContain(
     "wss://agora.example/agent/ws?token=one-time-token",
   );
+  act(() => tree.unmount());
+});
+
+test("local success opens the origin-hosted guide without a socket address", async () => {
+  const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+  const tree = renderFlow(
+    new RecordingApi(),
+    React.createElement(AddAgentFlow, {
+      initialKind: "codex",
+      initialIssued: "local-token",
+    }),
+  );
+  const rendered = JSON.stringify(tree.toJSON());
+  expect(rendered).not.toContain("agent/ws");
+
+  await act(async () => pressText(tree.root, "Open setup guide"));
+  expect(open).toHaveBeenCalledWith(
+    "https://agora.example/docs/coding-agents/codex.html",
+  );
+  open.mockRestore();
   act(() => tree.unmount());
 });
 

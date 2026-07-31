@@ -29,6 +29,7 @@ import {
   agentWsUrl,
   fmtTs,
   inferPairingKind,
+  originOf,
   type PairingKind,
   type PairingToken,
   useConnectionMutations,
@@ -446,6 +447,9 @@ export function AddAgentFlow({
                 },
                 {
                   onSuccess: () => {
+                    setConnectionName("");
+                    setUrl("");
+                    setConnectionToken("");
                     toast("Linked — connecting…");
                     onDone?.();
                   },
@@ -464,11 +468,15 @@ export function AddAgentFlow({
 
   const definition = kind === "generic" ? undefined : byKind[kind];
   const local = !!definition?.local;
+  const serverOrigin = originOf(session.baseUrl, session.baseUrl).replace(
+    /\/+$/,
+    "",
+  );
   const guideUrl = local
-    ? `${session.baseUrl.replace(/\/+$/, "")}/docs/coding-agents/${kind}.html`
+    ? `${serverOrigin}/docs/coding-agents/${kind}.html`
     : null;
   if (issued) {
-    const socket = agentWsUrl(session.baseUrl, issued);
+    const socket = agentWsUrl(serverOrigin, issued);
     return (
       <View style={styles.success}>
         <View style={styles.successMark}>
@@ -647,6 +655,7 @@ export function AgentConnectionsList() {
           />
           <ArmedButton
             label="Remove"
+            accessibilityLabel={`Remove ${connection.name}`}
             onConfirm={() =>
               connectionMutations.remove.mutate(connection.name, {
                 onError: (e) => toastErr("Remove failed", e),
@@ -655,7 +664,7 @@ export function AgentConnectionsList() {
           />
         </View>
       ))}
-      {connections.isError ? (
+      {connections.isError && !connections.data ? (
         <Text style={styles.empty}>Couldn't load linked instances.</Text>
       ) : connections.isSuccess && !connections.data.length ? (
         <Text style={styles.empty}>No linked instances yet.</Text>
@@ -723,6 +732,7 @@ export function AgentConnectionsList() {
             </View>
             <ArmedButton
               label="Revoke"
+              accessibilityLabel={`Revoke access for ${token.name}`}
               onConfirm={() =>
                 pairingMutations.revoke.mutate(token.token, {
                   onError: (e) => toastErr("Revoke failed", e),
@@ -732,7 +742,7 @@ export function AgentConnectionsList() {
           </View>
         );
       })}
-      {pairing.isError ? (
+      {pairing.isError && !pairing.data ? (
         <Text style={styles.empty}>Couldn't load agent access.</Text>
       ) : pairing.isSuccess && !pairing.data.length ? (
         <Text style={styles.empty}>No agent access created yet.</Text>

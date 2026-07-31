@@ -10,17 +10,22 @@ export function ArmedButton({
   armedLabel = "Sure?",
   onConfirm,
   style,
+  accessibilityLabel,
 }: {
   label: string;
   armedLabel?: string;
   onConfirm: () => void;
   style?: ViewStyle;
+  accessibilityLabel?: string;
 }) {
   const [armed, setArmed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
 
   const press = () => {
     if (armed) {
@@ -34,7 +39,12 @@ export function ArmedButton({
   };
 
   return (
-    <Pressable onPress={press} style={[styles.btn, armed && styles.armed, style]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPress={press}
+      style={[styles.btn, armed && styles.armed, style]}
+    >
       <Text style={styles.text}>{armed ? armedLabel : label}</Text>
     </Pressable>
   );
