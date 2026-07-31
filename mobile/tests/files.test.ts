@@ -10,10 +10,18 @@ describe("mobile attachment previews", () => {
   });
 
   it("keeps server-stored SVG and BMP attachments inline", () => {
+    expect(NATIVE_IMAGE.test("image/jpg")).toBe(true);
     expect(NATIVE_IMAGE.test("image/svg+xml")).toBe(true);
     expect(NATIVE_IMAGE.test("image/bmp")).toBe(true);
     expect(NATIVE_IMAGE.test("image/heic")).toBe(true);
     expect(NATIVE_IMAGE.test("image/heif")).toBe(true);
     expect(NATIVE_IMAGE.test("image/avif")).toBe(true);
+  });
+
+  it("can preview every format uploaded without re-encoding", () => {
+    for (const mime of ["image/jpg", "image/jpeg", "image/png", "image/gif", "image/webp"]) {
+      expect(WEB_SAFE_IMAGE.test(mime)).toBe(true);
+      expect(NATIVE_IMAGE.test(mime)).toBe(true);
+    }
   });
 });

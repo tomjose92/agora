@@ -116,8 +116,6 @@ export const useAttachmentDrafts = create<AttachmentDraftState>((set, get) => ({
         ? { byDraft: { ...state.byDraft, [draftKey]: next } }
         : state;
     });
-    // A promised drop may replace the original File object.
-    if (completed) revokePreviewUrl(id);
     return completed;
   },
 

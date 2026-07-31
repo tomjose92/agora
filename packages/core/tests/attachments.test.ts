@@ -191,4 +191,19 @@ describe("attachment drafts", () => {
     const ready = useAttachmentDrafts.getState().byDraft["c:a"][0];
     expect(draftAttachmentPreviewUrl(ready)).toBe("blob:ready");
   });
+
+  it("revokes all outstanding preview URLs on reset", () => {
+    vi.spyOn(URL, "createObjectURL")
+      .mockReturnValueOnce("blob:first")
+      .mockReturnValueOnce("blob:second");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const store = useAttachmentDrafts.getState();
+    const entries = store.stage("c:a", [file("first"), file("second")], "ready", 5).accepted;
+    entries.forEach(draftAttachmentPreviewUrl);
+
+    store.reset();
+
+    expect(revoke).toHaveBeenCalledWith("blob:first");
+    expect(revoke).toHaveBeenCalledWith("blob:second");
+  });
 });

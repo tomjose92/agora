@@ -62,9 +62,6 @@ const MAX_FILES = 5;
 /** Keep-awake tag for voice notes: the screen must not auto-lock mid-take. */
 const REC_KEEP_AWAKE = "composer-voice-note";
 
-/* Image types the rest of the stack digests: browsers render them and the
-   vision APIs accept them. Everything else (HEIC on every iPhone, AVIF...)
-   is re-encoded to JPEG on device before upload. */
 /** Longest edge for uploads; keeps photos comfortably under server caps. */
 const MAX_IMAGE_EDGE = 2048;
 

@@ -11,8 +11,10 @@ export function ImagePreviewModal({ source, filename, onClose }: {
 }) {
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable accessibilityRole="none" style={styles.backdrop} onPress={onClose}>
-        <View style={styles.content} pointerEvents="box-none" accessibilityViewIsModal>
+      <View style={styles.root} accessibilityViewIsModal>
+        <Pressable accessibilityRole="button" accessibilityLabel="Dismiss image preview"
+          style={styles.backdrop} onPress={onClose} />
+        <View style={styles.content}>
           <Pressable accessibilityRole="button" accessibilityLabel="Close image preview"
             style={styles.close} onPress={onClose}>
             <Icon icon={X} size={22} color="#fff" />
@@ -21,17 +23,21 @@ export function ImagePreviewModal({ source, filename, onClose }: {
             accessibilityLabel={filename} />
           <Text style={styles.filename} numberOfLines={1}>{filename}</Text>
         </View>
-      </Pressable>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1, alignItems: "center", justifyContent: "center" },
   backdrop: {
-    flex: 1, padding: 20, alignItems: "center", justifyContent: "center",
+    position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
     backgroundColor: "rgba(4,6,10,0.92)",
   },
-  content: { width: "100%", height: "88%", alignItems: "center", justifyContent: "center" },
+  content: {
+    width: "100%", height: "88%", padding: 20, alignItems: "center",
+    justifyContent: "center",
+  },
   close: {
     position: "absolute", top: 0, right: 0, zIndex: 1, width: 40, height: 40,
     borderRadius: 20, alignItems: "center", justifyContent: "center",
