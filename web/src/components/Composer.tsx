@@ -365,6 +365,7 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
       if (!input) return;
       input.focus();
       input.setSelectionRange(caret, caret);
+      hasCaret.current = true;
       autoGrow(input);
     });
   };

@@ -38,6 +38,14 @@ export function TemplateControls({ groupId, draft, onChoose }: {
   const popRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    setOpen(false);
+    setManage(false);
+    setEditing(null);
+    setLabel("");
+    setBody("");
+  }, [groupId]);
+
   /* Keep the popover glued to its button through resizes and pane scrolling
      (same helper the reaction popovers use). */
   useLayoutEffect(() => {

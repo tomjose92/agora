@@ -975,6 +975,9 @@ async fn update_template(
     let user = require_user(&state, &headers, &q)?;
     group_or_404(&state, &group_id)?;
     require_member(&state, &user, &group_id)?;
+    if !payload.is_object() {
+        return Err(err(StatusCode::BAD_REQUEST, "Template body must be an object"));
+    }
     if payload.get("label").and_then(Value::as_str).is_none() {
         let label = state.hub.store.message_template_label(
             &template_id, &user.username, &group_id,
@@ -2899,7 +2902,7 @@ async fn auth_config(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "google": {"enabled": state.config.google().is_some()},
         "apple": {"enabled": state.config.apple().is_some()},
-        "admin": {"enabled": state.config.snapshot().admin_login_enabled},
+        "admin": {"enabled": state.config.admin_login_enabled()},
     }))
 }
 
@@ -3679,6 +3682,18 @@ mod tests {
             format!("Bearer {}", state.config.admin_key()).parse().unwrap(),
         );
         assert!(list_templates(State(state.clone()), Path(gid.clone()), q(), admin).await.is_ok());
+
+        // Malformed JSON values degrade to a client error instead of panicking
+        // when the handler fills in an omitted label.
+        let malformed = update_template(
+            State(state.clone()),
+            Path((gid.clone(), template_id.clone())),
+            q(),
+            session_headers(&state, "ana"),
+            Json(json!([])),
+        )
+        .await;
+        assert_eq!(malformed.unwrap_err().0, StatusCode::BAD_REQUEST);
 
         // The owner can edit and delete; a second delete is a miss.
         let updated = update_template(

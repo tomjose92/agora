@@ -231,6 +231,10 @@ impl Config {
         self.data.lock().unwrap().admin_key.clone()
     }
 
+    pub fn admin_login_enabled(&self) -> bool {
+        self.data.lock().unwrap().admin_login_enabled
+    }
+
     pub fn username(&self) -> String {
         self.data.lock().unwrap().username.clone()
     }
