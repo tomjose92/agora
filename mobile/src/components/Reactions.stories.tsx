@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-native";
-import { fixtureAgentMessage } from "@agora/core/testing/fixtures";
+import { fixtureAgentMessage, fixtureAgents, fixtureUsers } from "@agora/core/testing/fixtures";
 import { Reactions } from "./Reactions";
 
 const meta = {
@@ -10,6 +10,8 @@ const meta = {
     apiRoutes: {
       "DELETE /api/channels/general/messages/43/reactions/%F0%9F%91%8D": fixtureAgentMessage,
       "PUT /api/channels/general/messages/43/reactions/%F0%9F%8E%89": fixtureAgentMessage,
+      "GET /api/users": { users: fixtureUsers },
+      "GET /api/agents": { agents: fixtureAgents },
     },
   },
 } satisfies Meta<typeof Reactions>;

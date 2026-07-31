@@ -3714,7 +3714,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(res.0["reactions"], json!([{"emoji": "👍", "users": ["ana"]}]));
+        assert_eq!(res.0["reactions"][0]["users"], json!(["ana"]));
+        assert_eq!(res.0["reactions"][0]["reactors"], json!([
+            {"type": "user", "id": "ana", "name": "ana"}
+        ]));
 
         // Duplicate PUT is a no-op but still succeeds with the same payload.
         let res = add_reaction(

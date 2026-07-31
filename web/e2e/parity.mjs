@@ -182,7 +182,10 @@ async function main() {
     await page.waitForSelector("#ago-emoji-pop", { timeout: 5000 });
     await page.locator("#ago-emoji-pop button").filter({ hasText: "👍" }).first().click();
     await bubble.locator(".ago-reacts .ago-react", { hasText: "👍" }).waitFor({ timeout: 8000 });
-    await bubble.locator(".ago-reacts .ago-react", { hasText: "👍" }).click(); // toggle off
+    const reaction = bubble.locator(".ago-reacts .ago-react", { hasText: "👍" });
+    await reaction.hover();
+    await bubble.locator(".ago-react-pop", { hasText: "reactions" }).waitFor({ timeout: 5000 });
+    await reaction.click(); // toggle off
     await page.waitForFunction(
       sel => !document.querySelector(sel),
       undefined, { timeout: 8000, polling: 200 }

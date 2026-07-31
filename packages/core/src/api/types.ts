@@ -213,6 +213,15 @@ export interface MessageMeta {
 export interface Reaction {
   emoji: string;
   users: string[];
+  /** Typed identities from newer servers. `users` remains for compatibility. */
+  reactors?: ReactionReactor[];
+}
+
+export interface ReactionReactor {
+  type: "user" | "agent";
+  id: string;
+  /** Server-resolved fallback; clients may prefer their live roster name. */
+  name: string;
 }
 
 export interface Message {

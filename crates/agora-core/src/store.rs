@@ -79,6 +79,11 @@ CREATE TABLE IF NOT EXISTS reactions (
     username TEXT NOT NULL,
     emoji TEXT NOT NULL,
     reacted_at REAL NOT NULL,
+    reactor_type TEXT NOT NULL DEFAULT 'user',
+    reactor_id TEXT NOT NULL DEFAULT '',
+    -- Keep the legacy key for an additive migration. A same-named user and
+    -- agent still cannot share one emoji reaction; typed identity prevents
+    -- display/mine/delete collisions without rebuilding existing databases.
     PRIMARY KEY (message_id, username, emoji)
 );
 CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
@@ -297,6 +302,17 @@ fn migrate(conn: &Connection) {
     // (thread_id IS NULL). NULL = fall back to the root message's first line.
     if !has_column("messages", "thread_alias") {
         conn.execute("ALTER TABLE messages ADD COLUMN thread_alias TEXT", []).unwrap();
+    }
+    if !has_column("reactions", "reactor_type") {
+        conn.execute("ALTER TABLE reactions ADD COLUMN reactor_type TEXT NOT NULL DEFAULT 'user'", []).unwrap();
+    }
+    if !has_column("reactions", "reactor_id") {
+        conn.execute("ALTER TABLE reactions ADD COLUMN reactor_id TEXT NOT NULL DEFAULT ''", []).unwrap();
+        conn.execute("UPDATE reactions SET reactor_id = username", []).unwrap();
+        conn.execute("UPDATE reactions SET reactor_type = 'agent', reactor_id = \
+            (SELECT id FROM agents WHERE agents.name = reactions.username) \
+            WHERE NOT EXISTS (SELECT 1 FROM users WHERE users.username = reactions.username) \
+            AND (SELECT COUNT(*) FROM agents WHERE agents.name = reactions.username) = 1", []).unwrap();
     }
     // Databases that predate the FTS index get it created empty by SCHEMA —
     // the triggers only cover writes from then on, so the existing history
@@ -995,7 +1011,7 @@ impl Store {
                 ids
             };
             for table in
-                ["stars", "reactions", "reads", "thread_reads", "thread_hides", "mentions", "user_prefs"]
+                ["stars", "reads", "thread_reads", "thread_hides", "mentions", "user_prefs"]
             {
                 conn.execute(
                     &format!("DELETE FROM {table} WHERE username = ?1"),
@@ -1003,6 +1019,7 @@ impl Store {
                 )
                 .unwrap();
             }
+            conn.execute("DELETE FROM reactions WHERE reactor_type = 'user' AND reactor_id = ?1", params![username]).unwrap();
             conn.execute("DELETE FROM pins WHERE pinned_by = ?1", params![username]).unwrap();
             conn.execute(
                 "DELETE FROM memberships WHERE member_type = 'user' AND member_id = ?1",
@@ -2216,27 +2233,34 @@ impl Store {
             return;
         }
         let placeholders = vec!["?"; ids.len()].join(",");
-        let mut by_message: std::collections::HashMap<i64, Vec<(String, Vec<String>)>> =
+        let mut by_message: std::collections::HashMap<i64, Vec<(String, Vec<(String, Value)>)>> =
             Default::default();
         {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn
                 .prepare(&format!(
-                    "SELECT message_id, emoji, username FROM reactions \
-                     WHERE message_id IN ({placeholders}) ORDER BY reacted_at, rowid"
+                    "SELECT r.message_id, r.emoji, r.username, r.reactor_type, r.reactor_id, \
+                     CASE WHEN r.reactor_type = 'agent' THEN a.name ELSE u.display_name END FROM reactions r \
+                     LEFT JOIN agents a ON r.reactor_type = 'agent' AND a.id = r.reactor_id \
+                     LEFT JOIN users u ON r.reactor_type = 'user' AND u.username = r.reactor_id \
+                     WHERE r.message_id IN ({placeholders}) ORDER BY r.reacted_at, r.rowid"
                 ))
                 .unwrap();
             let rows = stmt
                 .query_map(params_from_iter(ids.iter()), |r| {
-                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                    let legacy = r.get::<_, String>(2)?;
+                    let kind = r.get::<_, String>(3)?;
+                    let id = r.get::<_, String>(4)?;
+                    let name = r.get::<_, Option<String>>(5)?.filter(|n| !n.is_empty()).unwrap_or_else(|| legacy.clone());
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, legacy, json!({"type": kind, "id": id, "name": name})))
                 })
                 .unwrap()
                 .filter_map(Result::ok);
-            for (mid, emoji, user) in rows {
+            for (mid, emoji, user, reactor) in rows {
                 let groups = by_message.entry(mid).or_default();
                 match groups.iter_mut().find(|g| g.0 == emoji) {
-                    Some(g) => g.1.push(user),
-                    None => groups.push((emoji, vec![user])),
+                    Some(g) => g.1.push((user, reactor)),
+                    None => groups.push((emoji, vec![(user, reactor)])),
                 }
             }
         }
@@ -2246,7 +2270,7 @@ impl Store {
             m["reactions"] = Value::Array(
                 groups
                     .into_iter()
-                    .map(|(emoji, users)| json!({"emoji": emoji, "users": users}))
+                    .map(|(emoji, entries)| { let (users, reactors): (Vec<_>, Vec<_>) = entries.into_iter().unzip(); json!({"emoji": emoji, "users": users, "reactors": reactors}) })
                     .collect(),
             );
         }
@@ -2290,22 +2314,40 @@ impl Store {
         message_id: i64,
         emoji: &str,
     ) -> bool {
+        self.add_typed_reaction("user", username, username, channel_id, message_id, emoji)
+    }
+
+    pub fn add_agent_reaction(&self, id: &str, name: &str, channel_id: &str, message_id: i64, emoji: &str) -> bool {
+        self.add_typed_reaction("agent", id, name, channel_id, message_id, emoji)
+    }
+
+    fn add_typed_reaction(&self, kind: &str, id: &str, legacy: &str, channel_id: &str, message_id: i64, emoji: &str) -> bool {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO reactions (channel_id, message_id, username, emoji, reacted_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5) \
+            "INSERT INTO reactions (channel_id, message_id, username, emoji, reacted_at, reactor_type, reactor_id) \
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
+             WHERE NOT EXISTS (SELECT 1 FROM reactions WHERE message_id = ?2 \
+               AND emoji = ?4 AND reactor_type = ?6 AND reactor_id = ?7) \
              ON CONFLICT(message_id, username, emoji) DO NOTHING",
-            params![channel_id, message_id, username, emoji, now()],
+            params![channel_id, message_id, legacy, emoji, now(), kind, id],
         )
         .unwrap()
             > 0
     }
 
     pub fn remove_reaction(&self, username: &str, message_id: i64, emoji: &str) -> bool {
+        self.remove_typed_reaction("user", username, message_id, emoji)
+    }
+
+    pub fn remove_agent_reaction(&self, id: &str, message_id: i64, emoji: &str) -> bool {
+        self.remove_typed_reaction("agent", id, message_id, emoji)
+    }
+
+    fn remove_typed_reaction(&self, kind: &str, id: &str, message_id: i64, emoji: &str) -> bool {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "DELETE FROM reactions WHERE username = ?1 AND message_id = ?2 AND emoji = ?3",
-            params![username, message_id, emoji],
+            "DELETE FROM reactions WHERE reactor_type = ?1 AND reactor_id = ?2 AND message_id = ?3 AND emoji = ?4",
+            params![kind, id, message_id, emoji],
         )
         .unwrap()
             > 0
@@ -3464,13 +3506,12 @@ mod tests {
 
         // Grouped in first-reaction order; users in reaction order.
         let reactions = s.message(mid).unwrap()["reactions"].clone();
-        assert_eq!(
-            reactions,
-            json!([
-                {"emoji": "👍", "users": ["tom", "ana"]},
-                {"emoji": "🔥", "users": ["ana"]},
-            ])
-        );
+        assert_eq!(reactions[0]["users"], json!(["tom", "ana"]));
+        assert_eq!(reactions[0]["reactors"], json!([
+            {"type": "user", "id": "tom", "name": "tom"},
+            {"type": "user", "id": "ana", "name": "ana"}
+        ]));
+        assert_eq!(reactions[1]["users"], json!(["ana"]));
 
         // Removing the last user of an emoji drops the whole group.
         assert!(s.remove_reaction("ana", mid, "🔥"));
@@ -3494,13 +3535,14 @@ mod tests {
         let mid = m["id"].as_i64().unwrap();
         s.add_reaction("tom", cid, mid, "👍");
         s.add_reaction("ana", cid, mid, "🎉");
+        s.upsert_agent("agent-ana", "ana", "test", false, false, 0);
+        s.add_agent_reaction("agent-ana", "ana", cid, mid, "👀");
 
         // A deleted user's reactions disappear from surviving messages.
         s.delete_user_data("ana");
-        assert_eq!(
-            s.message(mid).unwrap()["reactions"],
-            json!([{"emoji": "👍", "users": ["tom"]}])
-        );
+        let remaining = s.message(mid).unwrap()["reactions"].clone();
+        assert_eq!(remaining[0]["users"], json!(["tom"]));
+        assert_eq!(remaining[1]["reactors"][0]["id"], "agent-ana");
 
         // Channel delete sweeps the rest.
         s.delete_channel(cid);
@@ -3509,6 +3551,63 @@ mod tests {
             conn.query_row("SELECT COUNT(*) FROM reactions", [], |r| r.get(0)).unwrap()
         };
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn agent_reaction_stays_unique_across_display_name_changes() {
+        let s = store();
+        let g = s.create_group("G", "", None);
+        let c = s.create_channel(g["id"].as_str().unwrap(), "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let m = s.add_message(cid, "root", "user", "tom", None, None, &[]);
+        let mid = m["id"].as_i64().unwrap();
+        s.upsert_agent("bot-a", "Bot A", "test", false, false, 0);
+        assert!(s.add_agent_reaction("bot-a", "Bot A", cid, mid, "👀"));
+        s.upsert_agent("bot-a", "Bot Alpha", "test", false, false, 0);
+        assert!(!s.add_agent_reaction("bot-a", "Bot Alpha", cid, mid, "👀"));
+        let reaction = &s.message(mid).unwrap()["reactions"][0];
+        assert_eq!(reaction["users"], json!(["Bot A"]));
+        assert_eq!(reaction["reactors"], json!([
+            {"type": "agent", "id": "bot-a", "name": "Bot Alpha"}
+        ]));
+    }
+
+    #[test]
+    fn legacy_key_allows_only_one_same_named_user_or_agent_reaction() {
+        let s = store();
+        s.create_user("Echo", "Echo Person", None, "member").unwrap();
+        s.upsert_agent("echo-agent", "Echo", "test", false, false, 0);
+        let g = s.create_group("G", "", None);
+        let c = s.create_channel(g["id"].as_str().unwrap(), "main", "");
+        let cid = c["id"].as_str().unwrap();
+        let m = s.add_message(cid, "root", "user", "tom", None, None, &[]);
+        let mid = m["id"].as_i64().unwrap();
+
+        assert!(s.add_reaction("Echo", cid, mid, "👍"));
+        assert!(!s.add_agent_reaction("echo-agent", "Echo", cid, mid, "👍"));
+        assert_eq!(s.message(mid).unwrap()["reactions"][0]["reactors"], json!([
+            {"type": "user", "id": "Echo", "name": "Echo Person"}
+        ]));
+    }
+
+    #[test]
+    fn reaction_migration_classifies_only_unambiguous_legacy_agents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.db");
+        let conn = Connection::open(&path).unwrap();
+        let legacy = SCHEMA.replace("    reactor_type TEXT NOT NULL DEFAULT 'user',\n", "")
+            .replace("    reactor_id TEXT NOT NULL DEFAULT '',\n", "");
+        conn.execute_batch(&legacy).unwrap();
+        conn.execute("INSERT INTO agents (id, name, last_seen) VALUES ('solo-id', 'Solo', 0), ('bob-agent', 'bob', 0)", []).unwrap();
+        conn.execute("INSERT INTO users (username, display_name, created_at) VALUES ('bob', 'Bob', 0)", []).unwrap();
+        conn.execute("INSERT INTO reactions (channel_id, message_id, username, emoji, reacted_at) VALUES ('c', 1, 'Solo', '👀', 1), ('c', 1, 'bob', '👍', 2)", []).unwrap();
+        drop(conn);
+        let store = Store::open(&path).unwrap();
+        let conn = store.conn.lock().unwrap();
+        let solo: (String, String) = conn.query_row("SELECT reactor_type, reactor_id FROM reactions WHERE username = 'Solo'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let bob: (String, String) = conn.query_row("SELECT reactor_type, reactor_id FROM reactions WHERE username = 'bob'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(solo, ("agent".into(), "solo-id".into()));
+        assert_eq!(bob, ("user".into(), "bob".into()));
     }
 
     #[test]
