@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { EMOJI_CATEGORIES, type EmojiEntry } from "@agora/core";
 import { create } from "zustand";
+import { watchAnchoredOverlay } from "../lib/anchoredOverlay";
 
 const RECENT_MAX = 24;
 const VALID = new Set(EMOJI_CATEGORIES.flatMap(c => c.emoji.map(p => p[0])));
@@ -48,16 +49,10 @@ export function EmojiPickerHost({ onPick }: { onPick: (mid: number, emoji: strin
 
   useEffect(() => { setQuery(""); }, [openFor]);
 
-  // Anchor positioning after layout, clamped to the viewport.
   useLayoutEffect(() => {
     const pop = popRef.current;
     if (!pop || !anchor) return;
-    const r = anchor.getBoundingClientRect();
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8));
-    const above = r.top - pop.offsetHeight - 6;
-    const top = above >= 8 ? above : Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 8);
-    pop.style.left = `${left}px`;
-    pop.style.top = `${top}px`;
+    return watchAnchoredOverlay(anchor, pop, "start");
   }, [anchor, openFor]);
 
   // Click-away closes (react buttons and the panel itself are exempt).

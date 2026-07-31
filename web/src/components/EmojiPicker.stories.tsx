@@ -33,7 +33,15 @@ export const SearchAndPick: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.click(within(canvasElement).getByText("Open reaction picker"));
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.type(await page.findByPlaceholderText("Search emoji…"), "party");
+    const search = await page.findByPlaceholderText("Search emoji…");
+    const picker = search.closest<HTMLElement>(".ago-emoji-pop");
+    await expect(picker).not.toBeNull();
+    const rect = picker!.getBoundingClientRect();
+    await expect(rect.left).toBeGreaterThanOrEqual(8);
+    await expect(rect.right).toBeLessThanOrEqual(window.innerWidth - 8);
+    await expect(rect.top).toBeGreaterThanOrEqual(8);
+    await expect(rect.bottom).toBeLessThanOrEqual(window.innerHeight - 8);
+    await userEvent.type(search, "party");
     await userEvent.click(await page.findByTitle(/party popper celebration/));
     await expect(pick).toHaveBeenCalledWith(42, "🎉");
     await waitFor(() => expect(page.queryByPlaceholderText("Search emoji…")).not.toBeInTheDocument());
