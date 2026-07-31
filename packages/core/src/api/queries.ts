@@ -53,6 +53,7 @@ export function useTemplates(groupId: string) {
       `/api/groups/${encodeURIComponent(groupId)}/templates`,
     )).templates,
     enabled: !!groupId,
+    staleTime: 60_000,
   });
 }
 

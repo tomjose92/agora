@@ -387,15 +387,21 @@ async fn probe_server(url: String) -> Result<serde_json::Value, String> {
             .call();
         match response {
             Ok(r) => {
-                let google = r
+                let config = r
                     .into_string()
                     .ok()
-                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                    .map(|v| v["google"]["enabled"] == serde_json::Value::Bool(true))
-                    .unwrap_or(false);
-                Ok(serde_json::json!({"google": google}))
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+                let google = config.as_ref()
+                    .is_some_and(|v| v["google"]["enabled"] == serde_json::Value::Bool(true));
+                // Older servers omit admin and must keep the key form visible.
+                let admin = config.as_ref()
+                    .and_then(|v| v["admin"]["enabled"].as_bool())
+                    .unwrap_or(true);
+                Ok(serde_json::json!({"google": google, "admin": admin}))
             }
-            Err(ureq::Error::Status(_, _)) => Ok(serde_json::json!({"google": false})),
+            Err(ureq::Error::Status(_, _)) => {
+                Ok(serde_json::json!({"google": false, "admin": true}))
+            }
             Err(e) => Err(format!("Could not reach the server: {e}")),
         }
     })

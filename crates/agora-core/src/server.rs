@@ -3285,6 +3285,14 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn auth_config_advertises_admin_login_visibility() {
+        let (state, _dir) = test_state();
+        assert_eq!(auth_config(State(state.clone())).await.0["admin"]["enabled"], true);
+        state.config.update(|c| c.admin_login_enabled = false);
+        assert_eq!(auth_config(State(state)).await.0["admin"]["enabled"], false);
+    }
+
     #[test]
     fn authed_user_resolves_admin_key_and_user_sessions() {
         let (state, _dir) = test_state();

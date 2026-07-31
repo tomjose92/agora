@@ -43,7 +43,9 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
     ? (JOIN_TOKEN
       ? "You've been invited to this Agora — sign in with Google to join."
       : "Sign in with Google — members and invited emails get in.")
-    : "Admin sign-in: paste this server's admin key (printed in its log).";
+    : adminEnabled
+      ? "Admin sign-in: paste this server's admin key (printed in its log)."
+      : "No interactive sign-in method is enabled on this server. Contact its administrator.";
 
   return (
     <div id="auth-gate">

@@ -773,7 +773,8 @@ impl Store {
         // Human labels repeat heavily and new_id has a short random suffix.
         // Retry the only expected constraint failure instead of dropping the
         // HTTP connection on an unlucky id collision.
-        let id = loop {
+        let mut inserted = None;
+        for _ in 0..3 {
             let id = new_id(seed);
             match conn.execute(
                 "INSERT INTO message_templates \
@@ -781,12 +782,16 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
                 params![id, username, group_id, label, text, ts],
             ) {
-                Ok(_) => break id,
+                Ok(_) => {
+                    inserted = Some(id);
+                    break;
+                }
                 Err(rusqlite::Error::SqliteFailure(e, _))
                     if e.code == ErrorCode::ConstraintViolation => continue,
                 Err(e) => panic!("message template insert failed: {e}"),
             }
-        };
+        }
+        let id = inserted.expect("message template id collided after three attempts");
         json!({"id": id, "group_id": group_id, "label": label, "text": text,
                "created_at": ts, "updated_at": ts})
     }

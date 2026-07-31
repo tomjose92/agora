@@ -95,5 +95,8 @@ export const AdminLoginHidden: Story = {
       expect(canvas.queryByLabelText("Admin key")).not.toBeInTheDocument();
       expect(canvas.queryByRole("button", { name: "Sign in as admin" })).not.toBeInTheDocument();
     });
+    await expect(canvas.findByText(
+      "No interactive sign-in method is enabled on this server. Contact its administrator.",
+    )).resolves.toBeVisible();
   },
 };

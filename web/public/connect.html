@@ -229,15 +229,18 @@
         const probe = await invoke("probe_server", { url: baseUrl() });
         $("signin-host").textContent = baseUrl().replace(/^https?:\/\//, "");
         const google = !!probe.google;
+        const admin = probe.admin !== false;
         $("google").classList.toggle("hidden", !google);
         $("token-divider").classList.add("hidden");
         // Google-enabled servers lead with the Google button and tuck the
         // token form behind a link; token-only servers show the form.
-        $("token-form").classList.toggle("hidden", google);
-        $("token-toggle").classList.toggle("hidden", !google);
+        $("token-form").classList.toggle("hidden", google || !admin);
+        $("token-toggle").classList.toggle("hidden", !google || !admin);
         $("signin-sub").textContent = google
           ? "Sign in with an allowed Google account."
-          : "Admin sign-in: paste this server's admin key (printed in its log).";
+          : admin
+            ? "Admin sign-in: paste this server's admin key (printed in its log)."
+            : "Admin sign-in is disabled on this server.";
         show("signin");
       } catch (e) {
         setStatus(String(e), "error");
