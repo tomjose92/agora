@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, params_from_iter, Connection, ErrorCode};
 use serde_json::{json, Value};
 
 const SCHEMA: &str = r#"
@@ -768,18 +768,25 @@ impl Store {
         // Labels are free text, so they can slugify to nothing (emoji-only);
         // fall back so the id never degenerates to a bare random suffix.
         let seed = if slugify(label).is_empty() { "template" } else { label };
-        let id = new_id(seed);
         let ts = now();
-        self.conn
-            .lock()
-            .unwrap()
-            .execute(
+        let conn = self.conn.lock().unwrap();
+        // Human labels repeat heavily and new_id has a short random suffix.
+        // Retry the only expected constraint failure instead of dropping the
+        // HTTP connection on an unlucky id collision.
+        let id = loop {
+            let id = new_id(seed);
+            match conn.execute(
                 "INSERT INTO message_templates \
                  (id, username, group_id, label, text, created_at, updated_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
                 params![id, username, group_id, label, text, ts],
-            )
-            .unwrap();
+            ) {
+                Ok(_) => break id,
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if e.code == ErrorCode::ConstraintViolation => continue,
+                Err(e) => panic!("message template insert failed: {e}"),
+            }
+        };
         json!({"id": id, "group_id": group_id, "label": label, "text": text,
                "created_at": ts, "updated_at": ts})
     }
@@ -795,11 +802,8 @@ impl Store {
         text: &str,
     ) -> Option<Value> {
         let ts = now();
-        let changed = self
-            .conn
-            .lock()
-            .unwrap()
-            .execute(
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
                 "UPDATE message_templates SET label = ?4, text = ?5, updated_at = ?6 \
                  WHERE id = ?1 AND username = ?2 AND group_id = ?3",
                 params![id, username, group_id, label, text, ts],
@@ -809,11 +813,17 @@ impl Store {
         if !changed {
             return None;
         }
-        // Re-read for created_at. The lock was released, so a concurrent
-        // delete can win the race — that is a miss, not a panic.
-        self.message_templates(username, group_id)
-            .into_iter()
-            .find(|v| v["id"] == id)
+        conn.query_row(
+            "SELECT created_at FROM message_templates \
+             WHERE id = ?1 AND username = ?2 AND group_id = ?3",
+            params![id, username, group_id],
+            |r| r.get::<_, f64>(0),
+        )
+        .ok()
+        .map(|created_at| json!({
+            "id": id, "group_id": group_id, "label": label, "text": text,
+            "created_at": created_at, "updated_at": ts,
+        }))
     }
 
     pub fn delete_message_template(&self, id: &str, username: &str, group_id: &str) -> bool {
@@ -3127,6 +3137,10 @@ mod tests {
         assert!(!s.agent_in_channel("missing", c1id));
         assert!(s.user_in_group("tom", gid));
         assert!(!s.user_in_group("alice", gid));
+        s.add_member(gid, "user", "alice", "member", None);
+        s.create_message_template("alice", gid, "Standup", "Status update");
+        s.remove_member(gid, "user", "alice", None);
+        assert_eq!(s.message_templates("alice", gid).len(), 1);
 
         // Membership never crosses groups: a group-wide row in Ops grants
         // nothing in another group, and a row whose channel_id points at a

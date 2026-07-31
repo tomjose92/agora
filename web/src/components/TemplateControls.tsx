@@ -73,9 +73,8 @@ export function TemplateControls({ groupId, draft, onChoose }: {
      invoking control when it closes. A shared focus trap is a later refactor. */
   useEffect(() => {
     if (!manage) return;
-    const previous = document.activeElement as HTMLElement | null;
     requestAnimationFrame(() => panelRef.current?.focus());
-    return () => previous?.focus();
+    return () => btnRef.current?.focus();
   }, [manage]);
 
   const edit = (target: MessageTemplate | "new") => {

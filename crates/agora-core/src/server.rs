@@ -920,7 +920,7 @@ fn template_fields(payload: &Value) -> Result<(String, String), ApiError> {
     if label.is_empty() {
         label = text
             .lines()
-            .next()
+            .find(|line| !line.trim().is_empty())
             .unwrap_or("")
             .trim()
             .chars()
@@ -3711,6 +3711,10 @@ mod tests {
                 .unwrap_err()
                 .0,
             StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            template_fields(&json!({"text": "\n  \nStatus update…"})).unwrap().0,
+            "Status update…"
         );
 
         for i in 0..MAX_TEMPLATES_PER_GROUP {
