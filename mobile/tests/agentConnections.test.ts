@@ -1,6 +1,7 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { Linking, Text } from "react-native";
+import { Linking, Share, Text } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, ApiProvider, keys } from "@agora/core";
 import {
@@ -370,6 +371,31 @@ test("connection management controls target the expected API resources", async (
       "/api/pairing/codex-token",
     ]),
   );
+  act(() => tree.unmount());
+});
+
+test("connection token actions use the full token", async () => {
+  const copy = jest.spyOn(Clipboard, "setStringAsync").mockResolvedValue(true);
+  const share = jest
+    .spyOn(Share, "share")
+    .mockResolvedValue({ action: "sharedAction" });
+  const tree = renderFlow(
+    new RecordingApi(),
+    React.createElement(AgentConnectionsList),
+    "data",
+  );
+
+  await act(async () =>
+    labelled(tree.root, "Copy Laptop token").props.onPress(),
+  );
+  await act(async () =>
+    labelled(tree.root, "Share Laptop token").props.onPress(),
+  );
+
+  expect(copy).toHaveBeenCalledWith("codex-token");
+  expect(share).toHaveBeenCalledWith({ message: "codex-token" });
+  copy.mockRestore();
+  share.mockRestore();
   act(() => tree.unmount());
 });
 

@@ -46,8 +46,8 @@ export function wsUrl(session: Session): string {
   return `${base}/ws?token=${encodeURIComponent(session.token)}`;
 }
 
-/** Address shown to dial-in agents. Callers pass an app/server URL, but agent
- * sockets always live at the server origin rather than below a UI path. */
+/** Address shown to dial-in agents. Callers must pass an http(s) app/server
+ * URL; agent sockets always live at its origin rather than below a UI path. */
 export function agentWsUrl(origin: string, token: string): string {
   const root =
     origin.match(/^https?:\/\/[^/]+/i)?.[0] || origin.replace(/\/+$/, "");

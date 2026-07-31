@@ -281,6 +281,9 @@ export function AddAgentFlow({
   const select = (next: AddKind) => {
     setKind(next);
     setIssued(null);
+    setConnectionName("");
+    setUrl("");
+    setConnectionToken("");
     setAgentName(
       next !== "pantheo" && next !== "coding" && next !== "generic"
         ? byKind[next].defaultLabel
@@ -292,10 +295,12 @@ export function AddAgentFlow({
     return (
       <View style={styles.flow}>
         <View style={styles.intro}>
-          <Text style={styles.kicker}>
+          <Text maxFontSizeMultiplier={1.15} style={styles.kicker}>
             Bring your agents into the conversation
           </Text>
-          <Text style={styles.hero}>What would you like to connect?</Text>
+          <Text maxFontSizeMultiplier={1.2} style={styles.hero}>
+            What would you like to connect?
+          </Text>
           <Text style={styles.heroCopy}>
             Link an agent service or choose a coding agent that runs on your
             computer.
@@ -370,8 +375,12 @@ export function AddAgentFlow({
       <View style={styles.flow}>
         <Back label="All connection types" onPress={() => setKind(null)} />
         <View style={styles.intro}>
-          <Text style={styles.kicker}>Runs on your computer</Text>
-          <Text style={styles.hero}>Choose a coding agent</Text>
+          <Text maxFontSizeMultiplier={1.15} style={styles.kicker}>
+            Runs on your computer
+          </Text>
+          <Text maxFontSizeMultiplier={1.2} style={styles.hero}>
+            Choose a coding agent
+          </Text>
           <Text style={styles.heroCopy}>
             Continue local coding sessions and repository work from Agora.
           </Text>
@@ -397,8 +406,12 @@ export function AddAgentFlow({
         <View style={styles.setupHead}>
           <AgentMark definition={byKind.pantheo} />
           <View style={styles.setupTitle}>
-            <Text style={styles.kicker}>Linked agent server</Text>
-            <Text style={styles.heroSmall}>Link a Pantheo instance</Text>
+            <Text maxFontSizeMultiplier={1.15} style={styles.kicker}>
+              Linked agent server
+            </Text>
+            <Text maxFontSizeMultiplier={1.2} style={styles.heroSmall}>
+              Link a Pantheo instance
+            </Text>
           </View>
         </View>
         <View style={styles.form}>
@@ -483,7 +496,7 @@ export function AddAgentFlow({
         <View style={styles.successMark}>
           <Check size={28} color={colors.onAccent} />
         </View>
-        <Text style={styles.heroSmall}>
+        <Text maxFontSizeMultiplier={1.2} style={styles.heroSmall}>
           {definition?.title ?? "Agent"} access created
         </Text>
         <Text style={styles.heroCopy}>
@@ -530,10 +543,10 @@ export function AddAgentFlow({
       <View style={styles.setupHead}>
         <AgentMark definition={definition} />
         <View style={styles.setupTitle}>
-          <Text style={styles.kicker}>
+          <Text maxFontSizeMultiplier={1.15} style={styles.kicker}>
             {local ? "Coding agent" : "Secure agent access"}
           </Text>
-          <Text style={styles.heroSmall}>
+          <Text maxFontSizeMultiplier={1.2} style={styles.heroSmall}>
             Create access for {definition?.title ?? "another agent"}
           </Text>
         </View>
@@ -650,7 +663,9 @@ export function AgentConnectionsList() {
                 {!connection.enabled
                   ? "Disabled"
                   : connection.status?.connected
-                    ? `${connection.status.agents.length} agent${connection.status.agents.length === 1 ? "" : "s"}`
+                    ? connection.status.agents.length
+                      ? `${connection.status.agents.length} agent${connection.status.agents.length === 1 ? "" : "s"}`
+                      : "Connected, registering…"
                     : connection.status?.last_error || "Connecting…"}
               </Text>
             </View>
@@ -773,20 +788,20 @@ export function AgentConnectionsList() {
 }
 
 const styles = StyleSheet.create({
-  flow: { gap: 16 },
-  intro: { gap: 6, marginBottom: 2 },
+  flow: { gap: 14 },
+  intro: { gap: 5 },
   kicker: {
     color: colors.a2,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "800",
     letterSpacing: 1,
     textTransform: "uppercase",
   },
-  hero: { color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: "800" },
+  hero: { color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: "800" },
   heroSmall: {
     color: colors.text,
-    fontSize: 22,
-    lineHeight: 28,
+    fontSize: 17,
+    lineHeight: 22,
     fontWeight: "800",
   },
   heroCopy: { color: colors.dim, fontSize: 14.5, lineHeight: 21 },

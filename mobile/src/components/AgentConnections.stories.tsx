@@ -38,6 +38,9 @@ const routes = {
       },
     ],
   },
+  "PUT /api/connections/Home%20Pantheo": { ok: true },
+  "DELETE /api/connections/Home%20Pantheo": { ok: true },
+  "DELETE /api/pairing/codex_example_token_1234": { ok: true },
   "GET /api/pairing": {
     tokens: [
       {
