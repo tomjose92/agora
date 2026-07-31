@@ -30,18 +30,29 @@ config.resolver.extraNodeModules = {
   zustand: path.resolve(projectRoot, "node_modules/zustand"),
 };
 
-/* Routed screen stories need stable params/navigation without mounting an
-   Expo Router tree. Keep the alias Storybook-only so production navigation
-   always resolves the real package. */
-if (storybookEnabled) {
-  const routerFixture = path.resolve(projectRoot, ".rnstorybook/expo-router.tsx");
-  config.resolver.resolveRequest = (context, moduleName, platform) => {
-    if (moduleName === "expo-router") {
-      return { filePath: routerFixture, type: "sourceFile" };
-    }
-    return context.resolveRequest(context, moduleName, platform);
-  };
-}
+/* extraNodeModules is only a fallback: hierarchical lookup from
+   @agora/core's real path still finds the repo root's node_modules first,
+   bundling a SECOND React (dispatcher-null crash on device). Redirect the
+   singletons for every origin by resolving them as if required from the
+   project root. */
+const singletons = Object.keys(config.resolver.extraNodeModules);
+const routerFixture = path.resolve(projectRoot, ".rnstorybook/expo-router.tsx");
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  /* Routed screen stories need stable params/navigation without mounting an
+     Expo Router tree. Keep the alias Storybook-only so production navigation
+     always resolves the real package. */
+  if (storybookEnabled && moduleName === "expo-router") {
+    return { filePath: routerFixture, type: "sourceFile" };
+  }
+  if (singletons.some((name) => moduleName === name || moduleName.startsWith(name + "/"))) {
+    return context.resolveRequest(
+      { ...context, originModulePath: path.join(projectRoot, "index.js") },
+      moduleName,
+      platform,
+    );
+  }
+  return context.resolveRequest(context, moduleName, platform);
+};
 
 /* Same flag index.js switches the root component on — EXPO_PUBLIC_ so the
    on-device branch there sees it inlined in the bundle. Disabled is the
