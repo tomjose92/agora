@@ -127,6 +127,7 @@ export const SendingImage: Story = {
 };
 
 export const PreviewClosesAfterSend: Story = {
+  tags: ["!dev"],
   parameters: { setup: () => stage([previewSvg]) },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
