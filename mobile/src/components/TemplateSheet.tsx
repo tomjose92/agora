@@ -28,8 +28,11 @@ import {
 } from "@agora/core";
 import { colors } from "../lib/theme";
 import { Icon } from "./Icon";
-import { toastErr } from "./Toast";
 import { useHeaderKeyboardOffset } from "../lib/keyboard";
+
+function alertErr(title: string, error: unknown) {
+  Alert.alert(title, error instanceof Error ? error.message : String(error));
+}
 
 export function TemplateSheet({ groupId, visible, draft, onChoose, onClose }: {
   groupId: string;
@@ -67,7 +70,7 @@ export function TemplateSheet({ groupId, visible, draft, onChoose, onClose }: {
       else if (editing) await update.mutateAsync({ id: editing.id, label, text });
       setEditing(null);
     } catch (e) {
-      toastErr("Couldn't save template", e);
+      alertErr("Couldn't save template", e);
     }
   };
 
@@ -78,7 +81,7 @@ export function TemplateSheet({ groupId, visible, draft, onChoose, onClose }: {
         text: "Delete",
         style: "destructive",
         onPress: () => void remove.mutateAsync(item.id)
-          .catch(e => toastErr("Couldn't delete template", e)),
+          .catch(e => alertErr("Couldn't delete template", e)),
       },
     ]);
 

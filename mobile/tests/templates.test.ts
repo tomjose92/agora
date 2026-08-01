@@ -2,12 +2,12 @@
 
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
+import { Alert } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, ApiProvider, MAX_MESSAGE_CHARS } from "@agora/core";
 import { fixtureTemplates } from "@agora/core/testing/fixtures";
 import { Composer } from "../src/components/Composer";
-import { useToasts } from "../src/components/Toast";
 
 jest.mock("expo-file-system/legacy", () => ({
   cacheDirectory: "file:///cache/",
@@ -131,11 +131,14 @@ test("a chosen template lands at the caret without replacing the draft", async (
     await new Promise((resolve) => setImmediate(resolve));
   });
   await act(async () => {
+    jest.spyOn(Alert, "alert").mockImplementation(() => {});
     labelled(tree.root, `Use template ${first.label}`).props.onPress();
   });
   expect(input().props.value).toBe(full);
-  expect(useToasts.getState().items.at(-1)?.message).toContain("would exceed");
-  useToasts.setState({ items: [] });
+  expect(Alert.alert).toHaveBeenCalledWith(
+    "Template is too long",
+    expect.stringContaining("would exceed"),
+  );
   act(() => tree.unmount());
   // Drop the cache so no background refetch outlives the test environment.
   queryClient.clear();

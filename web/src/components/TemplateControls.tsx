@@ -161,8 +161,8 @@ export function TemplateControls({ groupId, draft, onChoose }: {
         <div className="conn-overlay"
           onMouseDown={e => {
             if (e.target !== e.currentTarget) return;
+            if (editing) return;
             setManage(false);
-            setEditing(null);
           }}>
           <div ref={panelRef} className="conn-panel ago-template-dialog" role="dialog"
             aria-modal="true" aria-label="Message templates" tabIndex={-1}>

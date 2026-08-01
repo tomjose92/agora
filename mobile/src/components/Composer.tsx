@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Platform,
   Pressable,
@@ -523,7 +524,10 @@ export function Composer({
     const next = text.slice(0, start) + template + text.slice(end);
     /* Count code points, like the server's chars().count(). */
     if ([...next].length > MAX_MESSAGE_CHARS) {
-      toast(`Template would exceed the ${MAX_MESSAGE_CHARS.toLocaleString()}-character message limit`, "warn");
+      Alert.alert(
+        "Template is too long",
+        `It would exceed the ${MAX_MESSAGE_CHARS.toLocaleString()}-character message limit.`,
+      );
       return;
     }
     const caret = start + template.length;
