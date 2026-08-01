@@ -28,7 +28,6 @@ import {
 } from "@agora/core";
 import { colors } from "../lib/theme";
 import { Icon } from "./Icon";
-import { useHeaderKeyboardOffset } from "../lib/keyboard";
 
 function alertErr(title: string, error: unknown) {
   Alert.alert(title, error instanceof Error ? error.message : String(error));
@@ -46,7 +45,6 @@ export function TemplateSheet({ groupId, visible, draft, onChoose, onClose }: {
   const create = useCreateTemplate(groupId);
   const update = useUpdateTemplate(groupId);
   const remove = useDeleteTemplate(groupId);
-  const keyboardOffset = useHeaderKeyboardOffset();
   /* "new" = the editor is open on an unsaved template. */
   const [editing, setEditing] = useState<MessageTemplate | "new" | null>(null);
   const [label, setLabel] = useState("");
@@ -93,11 +91,10 @@ export function TemplateSheet({ groupId, visible, draft, onChoose, onClose }: {
       <KeyboardAvoidingView
         style={s.keyboard}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={keyboardOffset}
       >
         {/* Backdrop taps close the list, but not a half-written template. */}
         <Pressable style={s.backdrop} onPress={editing ? undefined : onClose}>
-          <Pressable style={s.sheet} onPress={() => {}}>
+          <Pressable testID="template-sheet" style={s.sheet} onPress={() => {}}>
             <View style={s.head}>
               <Text style={s.title}>
                 {editing ? (editing === "new" ? "New template" : "Edit template") : "Templates"}
@@ -108,25 +105,31 @@ export function TemplateSheet({ groupId, visible, draft, onChoose, onClose }: {
             </View>
             {editing ? (
               <>
-                <Text style={s.fieldLabel}>Label</Text>
-                <TextInput
-                  value={label}
-                  onChangeText={setLabel}
-                  maxLength={MAX_TEMPLATE_LABEL_CHARS}
-                  placeholder="Optional label"
-                  placeholderTextColor={colors.faint}
-                  style={s.input}
-                />
-                <Text style={s.fieldLabel}>Message</Text>
-                <TextInput
-                  value={text}
-                  onChangeText={setText}
-                  maxLength={MAX_MESSAGE_CHARS}
-                  multiline
-                  placeholder="Message text"
-                  placeholderTextColor={colors.faint}
-                  style={[s.input, s.body]}
-                />
+                <ScrollView
+                  style={s.editor}
+                  contentContainerStyle={s.editorContent}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  <Text style={s.fieldLabel}>Label</Text>
+                  <TextInput
+                    value={label}
+                    onChangeText={setLabel}
+                    maxLength={MAX_TEMPLATE_LABEL_CHARS}
+                    placeholder="Optional label"
+                    placeholderTextColor={colors.faint}
+                    style={s.input}
+                  />
+                  <Text style={s.fieldLabel}>Message</Text>
+                  <TextInput
+                    value={text}
+                    onChangeText={setText}
+                    maxLength={MAX_MESSAGE_CHARS}
+                    multiline
+                    placeholder="Message text"
+                    placeholderTextColor={colors.faint}
+                    style={[s.input, s.body]}
+                  />
+                </ScrollView>
                 <View style={s.actions}>
                   <Pressable style={s.cancel} onPress={() => setEditing(null)}>
                     <Text style={s.cancelText}>Cancel</Text>
@@ -200,7 +203,7 @@ const s = StyleSheet.create({
   keyboard: { flex: 1 },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,.58)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: colors.panel,
+    backgroundColor: "#14161d",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 18,
@@ -239,6 +242,8 @@ const s = StyleSheet.create({
   status: { padding: 28, alignItems: "center", gap: 8 },
   error: { color: colors.red },
   retry: { color: colors.a1, fontWeight: "700" },
+  editor: { flexShrink: 1 },
+  editorContent: { paddingBottom: 2 },
   fieldLabel: { color: colors.dim, fontSize: 12, fontWeight: "700", marginTop: 8, marginBottom: 5 },
   input: {
     color: colors.text,
@@ -248,7 +253,7 @@ const s = StyleSheet.create({
     borderRadius: 10,
     padding: 11,
   },
-  body: { minHeight: 150, textAlignVertical: "top" },
+  body: { minHeight: 150, maxHeight: 240, textAlignVertical: "top" },
   actions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 14 },
   cancel: { paddingVertical: 10, paddingHorizontal: 16 },
   cancelText: { color: colors.dim, fontWeight: "700" },
