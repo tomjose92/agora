@@ -17,7 +17,9 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch("/api/auth/config").then(r => r.json()).then(cfg => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5_000);
+    fetch("/api/auth/config", { signal: controller.signal }).then(r => r.json()).then(cfg => {
       const admin = cfg.admin?.enabled !== false;
       setAdminEnabled(admin);
       if (cfg.google && cfg.google.enabled) {
@@ -27,7 +29,11 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
         setShowTokenForm(false);
       }
       setProbed(true);
-    }).catch(() => setProbed(true));
+    }).catch(() => setProbed(true)).finally(() => window.clearTimeout(timeout));
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
   }, []);
 
   useEffect(() => {
