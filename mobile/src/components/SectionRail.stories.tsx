@@ -9,7 +9,7 @@ import type { Message } from "@agora/core";
 import { SectionRail } from "./SectionRail";
 import { colors } from "../lib/theme";
 
-const turns: Message[] = Array.from({ length: 24 }, (_, index) => ({
+const turns: Message[] = Array.from({ length: 40 }, (_, index) => ({
   ...(index % 2 === 0 ? fixtureRootMessage : fixtureAgentMessage),
   id: 100 + index,
   author_type: index % 2 === 0 ? "user" : "agent",

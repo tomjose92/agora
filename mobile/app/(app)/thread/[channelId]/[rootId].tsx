@@ -141,6 +141,7 @@ export default function ThreadScreen() {
     for (const m of thread) out.push({ kind: "msg", m });
     return out;
   }, [root, thread]);
+  const sectionMessages = useMemo(() => root ? [root, ...thread] : thread, [root, thread]);
 
   /* Read acking: while the viewer sits at the bottom, new replies are read.
      Mirrors the channel screen's channel-marker debounce. */
@@ -252,6 +253,7 @@ export default function ThreadScreen() {
   const listRef = useRef<FlashListRef<Row>>(null);
   const [activeSectionMessageId, setActiveSectionMessageId] = useState<number | null>(null);
   const rowsRef = useRef(rows);
+  const jumpRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   rowsRef.current = rows;
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken<Row>[] }) => {
@@ -263,12 +265,21 @@ export default function ThreadScreen() {
   ).current;
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
   const jumpToSection = useCallback((messageId: number) => {
-    const jump = () => {
-      const index = messageRowIndex(rowsRef.current, messageId);
-      if (index >= 0) listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
-    };
-    jump();
-    setTimeout(jump, 300);
+    if (jumpRetry.current) clearTimeout(jumpRetry.current);
+    const index = messageRowIndex(rowsRef.current, messageId);
+    if (index >= 0) {
+      listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
+      return;
+    }
+    jumpRetry.current = setTimeout(() => {
+      const retryIndex = messageRowIndex(rowsRef.current, messageId);
+      if (retryIndex >= 0) {
+        listRef.current?.scrollToIndex({ index: retryIndex, animated: true, viewPosition: 0.08 });
+      }
+    }, 300);
+  }, []);
+  useEffect(() => () => {
+    if (jumpRetry.current) clearTimeout(jumpRetry.current);
   }, []);
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
   const landedOnMessage = useRef<number | null>(null);
@@ -419,7 +430,7 @@ export default function ThreadScreen() {
           }
           />
           <SectionRail
-            messages={root ? [root, ...thread] : thread}
+            messages={sectionMessages}
             activeMessageId={activeSectionMessageId}
             onJump={jumpToSection}
           />

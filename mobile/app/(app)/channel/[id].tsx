@@ -344,6 +344,7 @@ export default function ChannelScreen() {
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
   const landedOnMessage = useRef<number | null>(null);
   const rowsRef = useRef(rows);
+  const jumpRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   rowsRef.current = rows;
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken<Row>[] }) => {
@@ -355,12 +356,21 @@ export default function ChannelScreen() {
   ).current;
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
   const jumpToSection = useCallback((messageId: number) => {
-    const jump = () => {
-      const index = messageRowIndex(rowsRef.current, messageId);
-      if (index >= 0) listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
-    };
-    jump();
-    setTimeout(jump, 300);
+    if (jumpRetry.current) clearTimeout(jumpRetry.current);
+    const index = messageRowIndex(rowsRef.current, messageId);
+    if (index >= 0) {
+      listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
+      return;
+    }
+    jumpRetry.current = setTimeout(() => {
+      const retryIndex = messageRowIndex(rowsRef.current, messageId);
+      if (retryIndex >= 0) {
+        listRef.current?.scrollToIndex({ index: retryIndex, animated: true, viewPosition: 0.08 });
+      }
+    }, 300);
+  }, []);
+  useEffect(() => () => {
+    if (jumpRetry.current) clearTimeout(jumpRetry.current);
   }, []);
 
   /* A shared deep link may point well beyond the newest page. Page older

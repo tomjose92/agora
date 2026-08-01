@@ -10,6 +10,10 @@ import {
 } from "../src/components/SectionRail";
 
 describe("conversation sections", () => {
+  it("handles an empty timeline", () => {
+    expect(conversationSections([])).toEqual([]);
+  });
+
   it("starts at the first message and at each user turn", () => {
     const messages = [
       fixtureRootMessage,
@@ -65,6 +69,23 @@ describe("conversation sections", () => {
 
   it("windows many thread turns around the active section", () => {
     const items = Array.from({ length: 30 }, (_, i) => i);
-    expect(visibleSectionWindow(items, 15)).toEqual(items.slice(6, 24));
+    expect(visibleSectionWindow(items, 15)).toEqual(items.slice(9, 21));
+    expect(visibleSectionWindow(items, 0)).toEqual(items.slice(0, 12));
+    expect(visibleSectionWindow(items, items.length - 1)).toEqual(items.slice(18));
+  });
+
+  it("defaults active selection to the first section", () => {
+    const sections = conversationSections([
+      fixtureRootMessage,
+      { ...fixtureRootMessage, id: 50 },
+    ]);
+    expect(activeSectionIndex(sections, null)).toBe(0);
+  });
+
+  it("uses the author fallback for blank text and ellipsizes long labels", () => {
+    const blank = conversationSections([{ ...fixtureRootMessage, text: " \n " }])[0];
+    const long = conversationSections([{ ...fixtureRootMessage, text: "x".repeat(80) }])[0];
+    expect(blank.label).toBe(fixtureRootMessage.author_name || fixtureRootMessage.author_id);
+    expect(long.label.endsWith("…")).toBe(true);
   });
 });

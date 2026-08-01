@@ -1,6 +1,6 @@
-/* Native conversation section navigation. The narrow absolute rail overlays
-   a message list without reducing bubble width; long timelines use a fixed
-   window instead of a nested scroller that would compete with list gestures. */
+/* Native conversation section navigation. The narrow, intentionally
+   touch-capturing strip overlays a message list without reducing bubble
+   width; long timelines use a fixed window instead of a nested scroller. */
 
 import React, { useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -11,7 +11,7 @@ import {
 } from "@agora/core";
 import { colors } from "../lib/theme";
 
-export const MAX_VISIBLE_SECTION_DOTS = 18;
+export const MAX_VISIBLE_SECTION_DOTS = 12;
 
 /** Keep a fixed-size, non-scrollable window around the active section. */
 export function visibleSectionWindow<T>(
@@ -79,7 +79,7 @@ export function SectionRail({
               accessibilityRole="button"
               accessibilityLabel={`Jump to: ${section.label}`}
               accessibilityState={{ selected }}
-              hitSlop={{ top: 2, bottom: 2, left: 14, right: 6 }}
+              hitSlop={{ top: 3, bottom: 3, left: 6, right: 6 }}
               onPress={() => onJump(section.mid)}
               style={[styles.dot, selected && styles.dotActive]}
             />
@@ -99,11 +99,11 @@ const styles = StyleSheet.create({
     width: 20,
     justifyContent: "center",
     alignItems: "center",
-    gap: 6,
+    gap: 4,
   },
   slot: {
     width: 20,
-    height: 8,
+    height: 22,
     alignItems: "center",
     justifyContent: "center",
   },
