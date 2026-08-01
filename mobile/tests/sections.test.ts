@@ -6,6 +6,7 @@ import {
 import {
   activeSectionIndex,
   messageRowIndex,
+  pickActiveMessageId,
   visibleSectionWindow,
 } from "../src/components/SectionRail";
 
@@ -87,5 +88,21 @@ describe("conversation sections", () => {
     const long = conversationSections([{ ...fixtureRootMessage, text: "x".repeat(80) }])[0];
     expect(blank.label).toBe(fixtureRootMessage.author_name || fixtureRootMessage.author_id);
     expect(long.label.endsWith("…")).toBe(true);
+  });
+
+  it("picks the latest message at bottom and the first visible message otherwise", () => {
+    const viewableItems = [
+      { index: 1, isViewable: true, item: { kind: "divider" } },
+      { index: 2, isViewable: true, item: { kind: "msg", m: { id: 20 } } },
+      { index: 3, isViewable: true, item: { kind: "msg", m: { id: 30 } } },
+    ];
+    expect(pickActiveMessageId({ viewableItems, atBottom: false, latestId: 40 })).toBe(20);
+    expect(pickActiveMessageId({ viewableItems, atBottom: true, latestId: 40 })).toBe(40);
+  });
+
+  it("handles root rows, empty visibility, and an unavailable latest id", () => {
+    const root = [{ index: 0, isViewable: true, item: { kind: "root", m: { id: 10 } } }];
+    expect(pickActiveMessageId({ viewableItems: root, atBottom: false, latestId: 0 })).toBe(10);
+    expect(pickActiveMessageId({ viewableItems: [], atBottom: true, latestId: 0 })).toBeNull();
   });
 });

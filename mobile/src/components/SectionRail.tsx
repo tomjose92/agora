@@ -49,6 +49,27 @@ export function messageRowIndex(
   });
 }
 
+export function pickActiveMessageId({
+  viewableItems,
+  atBottom,
+  latestId,
+}: {
+  viewableItems: ReadonlyArray<{ index: number | null; isViewable: boolean; item: unknown }>;
+  atBottom: boolean;
+  latestId: number;
+}): number | null {
+  if (atBottom && latestId > 0) return latestId;
+  const first = viewableItems
+    .filter((token) => token.isViewable)
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+    .find((token) => {
+      const item = token.item;
+      return typeof item === "object" && item !== null && "m" in item;
+    });
+  if (!first) return null;
+  return ((first.item as { m: Pick<Message, "id"> }).m).id;
+}
+
 export function SectionRail({
   messages,
   activeMessageId,
@@ -74,16 +95,17 @@ export function SectionRail({
       {visible.map((section) => {
         const selected = section.mid === sections[active]?.mid;
         return (
-          <View key={section.mid} pointerEvents="box-none" style={styles.slot}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Jump to: ${section.label}`}
-              accessibilityState={{ selected }}
-              hitSlop={{ top: 3, bottom: 3, left: 6, right: 6 }}
-              onPress={() => onJump(section.mid)}
-              style={[styles.dot, selected && styles.dotActive]}
-            />
-          </View>
+          <Pressable
+            key={section.mid}
+            accessibilityRole="button"
+            accessibilityLabel={`Jump to: ${section.label}`}
+            accessibilityState={{ selected }}
+            hitSlop={{ top: 3, bottom: 3, left: 6, right: 6 }}
+            onPress={() => onJump(section.mid)}
+            style={styles.slot}
+          >
+            <View style={[styles.dot, selected && styles.dotActive]} />
+          </Pressable>
         );
       })}
     </View>
