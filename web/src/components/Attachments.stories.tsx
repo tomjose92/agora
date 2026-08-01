@@ -54,9 +54,12 @@ export const ImageLightbox: Story = {
       name: "Preview responsive-layout-preview.svg",
     }));
     const page = within(canvasElement.ownerDocument.body);
-    await expect(page.findByRole("dialog", {
+    const dialog = await page.findByRole("dialog", {
       name: "Image preview: responsive-layout-preview.svg",
-    })).resolves.toBeVisible();
+    });
+    await expect(dialog).toBeVisible();
+    expect(within(dialog).queryByText("responsive-layout-preview.svg")).toBeNull();
+    expect(within(dialog).getByAltText("responsive-layout-preview.svg")).toBeVisible();
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(page.queryByRole("dialog")).not.toBeInTheDocument());
     await userEvent.click(canvas.getByRole("button", {

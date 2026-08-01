@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, StyleSheet, View } from "react-native";
 import { Image, type ImageSource } from "expo-image";
 import { X } from "lucide-react-native";
 import { Icon } from "./Icon";
@@ -19,9 +19,8 @@ export function ImagePreviewModal({ source, filename, onClose }: {
             style={styles.close} onPress={onClose}>
             <Icon icon={X} size={22} color="#fff" />
           </Pressable>
-          <Image source={source} style={styles.image} contentFit="contain"
+          <Image source={source} style={styles.image} contentFit="contain" accessible
             accessibilityLabel={filename} />
-          <Text style={styles.filename} numberOfLines={1}>{filename}</Text>
         </View>
       </View>
     </Modal>
@@ -43,6 +42,5 @@ const styles = StyleSheet.create({
     borderRadius: 20, alignItems: "center", justifyContent: "center",
     backgroundColor: "rgba(20,22,30,0.92)",
   },
-  image: { width: "100%", height: "90%" },
-  filename: { maxWidth: "86%", marginTop: 10, color: "rgba(255,255,255,0.82)", fontSize: 12 },
+  image: { width: "100%", height: "100%" },
 });

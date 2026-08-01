@@ -1,6 +1,6 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { Image, View } from "react-native";
+import { Image, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
 import { Composer } from "../src/components/Composer";
@@ -99,7 +99,7 @@ test("composer attachment cards preview images and remove the selected file", ()
   act(() => tree.unmount());
 });
 
-test("native iOS image paste becomes an attachment while text paste stays native", async () => {
+test("native image paste becomes an attachment while text paste stays native", async () => {
   jest.spyOn(Image, "getSize").mockImplementation((_, success) => {
     success(640, 480);
   });
@@ -124,6 +124,7 @@ test("native iOS image paste becomes an attachment while text paste stays native
   });
 
   const pasteInput = tree.root.findByProps({ testID: "paste-aware-input" });
+  expect(StyleSheet.flatten(tree.root.findByType(TextInput).props.style).flex).toBe(0);
   await act(async () => {
     pasteInput.props.onPaste({ type: "text", value: "ordinary paste" });
     await Promise.resolve();
@@ -147,6 +148,98 @@ test("native iOS image paste becomes an attachment while text paste stays native
   expect(tree.root.find(
     (node) => node.type === View && node.props.accessibilityLabel?.startsWith("Remove pasted-"),
   )).toBeDefined();
+  act(() => tree.unmount());
+});
+
+test("Android wraps the composer input for native image paste", () => {
+  const originalOS = Platform.OS;
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+  let tree!: TestRenderer.ReactTestRenderer;
+  try {
+    act(() => {
+      tree = TestRenderer.create(React.createElement(
+        SafeAreaProvider,
+        {
+          initialMetrics: {
+            frame: { x: 0, y: 0, width: 390, height: 844 },
+            insets: { top: 0, right: 0, bottom: 0, left: 0 },
+          },
+        },
+        React.createElement(Composer, {
+          placeholder: "Message #test",
+          mentions: [],
+          sending: false,
+          onSend: async () => {},
+        }),
+      ));
+    });
+    expect(tree.root.findByProps({ testID: "paste-aware-input" })).toBeDefined();
+    expect(StyleSheet.flatten(tree.root.findByType(TextInput).props.style).flex).toBe(0);
+  } finally {
+    if (tree) act(() => tree.unmount());
+    Object.defineProperty(Platform, "OS", { configurable: true, value: originalOS });
+  }
+});
+
+test("web leaves the composer input unwrapped", () => {
+  const originalOS = Platform.OS;
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+  let tree!: TestRenderer.ReactTestRenderer;
+  try {
+    act(() => {
+      tree = TestRenderer.create(React.createElement(
+        SafeAreaProvider,
+        {
+          initialMetrics: {
+            frame: { x: 0, y: 0, width: 390, height: 844 },
+            insets: { top: 0, right: 0, bottom: 0, left: 0 },
+          },
+        },
+        React.createElement(Composer, {
+          placeholder: "Message #test",
+          mentions: [],
+          sending: false,
+          onSend: async () => {},
+        }),
+      ));
+    });
+    expect(tree.root.findAllByProps({ testID: "paste-aware-input" })).toHaveLength(0);
+    expect(StyleSheet.flatten(tree.root.findByType(TextInput).props.style).flex).toBe(1);
+  } finally {
+    if (tree) act(() => tree.unmount());
+    Object.defineProperty(Platform, "OS", { configurable: true, value: originalOS });
+  }
+});
+
+test("attachment sheet does not offer a separate paste image action", () => {
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(
+      SafeAreaProvider,
+      {
+        initialMetrics: {
+          frame: { x: 0, y: 0, width: 390, height: 844 },
+          insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        },
+      },
+      React.createElement(Composer, {
+        placeholder: "Message #test",
+        mentions: [],
+        sending: false,
+        onSend: async () => {},
+      }),
+    ));
+  });
+  /* The sheet is a Modal: closed, it renders nothing, so asserting the row's
+     absence only means anything once the "+" has actually opened it — hence
+     the "Photo library" check pinning that the sheet really is on screen. */
+  const [plus] = tree.root.findAll((node) =>
+    typeof node.props.onPress === "function" &&
+    node.findAll((child) => child.type === Text && child.props.children === "+").length > 0
+  );
+  act(() => plus.props.onPress());
+  expect(tree.root.findAllByProps({ children: "Photo library" }).length).toBeGreaterThan(0);
+  expect(tree.root.findAllByProps({ children: "Paste image" })).toHaveLength(0);
   act(() => tree.unmount());
 });
 
@@ -277,7 +370,14 @@ test("sent image attachments open and close the full-screen preview", () => {
 
   expect(labelled(tree.root, "Preview agent-diagram.svg")).toBeDefined();
   act(() => labelled(tree.root, "Preview agent-diagram.svg").props.onPress());
-  expect(labelled(tree.root, "Close image preview")).toBeDefined();
+  const modal = tree.root.find((node) => node.props.accessibilityViewIsModal === true);
+  expect(modal.find((node) => node.props.accessibilityLabel === "Close image preview")).toBeDefined();
+  expect(modal.find((node) =>
+    node.props.accessibilityLabel === "agent-diagram.svg" && node.props.accessible === true
+  )).toBeDefined();
+  expect(modal.findAll((node) =>
+    node.type === Text && node.props.children === "agent-diagram.svg"
+  )).toHaveLength(0);
   act(() => labelled(tree.root, "Close image preview").props.onPress());
   expect(tree.root.findAll((node) => node.props.accessibilityLabel === "Close image preview"))
     .toHaveLength(0);
