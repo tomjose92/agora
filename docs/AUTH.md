@@ -8,6 +8,10 @@ Agora is multi-user: real accounts (a `users` table) with instance roles
 instance admin — not a personal account. On top of pasted-token access, a
 deployed server can offer Google and Apple sign-in.
 
+Set `AGORA_ADMIN_LOGIN_ENABLED=false` (or `0`, `no`, or `off`) to hide the
+admin-key login controls without invalidating the operator key; see
+[Deployment](DEPLOYMENT.md#deploying-on-railway-or-any-docker-paas).
+
 ## Google sign-in
 
 Instead of pasting the admin key, a deployed server can offer **Sign in with

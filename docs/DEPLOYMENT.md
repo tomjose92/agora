@@ -103,7 +103,12 @@ accounts — see [AUTH.md](AUTH.md).
 The repo ships a [`Dockerfile`](../Dockerfile) and [`railway.json`](../railway.json)
 that build the headless server with the web UI bundled. The server honors the
 PaaS conventions: `PORT` (injected by Railway) and `AGORA_BIND` (the image
-defaults it to `0.0.0.0`) override `config.json` at boot.
+defaults it to `0.0.0.0`) override `config.json` at boot. Set
+`AGORA_ADMIN_LOGIN_ENABLED=false` to hide admin-key login controls without
+invalidating the key itself; `true` re-enables them. The conventional
+`1`/`0`, `yes`/`no`, and `on`/`off` spellings are also accepted. Like the other
+`AGORA_*` overrides, the value is written into `config.json`, so unsetting it
+later keeps the last value rather than reverting to the default.
 
 ```bash
 railway init --name agora
@@ -194,7 +199,7 @@ until you opt in.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `admin_key` | generated | Operator credential for the UI/REST API (`?token=` or `Authorization: Bearer`). Resolves to an instance-admin user. |
-| `admin_login_enabled` | `true` | Set to `false` to hide admin-key login controls in web/desktop and mobile clients; the key itself remains valid. |
+| `admin_login_enabled` | `true` | Set to `false` (or use `AGORA_ADMIN_LOGIN_ENABLED=false`) to hide admin-key login controls in web/desktop and mobile clients; the key itself remains valid. |
 | `session_secret` | generated | Signs the session tokens minted by Google/Apple sign-in; rotate it to sign everyone out. |
 | `username` | `me` | Display name of the bootstrap local user. |
 | `bind` | `127.0.0.1` | Set `0.0.0.0` to accept LAN/remote agent bridges. See [Network exposure](#network-exposure). |

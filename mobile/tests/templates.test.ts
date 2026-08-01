@@ -2,7 +2,7 @@
 
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { Alert } from "react-native";
+import { Alert, StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, ApiProvider, MAX_MESSAGE_CHARS } from "@agora/core";
@@ -55,6 +55,8 @@ class TemplateApi extends ApiClient {
   }
 }
 
+// Cold Jest/Expo transforms pushed this integration render past the default
+// deadline on a contended CI runner (7.9s versus roughly 0.2s locally).
 test("a chosen template lands at the caret without replacing the draft", async () => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -102,6 +104,10 @@ test("a chosen template lands at the caret without replacing the draft", async (
     await new Promise((resolve) => setImmediate(resolve));
   });
 
+  const sheet = tree.root.findByProps({ testID: "template-sheet" });
+  const sheetBackground = String(StyleSheet.flatten(sheet.props.style).backgroundColor);
+  expect(sheetBackground).toMatch(/^#[\da-f]{6}$/i);
+
   const [first] = fixtureTemplates;
   await act(async () => {
     labelled(tree.root, `Use template ${first.label}`).props.onPress();
@@ -142,4 +148,4 @@ test("a chosen template lands at the caret without replacing the draft", async (
   act(() => tree.unmount());
   // Drop the cache so no background refetch outlives the test environment.
   queryClient.clear();
-});
+}, 20_000);

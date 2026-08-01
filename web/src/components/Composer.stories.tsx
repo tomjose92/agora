@@ -66,6 +66,21 @@ const withTemplateRoutes = {
   "POST /api/channels/general/messages": sendMessage,
 };
 
+/* Keep the floating picker visible for visual review. The computed-color
+   assertion ensures its surface stays opaque instead of inheriting the
+   translucent in-flow panel token. */
+export const TemplatesPickerOpen: Story = {
+  parameters: { apiRoutes: withTemplateRoutes },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTitle("Message templates"));
+    const picker = await canvas.findByText("Daily standup");
+    const popover = picker.closest(".ago-template-pop");
+    expect(popover).not.toBeNull();
+    expect(getComputedStyle(popover as Element).backgroundColor).toMatch(/^rgb\(/);
+  },
+};
+
 /* Swaps channelId on a live Composer the way ChannelPane does — no remount,
    so the draftKey effect (not a fresh mount) is what clears the caret. */
 function SwitchableComposer(props: React.ComponentProps<typeof Composer>) {
