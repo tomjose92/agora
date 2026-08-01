@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
+import type { ViewToken } from "react-native";
 import {
   Headphones,
   Maximize2,
@@ -50,6 +51,11 @@ import { EmojiPicker } from "../../../src/components/EmojiPicker";
 import { Icon } from "../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../src/components/LiveRows";
 import { MessageItem } from "../../../src/components/MessageItem";
+import {
+  messageRowIndex,
+  pickActiveMessageId,
+  SectionRail,
+} from "../../../src/components/SectionRail";
 import { ProfileSheet } from "../../../src/components/ProfileSheet";
 import { QuickReactions, useReactWith } from "../../../src/components/Reactions";
 import { toastErr } from "../../../src/components/Toast";
@@ -325,6 +331,8 @@ export default function ChannelScreen() {
   const readTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestId = chronological.length ? chronological[chronological.length - 1].id : 0;
   const unread = channelMeta?.channel.unread ?? 0;
+  const latestIdRef = useRef(latestId);
+  latestIdRef.current = latestId;
   useEffect(() => {
     if (!atBottom.current || latestId === 0) return;
     if (latestId <= (channelMeta?.channel.last_read_id ?? 0)) return;
@@ -338,8 +346,40 @@ export default function ChannelScreen() {
 
   const listRef = useRef<FlashListRef<Row>>(null);
   const [showJump, setShowJump] = useState(false);
+  const [activeSectionMessageId, setActiveSectionMessageId] = useState<number | null>(null);
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
   const landedOnMessage = useRef<number | null>(null);
+  const rowsRef = useRef(rows);
+  const jumpRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  rowsRef.current = rows;
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken<Row>[] }) => {
+      const activeId = pickActiveMessageId({
+        viewableItems,
+        atBottom: atBottom.current,
+        latestId: latestIdRef.current,
+      });
+      if (activeId != null) setActiveSectionMessageId(activeId);
+    },
+  ).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
+  const jumpToSection = useCallback((messageId: number) => {
+    if (jumpRetry.current) clearTimeout(jumpRetry.current);
+    const index = messageRowIndex(rowsRef.current, messageId);
+    if (index >= 0) {
+      listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
+      return;
+    }
+    jumpRetry.current = setTimeout(() => {
+      const retryIndex = messageRowIndex(rowsRef.current, messageId);
+      if (retryIndex >= 0) {
+        listRef.current?.scrollToIndex({ index: retryIndex, animated: true, viewPosition: 0.08 });
+      }
+    }, 300);
+  }, []);
+  useEffect(() => () => {
+    if (jumpRetry.current) clearTimeout(jumpRetry.current);
+  }, []);
 
   /* A shared deep link may point well beyond the newest page. Page older
      history until the row exists, then center it. */
@@ -551,7 +591,8 @@ export default function ChannelScreen() {
             </Text>
           </Pressable>
         ) : null}
-        <FlashList
+        <View style={styles.listWrap}>
+          <FlashList
           ref={listRef}
           data={rows}
           renderItem={renderRow}
@@ -576,6 +617,8 @@ export default function ChannelScreen() {
             setShowJump(!near);
           }}
           scrollEventThrottle={64}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
           // Mounted whenever older history exists, not just mid-fetch:
           // toggling it per fetch changes the content height at the top
           // right as the user scrolls up, which reads as a jump.
@@ -591,7 +634,18 @@ export default function ChannelScreen() {
               <Text style={styles.empty}>No messages yet.</Text>
             )
           }
-        />
+          />
+          <SectionRail
+            messages={chronological}
+            activeMessageId={activeSectionMessageId}
+            onJump={jumpToSection}
+            // Leaves the lower-right region free for the absolutely positioned
+            // unread pill; typing/progress rows sit outside this list wrapper.
+            // Their conditional height changes the clearance, and the rail and
+            // pill overlap horizontally, so keep a deliberate vertical margin.
+            bottomInset={120}
+          />
+        </View>
         {showJump && unread > 0 ? (
           <Pressable
             style={styles.jump}
@@ -684,6 +738,7 @@ export default function ChannelScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  listWrap: { flex: 1, position: "relative" },
   headerBtns: { flexDirection: "row", gap: 16 },
   headerBtnOff: { opacity: 0.35 },
   deepLinkTarget: { backgroundColor: "rgba(139,124,255,0.16)", borderRadius: 8 },
