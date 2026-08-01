@@ -2,7 +2,7 @@
    touch-capturing strip overlays a message list without reducing bubble
    width; long timelines use a fixed window instead of a nested scroller. */
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import {
   conversationSections,
@@ -76,6 +76,147 @@ export function pickActiveMessageId({
     });
   if (!first) return null;
   return ((first.item as { m: Pick<Message, "id"> }).m).id;
+}
+
+/* --- Programmatic section jumps -------------------------------------------
+
+   A dot tap can't be a single fire-and-forget scrollToIndex: FlashList v2
+   estimates offsets for unmeasured rows (and has no onScrollToIndexFailed),
+   so far upward jumps over heterogeneous bubbles land short or on the wrong
+   message. On top of that, an in-flight animation can be skewed by an
+   older-page prepend shifting indices, and by the bottom-anchoring/viewability
+   machinery re-selecting a section under the user's finger.
+
+   The controller below owns one jump at a time: it re-resolves the target
+   index *by message id* on every pass (immune to prepends), issues correction
+   passes after FlashList's measurement settles (final pass non-animated so it
+   pins exactly), and reports "in flight" so callers can pause viewability
+   tracking and pagination until the jump lands or the user drags. */
+
+export const SECTION_JUMP_PASSES_MS = [350, 700] as const;
+export const SECTION_JUMP_SETTLE_MS = 1100;
+
+export interface SectionJumpList {
+  scrollToIndex(params: { index: number; animated: boolean; viewPosition: number }): void;
+}
+
+export function createSectionJumpController({
+  getRows,
+  getList,
+  onJumpStart,
+  settleMs = SECTION_JUMP_SETTLE_MS,
+}: {
+  getRows: () => readonly unknown[];
+  getList: () => SectionJumpList | null;
+  /** Fired once per jump with the target mid (optimistic active selection). */
+  onJumpStart: (messageId: number) => void;
+  settleMs?: number;
+}) {
+  let timers: ReturnType<typeof setTimeout>[] = [];
+  let jumping = false;
+
+  const clearTimers = () => {
+    for (const t of timers) clearTimeout(t);
+    timers = [];
+  };
+
+  const scrollTo = (messageId: number, animated: boolean) => {
+    const index = messageRowIndex(getRows(), messageId);
+    if (index >= 0) {
+      getList()?.scrollToIndex({ index, animated, viewPosition: 0.08 });
+    }
+  };
+
+  return {
+    isJumping: () => jumping,
+    jumpTo(messageId: number) {
+      clearTimers();
+      jumping = true;
+      onJumpStart(messageId);
+      scrollTo(messageId, true);
+      for (const delay of SECTION_JUMP_PASSES_MS) {
+        const finalPass = delay === SECTION_JUMP_PASSES_MS[SECTION_JUMP_PASSES_MS.length - 1];
+        timers.push(setTimeout(() => scrollTo(messageId, !finalPass), delay));
+      }
+      timers.push(setTimeout(() => {
+        jumping = false;
+      }, settleMs));
+    },
+    /** A user drag takes over: stop correcting and resume live tracking. */
+    cancel() {
+      clearTimers();
+      jumping = false;
+    },
+  };
+}
+
+/** Everything a screen needs to wire a SectionRail to its FlashList. */
+export function useSectionJump({
+  listRef,
+  rows,
+  atBottom,
+  latestId,
+}: {
+  listRef: { current: SectionJumpList | null };
+  rows: readonly unknown[];
+  atBottom: { current: boolean };
+  latestId: number;
+}) {
+  const [activeMessageId, setActiveMessageId] = useState<number | null>(null);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const latestIdRef = useRef(latestId);
+  latestIdRef.current = latestId;
+
+  const controllerRef = useRef<ReturnType<typeof createSectionJumpController> | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = createSectionJumpController({
+      getRows: () => rowsRef.current,
+      getList: () => listRef.current,
+      onJumpStart: (messageId) => {
+        // Stop the bottom-anchoring path (read acking, autoscroll-to-latest)
+        // from treating the viewer as "at the bottom" mid-jump.
+        atBottom.current = false;
+        setActiveMessageId(messageId);
+      },
+    });
+  }
+  const controller = controllerRef.current;
+  useEffect(() => () => controller.cancel(), [controller]);
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: {
+      viewableItems: ReadonlyArray<{ index: number | null; isViewable: boolean; item: unknown }>;
+    }) => {
+      // While a jump is in flight the viewport is transient; tracking it would
+      // slide the dot window under the user's finger.
+      if (controllerRef.current!.isJumping()) return;
+      const activeId = pickActiveMessageId({
+        viewableItems,
+        atBottom: atBottom.current,
+        latestId: latestIdRef.current,
+      });
+      if (activeId != null) setActiveMessageId(activeId);
+    },
+  ).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
+
+  const jumpToSection = useCallback((messageId: number) => {
+    controller.jumpTo(messageId);
+  }, [controller]);
+  const cancelSectionJump = useCallback(() => {
+    controller.cancel();
+  }, [controller]);
+  const isSectionJumping = useCallback(() => controller.isJumping(), [controller]);
+
+  return {
+    activeMessageId,
+    onViewableItemsChanged,
+    viewabilityConfig,
+    jumpToSection,
+    cancelSectionJump,
+    isSectionJumping,
+  };
 }
 
 export function SectionRail({

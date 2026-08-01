@@ -17,7 +17,6 @@ import {
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
-import type { ViewToken } from "react-native";
 import {
   Headphones,
   Maximize2,
@@ -51,11 +50,7 @@ import { EmojiPicker } from "../../../src/components/EmojiPicker";
 import { Icon } from "../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../src/components/LiveRows";
 import { MessageItem } from "../../../src/components/MessageItem";
-import {
-  messageRowIndex,
-  pickActiveMessageId,
-  SectionRail,
-} from "../../../src/components/SectionRail";
+import { SectionRail, useSectionJump } from "../../../src/components/SectionRail";
 import { ProfileSheet } from "../../../src/components/ProfileSheet";
 import { QuickReactions, useReactWith } from "../../../src/components/Reactions";
 import { toastErr } from "../../../src/components/Toast";
@@ -331,8 +326,6 @@ export default function ChannelScreen() {
   const readTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestId = chronological.length ? chronological[chronological.length - 1].id : 0;
   const unread = channelMeta?.channel.unread ?? 0;
-  const latestIdRef = useRef(latestId);
-  latestIdRef.current = latestId;
   useEffect(() => {
     if (!atBottom.current || latestId === 0) return;
     if (latestId <= (channelMeta?.channel.last_read_id ?? 0)) return;
@@ -346,40 +339,16 @@ export default function ChannelScreen() {
 
   const listRef = useRef<FlashListRef<Row>>(null);
   const [showJump, setShowJump] = useState(false);
-  const [activeSectionMessageId, setActiveSectionMessageId] = useState<number | null>(null);
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
   const landedOnMessage = useRef<number | null>(null);
-  const rowsRef = useRef(rows);
-  const jumpRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
-  rowsRef.current = rows;
-  const onViewableItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: ViewToken<Row>[] }) => {
-      const activeId = pickActiveMessageId({
-        viewableItems,
-        atBottom: atBottom.current,
-        latestId: latestIdRef.current,
-      });
-      if (activeId != null) setActiveSectionMessageId(activeId);
-    },
-  ).current;
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
-  const jumpToSection = useCallback((messageId: number) => {
-    if (jumpRetry.current) clearTimeout(jumpRetry.current);
-    const index = messageRowIndex(rowsRef.current, messageId);
-    if (index >= 0) {
-      listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
-      return;
-    }
-    jumpRetry.current = setTimeout(() => {
-      const retryIndex = messageRowIndex(rowsRef.current, messageId);
-      if (retryIndex >= 0) {
-        listRef.current?.scrollToIndex({ index: retryIndex, animated: true, viewPosition: 0.08 });
-      }
-    }, 300);
-  }, []);
-  useEffect(() => () => {
-    if (jumpRetry.current) clearTimeout(jumpRetry.current);
-  }, []);
+  const {
+    activeMessageId: activeSectionMessageId,
+    onViewableItemsChanged,
+    viewabilityConfig,
+    jumpToSection,
+    cancelSectionJump,
+    isSectionJumping,
+  } = useSectionJump({ listRef, rows, atBottom, latestId });
 
   /* A shared deep link may point well beyond the newest page. Page older
      history until the row exists, then center it. */
@@ -607,9 +576,13 @@ export default function ChannelScreen() {
             autoscrollToBottomThreshold: 0.05,
           }}
           onStartReached={() => {
+            // A section jump's target is always in the loaded rows; letting a
+            // prepend land mid-animation shifts indices under the scroll.
+            if (isSectionJumping()) return;
             if (messages.hasNextPage && !messages.isFetchingNextPage) void messages.fetchNextPage();
           }}
           onStartReachedThreshold={0.4}
+          onScrollBeginDrag={cancelSectionJump}
           onScroll={(e) => {
             const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
             const near = contentOffset.y + layoutMeasurement.height >= contentSize.height - 60;
