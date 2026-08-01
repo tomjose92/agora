@@ -9,7 +9,8 @@
 //! configured without touching the volume: `AGORA_GOOGLE_CLIENT_ID`,
 //! `AGORA_GOOGLE_CLIENT_SECRET`, `AGORA_GOOGLE_ALLOWED_EMAILS`
 //! (comma-separated), and `AGORA_PUBLIC_URL` (the https origin Google
-//! redirects back to). Sign in with Apple (native iOS flow):
+//! redirects back to). `AGORA_ADMIN_LOGIN_ENABLED=false` hides the admin-key
+//! login controls without invalidating the key. Sign in with Apple (native iOS flow):
 //! `AGORA_APPLE_ALLOWED_EMAILS` (comma-separated) and optionally
 //! `AGORA_APPLE_BUNDLE_ID`. All are persisted into config.json so dial-in
 //! bridges and printed URLs agree with what the platform routes to.
@@ -74,6 +75,10 @@ fn apply_env_overrides(data_dir: &std::path::Path) -> anyhow::Result<()> {
     let apple_emails = env("AGORA_APPLE_ALLOWED_EMAILS");
     let apple_bundle_id = env("AGORA_APPLE_BUNDLE_ID");
     let public_url = env("AGORA_PUBLIC_URL");
+    let admin_login_enabled = parse_bool_override(
+        "AGORA_ADMIN_LOGIN_ENABLED",
+        env("AGORA_ADMIN_LOGIN_ENABLED"),
+    )?;
     if [
         &bind,
         &port,
@@ -86,6 +91,7 @@ fn apply_env_overrides(data_dir: &std::path::Path) -> anyhow::Result<()> {
     ]
     .iter()
     .all(|v| v.is_none())
+        && admin_login_enabled.is_none()
     {
         return Ok(());
     }
@@ -127,6 +133,40 @@ fn apply_env_overrides(data_dir: &std::path::Path) -> anyhow::Result<()> {
         if let Some(v) = public_url {
             c.public_url = v.trim_end_matches('/').to_string();
         }
+        if let Some(v) = admin_login_enabled {
+            c.admin_login_enabled = v;
+        }
     });
     Ok(())
+}
+
+fn parse_bool_override(name: &str, value: Option<String>) -> anyhow::Result<Option<bool>> {
+    value
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Ok(true),
+            "false" | "0" | "no" | "off" => Ok(false),
+            _ => anyhow::bail!(
+                "invalid boolean for {name}: {value}; expected true/false, 1/0, yes/no, or on/off"
+            ),
+        })
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_bool_override;
+
+    #[test]
+    fn admin_login_env_override_accepts_only_booleans() {
+        assert_eq!(parse_bool_override("FLAG", None).unwrap(), None);
+        assert_eq!(parse_bool_override("FLAG", Some(" true ".into())).unwrap(), Some(true));
+        assert_eq!(parse_bool_override("FLAG", Some("FALSE".into())).unwrap(), Some(false));
+        for value in ["1", "yes", "ON"] {
+            assert_eq!(parse_bool_override("FLAG", Some(value.into())).unwrap(), Some(true));
+        }
+        for value in ["0", "no", "OFF"] {
+            assert_eq!(parse_bool_override("FLAG", Some(value.into())).unwrap(), Some(false));
+        }
+        assert!(parse_bool_override("FLAG", Some("maybe".into())).is_err());
+    }
 }
