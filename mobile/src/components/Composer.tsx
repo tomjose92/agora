@@ -26,7 +26,6 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
-import * as Clipboard from "expo-clipboard";
 import { TextInputWrapper, type PasteEventPayload } from "expo-paste-input";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as DocumentPicker from "expo-document-picker";
@@ -39,7 +38,6 @@ import {
   Bot,
   Camera,
   Check,
-  ClipboardPaste,
   FileText,
   Image as ImageIcon,
   MessageSquareReply,
@@ -97,14 +95,16 @@ function imageSize(uri: string): Promise<{ width: number; height: number }> {
 
 function PasteAwareInput({
   children,
+  enabled,
   onPaste,
   style,
 }: {
   children: ReactElement;
+  enabled: boolean;
   onPaste: (payload: PasteEventPayload) => void;
   style: StyleProp<ViewStyle>;
 }) {
-  if (Platform.OS !== "ios") return children;
+  if (!enabled) return children;
   return <TextInputWrapper style={style} onPaste={onPaste}>{children}</TextInputWrapper>;
 }
 
@@ -178,6 +178,9 @@ export function Composer({
   /** Deterministic initial attachments for component catalogs and tests. */
   initialFiles?: LocalFile[];
 }) {
+  /* Keep this render-time so platform-branch tests can verify Android rather
+     than inheriting the test runtime's iOS value captured at module load. */
+  const nativePasteInput = Platform.OS === "ios" || Platform.OS === "android";
   const [text, setText] = useState("");
   const [files, setFiles] = useState<LocalFile[]>(initialFiles);
   const filesRef = useRef<LocalFile[]>(initialFiles);
@@ -354,42 +357,10 @@ export function Composer({
     return dropped;
   };
 
-  /* Clipboard image → cache file → the same re-encode/attach path photos
-     take. RN's TextInput has no image-paste event, so this is the "paste"
-     the platforms hand us: read the pasteboard on demand. JPEG, because the
-     bridge marshals the image as a base64 string — a lossless PNG of a
-     screenshot is several times the payload for bytes toWebSafeImage would
-     re-encode to JPEG anyway. */
-  const pasteImage = async () => {
-    try {
-      const img = await Clipboard.getImageAsync({ format: "jpeg", jpegQuality: 0.9 });
-      if (!img?.data) {
-        toast("No image on the clipboard", "warn");
-        return;
-      }
-      const name = `pasted-${Date.now()}.jpg`;
-      const uri = `${FileSystem.cacheDirectory}${name}`;
-      await FileSystem.writeAsStringAsync(uri, img.data.replace(/^data:image\/\w+;base64,/, ""), {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      addFiles([
-        await toWebSafeImage({
-          uri,
-          width: img.size.width,
-          height: img.size.height,
-          mimeType: "image/jpeg",
-          fileName: name,
-        } as ImagePicker.ImagePickerAsset),
-      ]);
-    } catch (e) {
-      toastErr("Paste failed", e);
-    }
-  };
-
-  /* The iOS-native wrapper keeps React Native's real TextInput, but teaches
+  /* The native wrapper keeps React Native's real TextInput, but teaches
      its standard edit menu how to turn an image paste into temporary file
-     URIs. Text events are deliberately ignored here: UITextView has already
-     inserted them normally. Some "Copy Image" sources publish both an image
+     URIs. Text events are deliberately ignored here: the native input has
+     already inserted them normally. Some "Copy Image" sources publish both an image
      and a URL; the native wrapper intentionally gives the image precedence. */
   const onNativePaste = async (payload: PasteEventPayload) => {
     if (payload.type !== "images") return;
@@ -420,7 +391,7 @@ export function Composer({
         const uri = `${FileSystem.cacheDirectory}${name}`;
         let normalized: LocalFile | null = null;
         try {
-          /* expo-paste-input owns sourceUri in NSTemporaryDirectory. Copy it
+          /* expo-paste-input owns sourceUri in temporary storage. Copy it
              before returning from the callback so attachment previews/uploads
              never depend on the package's temporary-file lifetime. */
           await FileSystem.copyAsync({ from: sourceUri, to: uri });
@@ -670,6 +641,7 @@ export function Composer({
           </Pressable>
         ) : null}
         <PasteAwareInput
+          enabled={nativePasteInput}
           style={focused ? styles.pasteWrapFocused : styles.pasteWrap}
           onPaste={(payload) => void onNativePaste(payload)}
         >
@@ -678,7 +650,7 @@ export function Composer({
             ref={inputRef}
             style={[
               focused ? styles.inputFocused : styles.input,
-              Platform.OS === "ios" && !focused ? styles.inputIOS : null,
+              nativePasteInput && !focused ? styles.inputWrapped : null,
             ]}
             value={text}
             onChangeText={setText}
@@ -853,13 +825,6 @@ export function Composer({
               <Icon icon={Paperclip} size={19} color={colors.text} />
               <Text style={styles.sheetText}>Document</Text>
             </Pressable>
-            {/* Always offered — a clipboard snapshot taken at open time goes
-                stale (copy-after-focus) and its async arrival shifts rows
-                mid-tap; pasteImage itself toasts when there is no image. */}
-            <Pressable style={styles.sheetBtn} onPress={() => closeSheet(() => void pasteImage())}>
-              <Icon icon={ClipboardPaste} size={19} color={colors.text} />
-              <Text style={styles.sheetText}>Paste image</Text>
-            </Pressable>
           </View>
         </Pressable>
       </Modal>
@@ -996,10 +961,10 @@ const styles = StyleSheet.create({
     paddingTop: 9,
     paddingBottom: 9,
   },
-  /* The native paste wrapper owns horizontal flex on iOS. Let the inner
+  /* The native paste wrapper owns horizontal flex. Let the inner
      multiline input contribute intrinsic height instead of nesting flex: 1
      inside an auto-height wrapper. */
-  inputIOS: { flex: 0 },
+  inputWrapped: { flex: 0 },
   /* Focused: the input sheds its pill and spans the full width; the actions
      move into the toolbar row below (Slack's expanded composer). */
   inputFocused: {

@@ -54,7 +54,6 @@ export function ImageLightbox({
           <Icon name="x" />
         </button>
         <img src={url} alt={filename} />
-        <div className="ago-image-lightbox-name">{filename}</div>
       </div>
     </div>
   ), document.body);
