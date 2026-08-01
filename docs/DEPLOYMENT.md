@@ -194,6 +194,7 @@ until you opt in.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `admin_key` | generated | Operator credential for the UI/REST API (`?token=` or `Authorization: Bearer`). Resolves to an instance-admin user. |
+| `admin_login_enabled` | `true` | Set to `false` to hide admin-key login controls in web/desktop and mobile clients; the key itself remains valid. |
 | `session_secret` | generated | Signs the session tokens minted by Google/Apple sign-in; rotate it to sign everyone out. |
 | `username` | `me` | Display name of the bootstrap local user. |
 | `bind` | `127.0.0.1` | Set `0.0.0.0` to accept LAN/remote agent bridges. See [Network exposure](#network-exposure). |

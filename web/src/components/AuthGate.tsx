@@ -1,5 +1,5 @@
-/* Sign-in card. Google leads when the server offers it; the admin key is
-   always available. */
+/* Sign-in card. Google leads when offered; operators may hide the admin-key
+   form from interactive clients without invalidating the key itself. */
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -9,20 +9,36 @@ import { toast } from "../lib/toast";
 
 export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [adminEnabled, setAdminEnabled] = useState(true);
+  const [probed, setProbed] = useState(false);
   const [showTokenForm, setShowTokenForm] = useState(true);
   const [error] = useState(() =>
     AUTH_ERROR ? (AUTH_ERROR_TEXT[AUTH_ERROR] || "Google sign-in failed — try again.") : "");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch("/api/auth/config").then(r => r.json()).then(cfg => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5_000);
+    fetch("/api/auth/config", { signal: controller.signal }).then(r => r.json()).then(cfg => {
+      const admin = cfg.admin?.enabled !== false;
+      setAdminEnabled(admin);
       if (cfg.google && cfg.google.enabled) {
         setGoogleEnabled(true);
         setShowTokenForm(false);
+      } else if (!admin) {
+        setShowTokenForm(false);
       }
-    }).catch(() => {});
-    inputRef.current?.focus();
+      setProbed(true);
+    }).catch(() => setProbed(true)).finally(() => window.clearTimeout(timeout));
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
   }, []);
+
+  useEffect(() => {
+    if (probed && adminEnabled && showTokenForm) inputRef.current?.focus();
+  }, [probed, adminEnabled, showTokenForm]);
 
   const submit = async () => {
     const t = (inputRef.current?.value || "").trim();
@@ -34,18 +50,22 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
     else toast("That token didn't work", { variant: "warn" });
   };
 
-  const hint = googleEnabled
+  const hint = !probed
+    ? "Checking available sign-in methods…"
+    : googleEnabled
     ? (JOIN_TOKEN
       ? "You've been invited to this Agora — sign in with Google to join."
       : "Sign in with Google — members and invited emails get in.")
-    : "Admin sign-in: paste this server's admin key (printed in its log).";
+    : adminEnabled
+      ? "Admin sign-in: paste this server's admin key (printed in its log)."
+      : "No interactive sign-in method is enabled on this server. Contact its administrator.";
 
   return (
     <div id="auth-gate">
       <div className="auth-card">
         <div className="auth-brand"><img src="/icon.png" alt="" /><h1>Agora</h1></div>
         <p className="auth-sub" id="auth-hint">{hint}</p>
-        {googleEnabled && (
+        {probed && googleEnabled && (
           <button className="btn google" id="auth-google"
             onClick={() => {
               rememberAuthPath();
@@ -57,7 +77,7 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
           </button>
         )}
         {googleEnabled && showTokenForm && <div className="auth-divider" id="auth-divider">or</div>}
-        {showTokenForm && (
+        {probed && adminEnabled && showTokenForm && (
           <div id="auth-token-form">
             <label htmlFor="auth-token">Admin key</label>
             <input id="auth-token" ref={inputRef} type="password"
@@ -67,7 +87,7 @@ export function AuthGate({ onSignedIn }: { onSignedIn: () => void }) {
             <button className="btn primary" onClick={() => void submit()}>Sign in as admin</button>
           </div>
         )}
-        {googleEnabled && !showTokenForm && (
+        {probed && adminEnabled && googleEnabled && !showTokenForm && (
           <button className="auth-link" id="auth-token-toggle"
             onClick={() => { setShowTokenForm(true); setTimeout(() => inputRef.current?.focus(), 0); }}>
             Sign in as admin

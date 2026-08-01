@@ -59,6 +59,15 @@ export interface Group {
   is_public?: boolean;
 }
 
+export interface MessageTemplate {
+  id: string;
+  group_id: string;
+  label: string;
+  text: string;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface Attachment {
   id: string;
   filename: string;
@@ -473,3 +482,10 @@ export interface InviteLink {
   used_by?: string | null;
   expires_at: number;
 }
+
+/* The server rejects messages and templates longer than this (MAX_MESSAGE_CHARS
+   in agora-core), so both clients cap their inputs at the same number. */
+export const MAX_MESSAGE_CHARS = 20_000;
+
+/* Keep template labels aligned with MAX_TEMPLATE_LABEL_CHARS in the server. */
+export const MAX_TEMPLATE_LABEL_CHARS = 80;

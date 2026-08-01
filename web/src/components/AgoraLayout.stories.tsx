@@ -8,6 +8,7 @@ import {
   fixtureMembers,
   fixtureMessages,
   fixtureReplies,
+  fixtureTemplates,
   fixtureThreads,
   fixtureUsers,
 } from "@agora/core/testing/fixtures";
@@ -24,6 +25,7 @@ const routes = {
   "GET /api/agents": { agents: fixtureAgents },
   "GET /api/users": { users: fixtureUsers },
   "GET /api/groups/product/members": { members: fixtureMembers },
+  "GET /api/groups/product/templates": { templates: fixtureTemplates },
   "GET /api/channels/general/agents": { agents: fixtureChannelAgents },
   "GET /api/channels/general/activity": { typing: [], progress: [] },
   "GET /api/channels/general/messages?limit=50": { messages: fixtureMessages },

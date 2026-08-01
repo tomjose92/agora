@@ -300,6 +300,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/groups/order", put(reorder_groups))
         .route("/api/groups/{group_id}", patch(update_group).delete(delete_group))
         .route("/api/groups/{group_id}/channels", post(create_channel))
+        .route("/api/groups/{group_id}/templates", get(list_templates).post(create_template))
+        .route("/api/groups/{group_id}/templates/{template_id}", patch(update_template).delete(delete_template))
         .route("/api/groups/{group_id}/channels/order", put(reorder_channels))
         .route(
             "/api/groups/{group_id}/channels/{channel_id}",
@@ -892,6 +894,117 @@ async fn delete_group(
     group_or_404(&state, &group_id)?;
     require_group_admin(&state, &user, &group_id)?;
     state.hub.store.delete_group(&group_id);
+    Ok(Json(json!({"ok": true})))
+}
+
+/// Message templates are private per-user drafts scoped to a group: every
+/// handler reads the owner from the session, never from the payload, so
+/// membership is the only authorization question.
+const MAX_TEMPLATES_PER_GROUP: usize = 50;
+const MAX_TEMPLATE_LABEL_CHARS: usize = 80;
+
+/// Validated `(label, text)`. An absent label falls back to the first line so
+/// the picker always has something short to show.
+fn template_fields(payload: &Value) -> Result<(String, String), ApiError> {
+    let text = payload["text"].as_str().unwrap_or("").to_string();
+    if text.trim().is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Template text required"));
+    }
+    if text.chars().count() > MAX_MESSAGE_CHARS {
+        return Err(err(StatusCode::BAD_REQUEST, "Template is too long"));
+    }
+    let mut label = payload["label"].as_str().unwrap_or("").trim().to_string();
+    if label.chars().count() > MAX_TEMPLATE_LABEL_CHARS {
+        return Err(err(StatusCode::BAD_REQUEST, "Template label is too long"));
+    }
+    if label.is_empty() {
+        label = text
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .chars()
+            .take(MAX_TEMPLATE_LABEL_CHARS)
+            .collect();
+    }
+    Ok((label, text))
+}
+
+async fn list_templates(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    group_or_404(&state, &group_id)?;
+    require_member(&state, &user, &group_id)?;
+    let templates = state.hub.store.message_templates(&user.username, &group_id);
+    Ok(Json(json!({"templates": templates})))
+}
+
+async fn create_template(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    group_or_404(&state, &group_id)?;
+    require_member(&state, &user, &group_id)?;
+    let (label, text) = template_fields(&payload)?;
+    state.hub.store.create_message_template(
+        &user.username, &group_id, &label, &text, MAX_TEMPLATES_PER_GROUP as i64,
+    ).map_err(|e| {
+        tracing::error!("message template insert failed: {e}");
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Could not save template")
+    })?.map(Json).ok_or_else(|| err(
+        StatusCode::CONFLICT,
+        &format!("Up to {MAX_TEMPLATES_PER_GROUP} templates per group — delete one first"),
+    ))
+}
+
+async fn update_template(
+    State(state): State<AppState>,
+    Path((group_id, template_id)): Path<(String, String)>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(mut payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    group_or_404(&state, &group_id)?;
+    require_member(&state, &user, &group_id)?;
+    if !payload.is_object() {
+        return Err(err(StatusCode::BAD_REQUEST, "Template body must be an object"));
+    }
+    if payload.get("label").and_then(Value::as_str).is_none() {
+        let label = state.hub.store.message_template_label(
+            &template_id, &user.username, &group_id,
+        ).ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown template"))?;
+        payload["label"] = json!(label);
+    }
+    let (label, text) = template_fields(&payload)?;
+    state
+        .hub
+        .store
+        .update_message_template(&template_id, &user.username, &group_id, &label, &text)
+        .map(Json)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown template"))
+}
+
+async fn delete_template(
+    State(state): State<AppState>,
+    Path((group_id, template_id)): Path<(String, String)>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    group_or_404(&state, &group_id)?;
+    require_member(&state, &user, &group_id)?;
+    if !state.hub.store.delete_message_template(&template_id, &user.username, &group_id) {
+        return Err(err(StatusCode::NOT_FOUND, "Unknown template"));
+    }
     Ok(Json(json!({"ok": true})))
 }
 
@@ -2789,6 +2902,7 @@ async fn auth_config(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "google": {"enabled": state.config.google().is_some()},
         "apple": {"enabled": state.config.apple().is_some()},
+        "admin": {"enabled": state.config.admin_login_enabled()},
     }))
 }
 
@@ -3178,6 +3292,14 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn auth_config_advertises_admin_login_visibility() {
+        let (state, _dir) = test_state();
+        assert_eq!(auth_config(State(state.clone())).await.0["admin"]["enabled"], true);
+        state.config.update(|c| c.admin_login_enabled = false);
+        assert_eq!(auth_config(State(state)).await.0["admin"]["enabled"], false);
+    }
+
     #[test]
     fn authed_user_resolves_admin_key_and_user_sessions() {
         let (state, _dir) = test_state();
@@ -3460,6 +3582,216 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("authorization", format!("Bearer {token}").parse().unwrap());
         h
+    }
+
+    #[tokio::test]
+    async fn template_crud_is_personal_and_admin_key_compatible() {
+        let (state, _dir) = test_state();
+        state.hub.store.create_user("ana", "Ana", None, "member").unwrap();
+        state.hub.store.create_user("mal", "Mal", None, "member").unwrap();
+        let group = state.hub.store.create_group("Team", "", Some("ana"));
+        let gid = group["id"].as_str().unwrap().to_string();
+        state.hub.store.add_member(&gid, "user", "ana", "member", None);
+        let q = || Query(HashMap::new());
+
+        assert_eq!(
+            list_templates(
+                State(state.clone()),
+                Path("missing-group".into()),
+                q(),
+                session_headers(&state, "ana"),
+            ).await.unwrap_err().0,
+            StatusCode::NOT_FOUND
+        );
+
+        let created = create_template(
+            State(state.clone()),
+            Path(gid.clone()),
+            q(),
+            session_headers(&state, "ana"),
+            Json(json!({"label": "Standup", "text": "Yesterday…"})),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(created["label"], "Standup");
+        let template_id = created["id"].as_str().unwrap().to_string();
+
+        let listed = list_templates(
+            State(state.clone()),
+            Path(gid.clone()),
+            q(),
+            session_headers(&state, "ana"),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(listed["templates"].as_array().unwrap().len(), 1);
+
+        // A non-member cannot read the group's templates at all, and cannot
+        // reach Ana's row by id even though it knows the id.
+        assert_eq!(
+            list_templates(State(state.clone()), Path(gid.clone()), q(), session_headers(&state, "mal"))
+                .await
+                .unwrap_err()
+                .0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            create_template(
+                State(state.clone()), Path(gid.clone()), q(), session_headers(&state, "mal"),
+                Json(json!({"text": "not mine"})),
+            ).await.unwrap_err().0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            delete_template(
+                State(state.clone()), Path((gid.clone(), template_id.clone())), q(),
+                session_headers(&state, "mal"),
+            ).await.unwrap_err().0,
+            StatusCode::FORBIDDEN
+        );
+        state.hub.store.add_member(&gid, "user", "mal", "member", None);
+        assert_eq!(
+            update_template(
+                State(state.clone()),
+                Path((gid.clone(), template_id.clone())),
+                q(),
+                session_headers(&state, "mal"),
+                Json(json!({"text": "stolen"})),
+            )
+            .await
+            .unwrap_err()
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        assert!(
+            list_templates(State(state.clone()), Path(gid.clone()), q(), session_headers(&state, "mal"))
+                .await
+                .unwrap()
+                .0["templates"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        // The operator credential resolves to an instance admin, as everywhere.
+        let mut admin = HeaderMap::new();
+        admin.insert(
+            "authorization",
+            format!("Bearer {}", state.config.admin_key()).parse().unwrap(),
+        );
+        assert!(list_templates(State(state.clone()), Path(gid.clone()), q(), admin).await.is_ok());
+
+        // Malformed JSON values degrade to a client error instead of panicking
+        // when the handler fills in an omitted label.
+        let malformed = update_template(
+            State(state.clone()),
+            Path((gid.clone(), template_id.clone())),
+            q(),
+            session_headers(&state, "ana"),
+            Json(json!([])),
+        )
+        .await;
+        assert_eq!(malformed.unwrap_err().0, StatusCode::BAD_REQUEST);
+
+        // The owner can edit and delete; a second delete is a miss.
+        let updated = update_template(
+            State(state.clone()),
+            Path((gid.clone(), template_id.clone())),
+            q(),
+            session_headers(&state, "ana"),
+            Json(json!({"text": "Today…"})),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(updated["text"], "Today…");
+        // PATCH without label preserves the deliberately chosen label.
+        assert_eq!(updated["label"], "Standup");
+        let updated = update_template(
+            State(state.clone()),
+            Path((gid.clone(), template_id.clone())),
+            q(),
+            session_headers(&state, "ana"),
+            Json(json!({"label": null, "text": "Tomorrow…"})),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(updated["label"], "Standup");
+        assert!(delete_template(
+            State(state.clone()),
+            Path((gid.clone(), template_id.clone())),
+            q(),
+            session_headers(&state, "ana"),
+        )
+        .await
+        .is_ok());
+        assert_eq!(
+            delete_template(
+                State(state.clone()),
+                Path((gid, template_id)),
+                q(),
+                session_headers(&state, "ana"),
+            )
+            .await
+            .unwrap_err()
+            .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn template_writes_validate_text_label_and_the_per_group_cap() {
+        let (state, _dir) = test_state();
+        state.hub.store.create_user("ana", "Ana", None, "member").unwrap();
+        let group = state.hub.store.create_group("Team", "", Some("ana"));
+        let gid = group["id"].as_str().unwrap().to_string();
+        state.hub.store.add_member(&gid, "user", "ana", "member", None);
+        let q = || Query(HashMap::new());
+        let create = |payload: Value| {
+            create_template(
+                State(state.clone()),
+                Path(gid.clone()),
+                q(),
+                session_headers(&state, "ana"),
+                Json(payload),
+            )
+        };
+
+        assert_eq!(
+            create(json!({"text": "   "})).await.unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            create(json!({"text": "x".repeat(MAX_MESSAGE_CHARS + 1)})).await.unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            create(json!({"label": "l".repeat(MAX_TEMPLATE_LABEL_CHARS + 1), "text": "ok"}))
+                .await
+                .unwrap_err()
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            template_fields(&json!({"text": "\n  \nStatus update…"})).unwrap().0,
+            "Status update…"
+        );
+
+        for i in 0..MAX_TEMPLATES_PER_GROUP {
+            assert!(create(json!({"text": format!("draft {i}")})).await.is_ok());
+        }
+        assert_eq!(
+            create(json!({"text": "one too many"})).await.unwrap_err().0,
+            StatusCode::CONFLICT
+        );
+        // Validation still precedes the cap, so a bad payload is a 400.
+        assert_eq!(
+            create(json!({"text": ""})).await.unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[tokio::test]

@@ -27,9 +27,15 @@ export default function RootLayout() {
       }),
   );
   const load = useSession((s) => s.load);
+  const status = useSession((s) => s.status);
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    // Query keys are intentionally server-resource scoped, not credential
+    // scoped. Purge private data before another account can reuse the client.
+    if (status === "signedOut") client.clear();
+  }, [client, status]);
 
   return (
     <QueryClientProvider client={client}>

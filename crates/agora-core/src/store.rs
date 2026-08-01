@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, params_from_iter, Connection, ErrorCode};
 use serde_json::{json, Value};
 
 const SCHEMA: &str = r#"
@@ -202,6 +202,19 @@ CREATE TABLE IF NOT EXISTS user_prefs (
     position INTEGER,             -- NULL = no manual order for this item
     PRIMARY KEY (username, kind, item_id)
 );
+-- Private reusable message drafts. Membership removal deliberately keeps
+-- these rows so rejoining the group restores the user's templates.
+CREATE TABLE IF NOT EXISTS message_templates (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_message_templates_owner
+    ON message_templates(username, group_id, created_at, id);
 -- Fetched link-preview metadata (see unfurl.rs), keyed by exact URL: one
 -- fetch per URL across all messages. Failures are cached too (ok = 0) so a
 -- dead link is not retried per message; rows expire by fetched_at against
@@ -675,6 +688,7 @@ impl Store {
                 > 0;
             conn.execute("DELETE FROM channels WHERE group_id = ?1", params![group_id]).unwrap();
             conn.execute("DELETE FROM memberships WHERE group_id = ?1", params![group_id]).unwrap();
+            conn.execute("DELETE FROM message_templates WHERE group_id = ?1", params![group_id]).unwrap();
             file_ids = if channel_ids.is_empty() {
                 Vec::new()
             } else {
@@ -703,6 +717,145 @@ impl Store {
         }
         self.unlink_files(&file_ids);
         deleted
+    }
+
+    // ----------------------------------------------------- message templates
+
+    /// Oldest first: the picker's order must not shuffle when a template is
+    /// edited, so it keys off creation, never `updated_at`.
+    pub fn message_templates(&self, username: &str, group_id: &str) -> Vec<Value> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, label, text, created_at, updated_at FROM message_templates \
+                 WHERE username = ?1 AND group_id = ?2 ORDER BY created_at ASC, id ASC",
+            )
+            .unwrap();
+        stmt.query_map(params![username, group_id], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "group_id": group_id,
+                "label": r.get::<_, String>(1)?,
+                "text": r.get::<_, String>(2)?,
+                "created_at": r.get::<_, f64>(3)?,
+                "updated_at": r.get::<_, f64>(4)?,
+            }))
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
+    pub fn create_message_template(
+        &self,
+        username: &str,
+        group_id: &str,
+        label: &str,
+        text: &str,
+        max_count: i64,
+    ) -> Result<Option<Value>, rusqlite::Error> {
+        // Labels are free text, so they can slugify to nothing (emoji-only);
+        // fall back so the id never degenerates to a bare random suffix.
+        let seed = if slugify(label).is_empty() { "template" } else { label };
+        let ts = now();
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM message_templates WHERE username = ?1 AND group_id = ?2",
+            params![username, group_id],
+            |r| r.get(0),
+        )?;
+        if count >= max_count {
+            return Ok(None);
+        }
+        // Human labels repeat heavily and new_id has a short random suffix.
+        // Retry the only expected constraint failure instead of dropping the
+        // HTTP connection on an unlucky id collision.
+        let mut inserted = None;
+        for _ in 0..3 {
+            let id = new_id(seed);
+            match conn.execute(
+                "INSERT INTO message_templates \
+                 (id, username, group_id, label, text, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![id, username, group_id, label, text, ts],
+            ) {
+                Ok(_) => {
+                    inserted = Some(id);
+                    break;
+                }
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if e.code == ErrorCode::ConstraintViolation => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        let Some(id) = inserted else {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+                Some("message template id collided after three attempts".into()),
+            ));
+        };
+        Ok(Some(json!({"id": id, "group_id": group_id, "label": label, "text": text,
+               "created_at": ts, "updated_at": ts})))
+    }
+
+    /// `None` when the row is not this user's template in this group — the
+    /// owner check lives in the WHERE clause, so a mismatch is a plain miss.
+    pub fn update_message_template(
+        &self,
+        id: &str,
+        username: &str,
+        group_id: &str,
+        label: &str,
+        text: &str,
+    ) -> Option<Value> {
+        let ts = now();
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+                "UPDATE message_templates SET label = ?4, text = ?5, updated_at = ?6 \
+                 WHERE id = ?1 AND username = ?2 AND group_id = ?3",
+                params![id, username, group_id, label, text, ts],
+            )
+            .unwrap()
+            > 0;
+        if !changed {
+            return None;
+        }
+        conn.query_row(
+            "SELECT created_at FROM message_templates \
+             WHERE id = ?1 AND username = ?2 AND group_id = ?3",
+            params![id, username, group_id],
+            |r| r.get::<_, f64>(0),
+        )
+        .ok()
+        .map(|created_at| json!({
+            "id": id, "group_id": group_id, "label": label, "text": text,
+            "created_at": created_at, "updated_at": ts,
+        }))
+    }
+
+    pub fn delete_message_template(&self, id: &str, username: &str, group_id: &str) -> bool {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "DELETE FROM message_templates WHERE id = ?1 AND username = ?2 AND group_id = ?3",
+                params![id, username, group_id],
+            )
+            .unwrap()
+            > 0
+    }
+
+    pub fn message_template_label(
+        &self,
+        id: &str,
+        username: &str,
+        group_id: &str,
+    ) -> Option<String> {
+        self.conn.lock().unwrap().query_row(
+            "SELECT label FROM message_templates WHERE id = ?1 AND username = ?2 AND group_id = ?3",
+            params![id, username, group_id],
+            |r| r.get(0),
+        ).ok()
     }
 
     // ------------------------------------------------------------- channels
@@ -1011,7 +1164,7 @@ impl Store {
                 ids
             };
             for table in
-                ["stars", "reads", "thread_reads", "thread_hides", "mentions", "user_prefs"]
+                ["stars", "reads", "thread_reads", "thread_hides", "mentions", "user_prefs", "message_templates"]
             {
                 conn.execute(
                     &format!("DELETE FROM {table} WHERE username = ?1"),
@@ -2856,11 +3009,36 @@ mod tests {
         let c = s.create_channel(gid, "workouts", "daily");
         let cid = c["id"].as_str().unwrap();
         s.add_message(cid, "hello", "user", "tom", Some("Tom"), None, &[]);
+        s.create_message_template("tom", gid, "Daily", "Daily update", 50)
+            .unwrap();
         assert_eq!(s.messages(cid, None, None, 50).len(), 1);
         assert!(s.delete_group(gid));
         assert!(s.group(gid).is_none());
         assert!(s.channel(cid).is_none());
         assert_eq!(s.messages(cid, None, None, 50).len(), 0);
+        assert!(s.message_templates("tom", gid).is_empty());
+    }
+
+    #[test]
+    fn message_templates_are_private_group_scoped_and_stably_ordered() {
+        let s = store();
+        let g1 = s.create_group("One", "", Some("tom"));
+        let g2 = s.create_group("Two", "", Some("tom"));
+        let a = s.create_message_template("tom", g1["id"].as_str().unwrap(), "First", "alpha", 50).unwrap().unwrap();
+        let b = s.create_message_template("tom", g1["id"].as_str().unwrap(), "Second", "beta", 50).unwrap().unwrap();
+        s.create_message_template("ana", g1["id"].as_str().unwrap(), "Other", "private", 50)
+            .unwrap();
+        s.create_message_template("tom", g2["id"].as_str().unwrap(), "Elsewhere", "hidden", 50)
+            .unwrap();
+        assert_eq!(s.message_templates("tom", g1["id"].as_str().unwrap()).len(), 2);
+        assert!(s.message_templates("ana", g2["id"].as_str().unwrap()).is_empty());
+        let updated = s.update_message_template(a["id"].as_str().unwrap(), "tom", g1["id"].as_str().unwrap(), "First edit", "changed").unwrap();
+        assert_eq!(updated["text"], "changed");
+        let rows = s.message_templates("tom", g1["id"].as_str().unwrap());
+        assert_eq!(rows[0]["id"], a["id"]);
+        assert_eq!(rows[1]["id"], b["id"]);
+        assert!(s.update_message_template(a["id"].as_str().unwrap(), "ana", g1["id"].as_str().unwrap(), "x", "x").is_none());
+        assert!(s.delete_message_template(b["id"].as_str().unwrap(), "tom", g1["id"].as_str().unwrap()));
     }
 
     #[test]
@@ -2889,9 +3067,12 @@ mod tests {
         s.mark_read("tom", cid, Some(other_id));
         s.mark_thread_read("tom", root_id, Some(root_id));
         s.hide_thread("tom", root_id);
+        s.create_message_template("tom", gid, "Mine", "private draft", 50)
+            .unwrap();
         let file_id = root["attachments"][0]["id"].as_str().unwrap().to_string();
 
         s.delete_user_data("tom");
+        assert!(s.message_templates("tom", gid).is_empty());
 
         // Tom's thread is gone whole (root + agent reply); the agent's own
         // top-level message survives.
@@ -2980,6 +3161,11 @@ mod tests {
         assert!(!s.agent_in_channel("missing", c1id));
         assert!(s.user_in_group("tom", gid));
         assert!(!s.user_in_group("alice", gid));
+        s.add_member(gid, "user", "alice", "member", None);
+        s.create_message_template("alice", gid, "Standup", "Status update", 50)
+            .unwrap();
+        s.remove_member(gid, "user", "alice", None);
+        assert_eq!(s.message_templates("alice", gid).len(), 1);
 
         // Membership never crosses groups: a group-wide row in Ops grants
         // nothing in another group, and a row whose channel_id points at a

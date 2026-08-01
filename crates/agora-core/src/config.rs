@@ -65,12 +65,20 @@ fn default_instance_name() -> String {
     "My Agora".to_string()
 }
 
+fn default_admin_login_enabled() -> bool {
+    true
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConfigData {
     /// Formerly `owner_token`; the alias keeps existing config.json files
     /// loading (a miss here would regenerate the key and lock clients out).
     #[serde(default, alias = "owner_token")]
     pub admin_key: String,
+    /// Whether clients offer the operator-key form. The key remains valid for
+    /// API/desktop operations; this only hides the interactive login surface.
+    #[serde(default = "default_admin_login_enabled")]
+    pub admin_login_enabled: bool,
     /// Signs the short-lived session tokens minted by Google sign-in.
     /// Generated once; rotating it signs every session out.
     #[serde(default)]
@@ -160,6 +168,7 @@ impl Default for ConfigData {
     fn default() -> Self {
         Self {
             admin_key: new_token(),
+            admin_login_enabled: true,
             session_secret: new_token(),
             instance_id: new_token(),
             instance_name: default_instance_name(),
@@ -220,6 +229,10 @@ impl Config {
 
     pub fn admin_key(&self) -> String {
         self.data.lock().unwrap().admin_key.clone()
+    }
+
+    pub fn admin_login_enabled(&self) -> bool {
+        self.data.lock().unwrap().admin_login_enabled
     }
 
     pub fn username(&self) -> String {
@@ -429,9 +442,21 @@ mod tests {
         )
         .unwrap();
         let cfg = Config::load(dir.path()).unwrap();
+        assert!(cfg.snapshot().admin_login_enabled);
         assert!(!cfg.instance_id().is_empty());
         assert_eq!(cfg.instance_name(), "My Agora");
         assert_eq!(cfg.username(), "tom");
+    }
+
+    #[test]
+    fn admin_login_is_visible_by_default_and_can_be_hidden() {
+        let defaulted: ConfigData = serde_json::from_str(r#"{"admin_key":"key"}"#).unwrap();
+        assert!(defaulted.admin_login_enabled);
+        let hidden: ConfigData = serde_json::from_str(
+            r#"{"admin_key":"key","admin_login_enabled":false}"#,
+        )
+        .unwrap();
+        assert!(!hidden.admin_login_enabled);
     }
 
     #[test]
