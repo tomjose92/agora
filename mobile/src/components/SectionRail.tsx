@@ -2,7 +2,7 @@
    touch-capturing strip overlays a message list without reducing bubble
    width; long timelines use a fixed window instead of a nested scroller. */
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import {
   conversationSections,
@@ -12,6 +12,14 @@ import {
 import { colors } from "../lib/theme";
 
 export const MAX_VISIBLE_SECTION_DOTS = 12;
+const SECTION_DOT_PITCH = 26;
+
+export function sectionDotCapacity(height: number): number {
+  return Math.min(
+    MAX_VISIBLE_SECTION_DOTS,
+    Math.max(2, Math.floor(height / SECTION_DOT_PITCH)),
+  );
+}
 
 /** Keep a fixed-size, non-scrollable window around the active section. */
 export function visibleSectionWindow<T>(
@@ -81,9 +89,10 @@ export function SectionRail({
   onJump: (messageId: number) => void;
   bottomInset?: number;
 }) {
+  const [maxVisible, setMaxVisible] = useState(MAX_VISIBLE_SECTION_DOTS);
   const sections = useMemo(() => conversationSections(messages), [messages]);
   const active = activeSectionIndex(sections, activeMessageId);
-  const visible = visibleSectionWindow(sections, active);
+  const visible = visibleSectionWindow(sections, active, maxVisible);
 
   if (sections.length < 2) return null;
 
@@ -91,6 +100,7 @@ export function SectionRail({
     <View
       pointerEvents="box-none"
       style={[styles.rail, { bottom: bottomInset }]}
+      onLayout={(event) => setMaxVisible(sectionDotCapacity(event.nativeEvent.layout.height))}
     >
       {visible.map((section) => {
         const selected = section.mid === sections[active]?.mid;

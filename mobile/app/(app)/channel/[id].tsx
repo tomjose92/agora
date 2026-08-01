@@ -641,6 +641,8 @@ export default function ChannelScreen() {
             onJump={jumpToSection}
             // Leaves the lower-right region free for the absolutely positioned
             // unread pill; typing/progress rows sit outside this list wrapper.
+            // Their conditional height changes the clearance, and the rail and
+            // pill overlap horizontally, so keep a deliberate vertical margin.
             bottomInset={120}
           />
         </View>

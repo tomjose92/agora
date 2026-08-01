@@ -7,6 +7,7 @@ import {
   activeSectionIndex,
   messageRowIndex,
   pickActiveMessageId,
+  sectionDotCapacity,
   visibleSectionWindow,
 } from "../src/components/SectionRail";
 
@@ -73,6 +74,12 @@ describe("conversation sections", () => {
     expect(visibleSectionWindow(items, 15)).toEqual(items.slice(9, 21));
     expect(visibleSectionWindow(items, 0)).toEqual(items.slice(0, 12));
     expect(visibleSectionWindow(items, items.length - 1)).toEqual(items.slice(18));
+  });
+
+  it("shrinks the dot cap to fit a constrained rail height", () => {
+    expect(sectionDotCapacity(80)).toBe(3);
+    expect(sectionDotCapacity(20)).toBe(2);
+    expect(sectionDotCapacity(1000)).toBe(12);
   });
 
   it("defaults active selection to the first section", () => {
