@@ -7,37 +7,16 @@
    the top. Shared by the channel log (MessageLog) and the thread pane. */
 
 import { useEffect, useMemo, useState } from "react";
-import { type Message } from "@agora/core";
+import { conversationSections, type Message } from "@agora/core";
 
 const ACTIVE_OFFSET_PX = 80; // a section counts as "in view" once its top passes this
 const AT_BOTTOM_PX = 8;
-
-function firstLine(text: string, max = 64): string {
-  const t = (text || "").replace(/\s+/g, " ").trim();
-  return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t;
-}
-
-interface Section { mid: number; label: string }
-
-/* A new section begins at the first message and at every user message; the
-   agent replies in between hang off the section above them. */
-function sectionsOf(messages: Message[]): Section[] {
-  const out: Section[] = [];
-  for (const m of messages) {
-    if (out.length === 0 || m.author_type === "user") {
-      const who = m.author_name || m.author_id;
-      const body = firstLine(m.text);
-      out.push({ mid: m.id, label: body ? `${who}: ${body}` : who });
-    }
-  }
-  return out;
-}
 
 export function SectionRail({ boxRef, messages }: {
   boxRef: React.RefObject<HTMLDivElement | null>;
   messages: Message[];
 }) {
-  const sections = useMemo(() => sectionsOf(messages), [messages]);
+  const sections = useMemo(() => conversationSections(messages), [messages]);
   const [active, setActive] = useState(0);
 
   useEffect(() => {

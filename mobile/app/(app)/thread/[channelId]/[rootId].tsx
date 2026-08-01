@@ -19,6 +19,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ViewToken,
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
@@ -45,6 +46,7 @@ import { EmojiPicker } from "../../../../src/components/EmojiPicker";
 import { Icon } from "../../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows";
 import { MessageItem } from "../../../../src/components/MessageItem";
+import { messageRowIndex, SectionRail } from "../../../../src/components/SectionRail";
 import { ProfileSheet } from "../../../../src/components/ProfileSheet";
 import { QuickReactions, useReactWith } from "../../../../src/components/Reactions";
 import { toastErr } from "../../../../src/components/Toast";
@@ -248,6 +250,26 @@ export default function ThreadScreen() {
   }, [channelId, params.channelName, rootId, root?.text]);
 
   const listRef = useRef<FlashListRef<Row>>(null);
+  const [activeSectionMessageId, setActiveSectionMessageId] = useState<number | null>(null);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken<Row>[] }) => {
+      const first = viewableItems
+        .filter((token) => token.isViewable)
+        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))[0];
+      if (first) setActiveSectionMessageId(first.item.m.id);
+    },
+  ).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
+  const jumpToSection = useCallback((messageId: number) => {
+    const jump = () => {
+      const index = messageRowIndex(rowsRef.current, messageId);
+      if (index >= 0) listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
+    };
+    jump();
+    setTimeout(jump, 300);
+  }, []);
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
   const landedOnMessage = useRef<number | null>(null);
   useEffect(() => {
@@ -354,7 +376,8 @@ export default function ThreadScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={keyboardOffset}
       >
-        <FlashList
+        <View style={styles.listWrap}>
+          <FlashList
           ref={listRef}
           data={rows}
           renderItem={renderRow}
@@ -376,8 +399,11 @@ export default function ThreadScreen() {
             const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
             atBottom.current =
               contentOffset.y + layoutMeasurement.height >= contentSize.height - 60;
+            if (atBottom.current && latestId) setActiveSectionMessageId(latestId);
           }}
           scrollEventThrottle={64}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
           // Mounted whenever older history exists (see the channel screen).
           ListHeaderComponent={
             replies.hasNextPage ? (
@@ -391,7 +417,13 @@ export default function ThreadScreen() {
               <Text style={styles.empty}>No replies yet.</Text>
             )
           }
-        />
+          />
+          <SectionRail
+            messages={root ? [root, ...thread] : thread}
+            activeMessageId={activeSectionMessageId}
+            onJump={jumpToSection}
+          />
+        </View>
         <TypingRow typing={typing} />
         <ProgressBubbles progress={progress} />
         <Composer
@@ -513,6 +545,7 @@ export default function ThreadScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  listWrap: { flex: 1, position: "relative" },
   headerBtns: { flexDirection: "row", gap: 16 },
   headerBtnOff: { opacity: 0.35 },
   deepLinkTarget: { backgroundColor: "rgba(139,124,255,0.16)", borderRadius: 8 },
