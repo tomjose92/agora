@@ -6,7 +6,10 @@
    the text blocks and the backdrop. */
 
 // Ships untranspiled ESM; the icons are irrelevant to what these tests assert.
-jest.mock("lucide-react-native", () => new Proxy({}, { get: () => () => null }));
+jest.mock(
+  "lucide-react-native",
+  () => new Proxy({}, { get: () => () => null }),
+);
 
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
@@ -37,8 +40,14 @@ function message(text: string): Message {
   };
 }
 
-beforeAll(() => {
-  useSession.setState({ status: "signedIn", session });
+const initialSessionState = useSession.getState();
+
+beforeEach(() => {
+  act(() => useSession.setState({ status: "signedIn", session }));
+});
+
+afterEach(() => {
+  act(() => useSession.setState(initialSessionState, true));
 });
 
 function render(m: Message, onLongPress?: (msg: Message) => void) {
@@ -53,7 +62,11 @@ function render(m: Message, onLongPress?: (msg: Message) => void) {
         React.createElement(
           ApiProvider,
           { client: new ApiClient(session) },
-          React.createElement(MessageItem, { session, message: m, onLongPress }),
+          React.createElement(MessageItem, {
+            session,
+            message: m,
+            onLongPress,
+          }),
         ),
       ),
     );
@@ -102,6 +115,71 @@ test("long-press still reaches the handler from the text, and the backdrop exist
 test("without an onLongPress handler no backdrop Pressable is rendered", () => {
   const tree = render(message(TABLE));
   expect(tree.root.findAll(isBackdrop)).toHaveLength(0);
+});
+
+test.each([
+  ["current-user", "alice"],
+  ["other-user", "bob"],
+])("renders artifacts in the %s message branch", (_label, username) => {
+  act(() => useSession.setState({ username }));
+  const m = message("An artifact follows");
+  m.meta = {
+    artifacts: [
+      {
+        id: "future",
+        type: "timeline",
+        version: 99,
+        title: "Future artifact",
+        data: {},
+      },
+    ],
+  };
+  const tree = render(m);
+  const text = tree.root
+    .findAllByType(Text)
+    .map((node) => node.props.children)
+    .flat()
+    .join(" ");
+  expect(text).toContain("Future artifact");
+  expect(text).toContain("cannot display");
+});
+
+test("renders a supported map artifact from message metadata", () => {
+  const m = message("A map follows");
+  m.meta = {
+    artifacts: [
+      {
+        id: "map",
+        type: "map",
+        version: 1,
+        title: "Test itinerary",
+        data: {
+          initial_view: { mode: "fit" },
+          regions: [
+            {
+              id: "r",
+              label: "Region",
+              center: { lat: 1, lng: 2 },
+              day_ids: [],
+            },
+          ],
+          days: [],
+          places: [],
+          routes: [],
+        },
+      },
+    ],
+  };
+  const tree = render(m);
+  const text = tree.root
+    .findAllByType(Text)
+    .map((node) => node.props.children)
+    .flat()
+    .join(" ");
+  expect(text).toContain("Test itinerary");
+  expect(
+    tree.root.findAll((node) => node.props.testID === "coordinate-map").length,
+  ).toBeGreaterThan(0);
 });
 
 test("shows an edited marker when edited_at is present", () => {

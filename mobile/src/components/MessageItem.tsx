@@ -20,12 +20,15 @@ import { MessageForm } from "./MessageForm";
 import { Reactions } from "./Reactions";
 import { Sources, visibleText } from "./Sources";
 import { Unfurls } from "./Unfurls";
+import { ArtifactList } from "./MapArtifacts";
 
 export function Avatar({ message }: { message: Message }) {
   if (message.author_type === "agent") {
     return <AgentAvatar agentId={message.author_id} size={30} />;
   }
-  const initial = (message.author_name || message.author_id || "?")[0].toUpperCase();
+  const initial = (message.author_name ||
+    message.author_id ||
+    "?")[0].toUpperCase();
   return (
     <View style={styles.avatar}>
       <Text style={styles.avatarInitial}>{initial}</Text>
@@ -65,7 +68,9 @@ function MessageOptions({ message }: { message: Message }) {
             o.style === "primary" && styles.optionPrimary,
             o.style === "danger" && styles.optionDanger,
           ]}
-          onPress={() => select.mutate({ messageId: message.id, optionId: o.id })}
+          onPress={() =>
+            select.mutate({ messageId: message.id, optionId: o.id })
+          }
           disabled={select.isPending}
         >
           <Text
@@ -102,7 +107,9 @@ export function MessageItem({
 }) {
   const username = useSession((s) => s.username);
   const mine =
-    message.author_type === "user" && username !== "" && message.author_id === username;
+    message.author_type === "user" &&
+    username !== "" &&
+    message.author_id === username;
   const tldr = tldrOf(message);
   const showTldr = useTldrView((s) => !!s.showing[message.id]) && tldr != null;
   const body = showTldr && tldr != null ? tldr : visibleText(message);
@@ -110,7 +117,9 @@ export function MessageItem({
   const flags = (
     <>
       {pinned ? <Icon icon={Pin} size={11} color={colors.a1} /> : null}
-      {starred ? <Icon icon={Star} size={11} color={colors.amber} fill={colors.amber} /> : null}
+      {starred ? (
+        <Icon icon={Star} size={11} color={colors.amber} fill={colors.amber} />
+      ) : null}
       {showTldr ? <Text style={styles.tldrMark}>TL;DR</Text> : null}
     </>
   );
@@ -119,7 +128,8 @@ export function MessageItem({
     onOpenThread && (message.reply_count ?? 0) > 0 ? (
       <Pressable onPress={() => onOpenThread(message)} hitSlop={6}>
         <Text style={styles.replies}>
-          {message.reply_count} {message.reply_count === 1 ? "reply" : "replies"} →
+          {message.reply_count}{" "}
+          {message.reply_count === 1 ? "reply" : "replies"} →
         </Text>
       </Pressable>
     ) : null;
@@ -133,7 +143,11 @@ export function MessageItem({
      table's ScrollView never has a Pressable ancestor. */
   const longPress = onLongPress ? () => onLongPress(message) : undefined;
   const pressBackdrop = longPress ? (
-    <Pressable style={StyleSheet.absoluteFill} onLongPress={longPress} delayLongPress={300} />
+    <Pressable
+      style={StyleSheet.absoluteFill}
+      onLongPress={longPress}
+      delayLongPress={300}
+    />
   ) : null;
 
   if (mine) {
@@ -142,7 +156,11 @@ export function MessageItem({
         <View style={[styles.bubble, styles.bubbleMine]}>
           {pressBackdrop}
           <MdText text={body} onLongPress={longPress} />
-          <Attachments session={session} attachments={message.attachments ?? []} />
+          <ArtifactList artifacts={message.meta?.artifacts} />
+          <Attachments
+            session={session}
+            attachments={message.attachments ?? []}
+          />
           <Unfurls message={message} />
           <Sources message={message} />
           <MessageForm message={message} />
@@ -176,13 +194,19 @@ export function MessageItem({
         <View style={styles.head}>
           <Text style={styles.author} numberOfLines={1}>
             {message.author_name || message.author_id}
-            {message.author_type === "agent" ? <Text style={styles.agentTag}> · agent</Text> : null}
+            {message.author_type === "agent" ? (
+              <Text style={styles.agentTag}> · agent</Text>
+            ) : null}
           </Text>
           {flags}
           <Text style={styles.ts}>{message.meta?.edited_at ? "edited · " : ""}{fmtTs(message.ts)}</Text>
         </View>
         <MdText text={body} onLongPress={longPress} />
-        <Attachments session={session} attachments={message.attachments ?? []} />
+        <ArtifactList artifacts={message.meta?.artifacts} />
+        <Attachments
+          session={session}
+          attachments={message.attachments ?? []}
+        />
         <Unfurls message={message} />
         <Sources message={message} />
         <MessageForm message={message} />
@@ -240,10 +264,20 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 2,
   },
-  author: { color: colors.text, fontSize: 13, fontWeight: "700", flexShrink: 1 },
+  author: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
+    flexShrink: 1,
+  },
   agentTag: { color: colors.faint, fontSize: 11, fontWeight: "600" },
   ts: { color: colors.faint, fontSize: 10.5 },
-  replies: { color: colors.a1, fontSize: 12.5, fontWeight: "600", marginTop: 4 },
+  replies: {
+    color: colors.a1,
+    fontSize: 12.5,
+    fontWeight: "600",
+    marginTop: 4,
+  },
   options: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   optionBtn: {
     borderWidth: 1,

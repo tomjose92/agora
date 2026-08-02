@@ -33,7 +33,7 @@ type PointProps = { place: MapArtifactPlace; color: string; order: number };
    a route line, and bounds. Any failure — no WebGL, style/tiles unreachable —
    degrades to the SVG `MapGraphic` so the itinerary stays usable offline. */
 export default function MapCanvas({
-  data, styleUrl, activeRegion, visiblePlaces, selectedPlace, onPlace, onRegion,
+  data, styleUrl, activeRegion, visiblePlaces, selectedPlace, onPlace, onRegion, fitNonce,
 }: {
   data: MapArtifactData;
   styleUrl: string;
@@ -42,6 +42,8 @@ export default function MapCanvas({
   selectedPlace?: string;
   onPlace: (place: MapArtifactPlace) => void;
   onRegion?: (region: MapArtifactRegion) => void;
+  /** Bump to force a camera re-fit even when the visible set is unchanged. */
+  fitNonce?: number;
 }) {
   const holder = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
@@ -292,7 +294,7 @@ export default function MapCanvas({
       );
       map.fitBounds(bounds, { padding: 56, maxZoom: 14, duration });
     })();
-  }, [ready, activeRegion, visiblePlaces, data]);
+  }, [ready, activeRegion, visiblePlaces, data, fitNonce]);
 
   if (failed) {
     return (
