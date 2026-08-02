@@ -8,14 +8,14 @@ import { create } from "zustand";
 
 interface DraftState {
   byConvo: Record<string, string>;
-  set: (key: string, text: string) => void;
+  setDraft: (key: string, text: string) => void;
   clear: (key: string) => void;
   resetAll: () => void;
 }
 
 export const useMessageDrafts = create<DraftState>((set) => ({
   byConvo: {},
-  set: (key, text) => set((state) => {
+  setDraft: (key, text) => set((state) => {
     const byConvo = { ...state.byConvo };
     if (text) byConvo[key] = text;
     else delete byConvo[key];

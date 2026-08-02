@@ -182,7 +182,7 @@ export function Composer({
      than inheriting the test runtime's iOS value captured at module load. */
   const nativePasteInput = Platform.OS === "ios" || Platform.OS === "android";
   const storedText = useMessageDrafts((s) => (addressKey ? s.byConvo[addressKey] ?? "" : undefined));
-  const setStoredText = useMessageDrafts((s) => s.set);
+  const setStoredText = useMessageDrafts((s) => s.setDraft);
   const [localText, setLocalText] = useState("");
   const text = storedText ?? localText;
   const setText = (next: string) => {
@@ -227,12 +227,8 @@ export function Composer({
   useEffect(() => {
     pasteGeneration.current += 1;
     setPasteOps(0);
-    hasSelection.current = false;
-    selection.current = { start: 0, end: 0 };
-    setForcedSelection(undefined);
-    setReplyInThread(false);
-    /* Attachments intentionally stay with this mounted composer; per-target
-       attachment drafts and their temp-file lifecycle are a separate feature. */
+    /* Production composers remount per conversation, naturally resetting all
+       local state (including attachments); only text survives via the store. */
     return () => {
       pasteGeneration.current += 1;
     };
@@ -597,7 +593,7 @@ export function Composer({
           ))}
         </ScrollView>
       ) : null}
-      {candidates.length > 0 ? (
+      {focused && candidates.length > 0 ? (
         <ScrollView horizontal keyboardShouldPersistTaps="always" style={styles.mentionBar}>
           {candidates.map((c) => (
             <Pressable key={c.id} style={styles.mentionChip} onPress={() => insertMention(c)}>

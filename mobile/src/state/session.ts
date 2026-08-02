@@ -157,6 +157,8 @@ export const useSession = create<SessionState>((set) => ({
       // signOut/forgetServer on purpose.
       rememberServer(session.baseUrl),
     ]);
+    useMessageDrafts.getState().resetAll();
+    useAddressed.getState().resetAll();
     set({
       status: "signedIn",
       session,
@@ -172,7 +174,7 @@ export const useSession = create<SessionState>((set) => ({
   async signOut() {
     const session = useSession.getState().session;
     useMessageDrafts.getState().resetAll();
-    useAddressed.setState({ byConvo: {} });
+    useAddressed.getState().resetAll();
     await unregisterPushToken(session);
     // Keep KEY_URL: the login screen should only ask for credentials again.
     await Promise.all([
@@ -193,7 +195,7 @@ export const useSession = create<SessionState>((set) => ({
   async forgetServer() {
     const session = useSession.getState().session;
     useMessageDrafts.getState().resetAll();
-    useAddressed.setState({ byConvo: {} });
+    useAddressed.getState().resetAll();
     await unregisterPushToken(session);
     await Promise.all([
       SecureStore.deleteItemAsync(KEY_URL),

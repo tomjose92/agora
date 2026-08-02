@@ -481,6 +481,7 @@ export default function ChannelScreen() {
         <TypingRow typing={typing} />
         <ProgressBubbles progress={progress} />
         <Composer
+          key={channelId}
           placeholder={`Message # ${channelName}`}
           mentions={mentionCandidates}
           agents={agentCandidates}
