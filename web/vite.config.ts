@@ -16,6 +16,7 @@ export default defineConfig({
   worker: { format: "es" },
   server: {
     port: Number(process.env.AGORA_WEB_PORT) || 5173,
+    strictPort: Boolean(process.env.AGORA_WEB_PORT),
     proxy: {
       "/api": apiOrigin,
       "/ws": { target: apiOrigin, ws: true },

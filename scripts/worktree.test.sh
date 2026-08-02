@@ -26,6 +26,11 @@ grep -q '^export AGORA_BASE=' "$worktree/.worktree-env"
 [[ "$(stat -c '%a' "$worktree/.env" 2>/dev/null || stat -f '%Lp' "$worktree/.env")" == "600" ]]
 [[ -L "$worktree/.claude/skills" ]]
 [[ -L "$worktree/mobile/.claude/skills" ]]
+if main_rm_output=$( (cd "$fixture" && scripts/worktree.sh rm "$(git -C "$fixture" rev-parse --show-toplevel)") 2>&1 ); then
+  echo "main checkout removal unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$main_rm_output" == *"refusing to remove the main checkout"* ]]
 
 # Generated build output must not make an otherwise clean worktree unremovable.
 mkdir -p "$worktree/.cargo-target/debug"
@@ -40,6 +45,7 @@ fi
 rm "$worktree/dirty.txt"
 (cd "$fixture" && scripts/worktree.sh rm feat/one --delete-branch >/dev/null)
 [[ ! -e "$worktree" ]]
+[[ -d "$fixture/.claude/skills/verify" ]]
 if git -C "$fixture" show-ref --verify --quiet refs/heads/feat/one; then
   echo "merged branch was not deleted" >&2
   exit 1
