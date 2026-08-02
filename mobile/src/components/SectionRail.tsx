@@ -91,7 +91,7 @@ export function pickActiveMessageId({
    index *by message id* on every pass (immune to prepends), issues correction
    passes after FlashList's measurement settles (final pass non-animated so it
    pins exactly), and reports "in flight" so callers can pause viewability
-   tracking and pagination until the jump lands or the user drags. */
+   tracking until the jump lands or the user drags. */
 
 export const SECTION_JUMP_PASSES_MS = [350, 700] as const;
 export const SECTION_JUMP_SETTLE_MS = 1100;
@@ -134,10 +134,10 @@ export function createSectionJumpController({
       jumping = true;
       onJumpStart(messageId);
       scrollTo(messageId, true);
-      for (const delay of SECTION_JUMP_PASSES_MS) {
-        const finalPass = delay === SECTION_JUMP_PASSES_MS[SECTION_JUMP_PASSES_MS.length - 1];
+      SECTION_JUMP_PASSES_MS.forEach((delay, i) => {
+        const finalPass = i === SECTION_JUMP_PASSES_MS.length - 1;
         timers.push(setTimeout(() => scrollTo(messageId, !finalPass), delay));
-      }
+      });
       timers.push(setTimeout(() => {
         jumping = false;
       }, settleMs));
@@ -207,7 +207,6 @@ export function useSectionJump({
   const cancelSectionJump = useCallback(() => {
     controller.cancel();
   }, [controller]);
-  const isSectionJumping = useCallback(() => controller.isJumping(), [controller]);
 
   return {
     activeMessageId,
@@ -215,7 +214,6 @@ export function useSectionJump({
     viewabilityConfig,
     jumpToSection,
     cancelSectionJump,
-    isSectionJumping,
   };
 }
 

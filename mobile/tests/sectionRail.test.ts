@@ -147,7 +147,7 @@ describe("useSectionJump", () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
-  it("selects the target optimistically and suppresses viewability tracking mid-jump", () => {
+  function setupHook() {
     const scrollToIndex = jest.fn();
     const listRef = { current: { scrollToIndex } };
     const atBottom = { current: true };
@@ -160,20 +160,38 @@ describe("useSectionJump", () => {
     act(() => {
       TestRenderer.create(React.createElement(Harness));
     });
+    return { get hook() { return hook; }, scrollToIndex, atBottom };
+  }
 
-    act(() => hook.jumpToSection(2));
-    expect(hook.activeMessageId).toBe(2);
-    expect(atBottom.current).toBe(false);
-    expect(scrollToIndex).toHaveBeenCalledWith({ index: 1, animated: true, viewPosition: 0.08 });
+  it("selects the target optimistically and resumes viewability tracking after settling", () => {
+    const harness = setupHook();
+
+    act(() => harness.hook.jumpToSection(2));
+    expect(harness.hook.activeMessageId).toBe(2);
+    expect(harness.atBottom.current).toBe(false);
+    expect(harness.scrollToIndex).toHaveBeenCalledWith({ index: 1, animated: true, viewPosition: 0.08 });
 
     // The transient viewport during the animation must not move the selection.
     const token = { index: 2, isViewable: true, item: row(9) };
-    act(() => hook.onViewableItemsChanged({ viewableItems: [token] }));
-    expect(hook.activeMessageId).toBe(2);
+    act(() => harness.hook.onViewableItemsChanged({ viewableItems: [token] }));
+    expect(harness.hook.activeMessageId).toBe(2);
 
-    // A user drag cancels the jump; live tracking resumes.
-    act(() => hook.cancelSectionJump());
-    act(() => hook.onViewableItemsChanged({ viewableItems: [token] }));
-    expect(hook.activeMessageId).toBe(9);
+    // The jump settles without a user drag; live tracking resumes.
+    act(() => jest.advanceTimersByTime(SECTION_JUMP_SETTLE_MS));
+    act(() => harness.hook.onViewableItemsChanged({ viewableItems: [token] }));
+    expect(harness.hook.activeMessageId).toBe(9);
+  });
+
+  it("resumes viewability tracking when a user drag cancels the jump", () => {
+    const harness = setupHook();
+    const token = { index: 2, isViewable: true, item: row(9) };
+
+    act(() => harness.hook.jumpToSection(2));
+    act(() => harness.hook.onViewableItemsChanged({ viewableItems: [token] }));
+    expect(harness.hook.activeMessageId).toBe(2);
+
+    act(() => harness.hook.cancelSectionJump());
+    act(() => harness.hook.onViewableItemsChanged({ viewableItems: [token] }));
+    expect(harness.hook.activeMessageId).toBe(9);
   });
 });

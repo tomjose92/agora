@@ -347,7 +347,6 @@ export default function ChannelScreen() {
     viewabilityConfig,
     jumpToSection,
     cancelSectionJump,
-    isSectionJumping,
   } = useSectionJump({ listRef, rows, atBottom, latestId });
 
   /* A shared deep link may point well beyond the newest page. Page older
@@ -357,6 +356,7 @@ export default function ChannelScreen() {
     const idx = rows.findIndex((r) => r.kind === "msg" && r.m.id === targetMessageId);
     if (idx >= 0) {
       landedOnMessage.current = targetMessageId;
+      cancelSectionJump();
       atBottom.current = false;
       setHighlightedId(targetMessageId);
       setTimeout(() => setHighlightedId(null), 1800);
@@ -576,9 +576,6 @@ export default function ChannelScreen() {
             autoscrollToBottomThreshold: 0.05,
           }}
           onStartReached={() => {
-            // A section jump's target is always in the loaded rows; letting a
-            // prepend land mid-animation shifts indices under the scroll.
-            if (isSectionJumping()) return;
             if (messages.hasNextPage && !messages.isFetchingNextPage) void messages.fetchNextPage();
           }}
           onStartReachedThreshold={0.4}
@@ -623,6 +620,7 @@ export default function ChannelScreen() {
           <Pressable
             style={styles.jump}
             onPress={() => {
+              cancelSectionJump();
               listRef.current?.scrollToEnd({ animated: true });
               markRead.mutate(null);
             }}

@@ -256,7 +256,6 @@ export default function ThreadScreen() {
     viewabilityConfig,
     jumpToSection,
     cancelSectionJump,
-    isSectionJumping,
   } = useSectionJump({ listRef, rows, atBottom, latestId });
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
   const landedOnMessage = useRef<number | null>(null);
@@ -265,6 +264,7 @@ export default function ThreadScreen() {
     const idx = rows.findIndex((row) => row.m.id === targetMessageId);
     if (idx >= 0) {
       landedOnMessage.current = targetMessageId;
+      cancelSectionJump();
       atBottom.current = false;
       setHighlightedId(targetMessageId);
       setTimeout(() => setHighlightedId(null), 1800);
@@ -380,9 +380,6 @@ export default function ThreadScreen() {
             autoscrollToBottomThreshold: 0.05,
           }}
           onStartReached={() => {
-            // A section jump's target is always in the loaded rows; letting a
-            // prepend land mid-animation shifts indices under the scroll.
-            if (isSectionJumping()) return;
             if (replies.hasNextPage && !replies.isFetchingNextPage) void replies.fetchNextPage();
           }}
           onStartReachedThreshold={0.4}
