@@ -27,6 +27,57 @@ Agora is **multi-user**: real accounts (`users` table) with instance roles
 sign-in. The `admin_key` in `config.json` is the *operator* credential, not
 a user account.
 
+## Worktrees
+
+All feature and bug-fix changes happen in a dedicated worktree so concurrent
+sessions do not disturb the main checkout. Create one from the main checkout
+with `scripts/worktree.sh new <branch>`; worktrees live under
+`.worktrees/<branch-slug>`. The main checkout stays on `main` and is reserved
+for fetching, pulling, worktree creation, and cleanup.
+
+Before the first edit in a session, run both of these commands:
+
+```bash
+git rev-parse --show-toplevel
+git branch --show-current
+```
+
+Confirm that both identify the assigned worktree and branch. If either is
+wrong, stop and ask; never silently relocate or switch the checkout. One
+branch belongs to a worktree for its whole lifetime. In a shared worktree,
+never run `git switch`, `git checkout <branch>`, `git stash`, or
+`git reset --hard`; create another worktree when another branch is needed.
+
+Each generated `.worktree-env` assigns isolated server, Vite, Storybook, and
+Metro ports, a data directory, and a per-worktree Cargo target. Shell state
+does not carry between agent commands, so prefix commands explicitly:
+
+```bash
+source .worktree-env && cargo run -p agora-server -- --data-dir "$AGORA_DATA_DIR" --ui-dir web/dist
+source .worktree-env && npm run dev -w web -- --port "$AGORA_WEB_PORT"
+source .worktree-env && npm run storybook -w web -- -p "$AGORA_STORYBOOK_PORT"
+source .worktree-env && npx expo start --port "$AGORA_METRO_PORT"
+source .worktree-env && node web/e2e/parity.mjs /
+```
+
+`AGORA_BASE` makes both `web/e2e/parity.mjs` and `web/e2e/artifacts.mjs`
+target the worktree's server port.
+
+Only one collaborator should own port-bound processes in a shared worktree;
+others reuse those processes. Gitignored per-tool skill directories that do
+not travel with a new checkout are linked back to the main checkout, without
+sharing broader per-session state. Root dependencies are installed only when
+requested with `--install-deps`; mobile dependencies and generated native
+projects remain opt-in.
+
+Use `scripts/worktree.sh list` to inspect worktrees and
+`scripts/worktree.sh rm <branch-or-path>` after the work is merged. Removal
+refuses dirty/unregistered worktrees and the main checkout; optional branch
+deletion uses merged-only `git branch -d`. Never run `git clean -xdf` at the
+repository root while worktrees exist: it deletes the nested directories and
+leaves stale Git metadata (recover with `git worktree prune`). Only remove a
+worktree you created or were explicitly asked to clean up.
+
 ## Setup, run, test
 
 ```bash
@@ -215,15 +266,17 @@ endpoint must not break:
   (notifications, updater) must work against both.
 - **Updater discipline**: never ship two releases with the same version —
   the release workflow's gate assumes version == release identity.
-- **Keep the working tree clean**; this repo is sometimes edited by more
-  than one session at once. Check `git status` before staging and stage
-  specific files, never `-A`.
+- **Keep the assigned worktree clean**; it may be shared by more than one
+  session. Check `git status` before staging and stage specific files, never
+  `-A`.
 
 ## Git / PR conventions
 
 - Conventional Commits with a scope: `feat(multi-user): …`, `fix(ui): …`,
   `chore(release): …`, `ci: …`.
 - **Only commit when asked.** Don't commit or push proactively.
+- Do not change branches in an existing feature worktree; create a new
+  worktree for a different branch.
 - `main` is protected — land changes via PR. Remember the release
   implication: merging a PR that bumps a version *publishes* (ships the
   desktop release / starts the TestFlight build), so leave bumps out of

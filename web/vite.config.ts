@@ -1,6 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const apiPort = process.env.AGORA_PORT || "4470";
+const apiOrigin = `http://127.0.0.1:${apiPort}`;
+
 /* Builds the web UI into web/dist (gitignored) — the directory the server
    serves (--ui-dir), the Docker image bakes in, and the desktop bundle
    copies. public/ carries the verbatim root assets: icon.png, the vendored
@@ -13,8 +16,8 @@ export default defineConfig({
   worker: { format: "es" },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:4470",
-      "/ws": { target: "ws://127.0.0.1:4470", ws: true },
+      "/api": apiOrigin,
+      "/ws": { target: apiOrigin, ws: true },
     },
   },
 });
