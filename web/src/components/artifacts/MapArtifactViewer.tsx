@@ -24,6 +24,9 @@ export function MapArtifactViewer({ artifact, initialRegion, onClose }: {
   const [day, setDay] = useState("");
   const [category, setCategory] = useState("");
   const [selected, setSelected] = useState<MapArtifactPlace | null>(null);
+  // Bumped by "Reset view" so the camera recalibrates even when the filters
+  // (and therefore the visible place set) were already at their defaults.
+  const [fitNonce, setFitNonce] = useState(0);
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -101,7 +104,12 @@ export function MapArtifactViewer({ artifact, initialRegion, onClose }: {
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
-          <button className="btn sm" onClick={() => { setRegion(""); setDay(""); setCategory(""); }}>
+          <button className="btn sm" onClick={() => {
+            setRegion("");
+            setDay("");
+            setCategory("");
+            setFitNonce(nonce => nonce + 1);
+          }}>
             Reset view
           </button>
         </div>
@@ -114,7 +122,8 @@ export function MapArtifactViewer({ artifact, initialRegion, onClose }: {
               }>
                 <MapCanvas data={data} styleUrl={styleUrl} activeRegion={region || undefined}
                   visiblePlaces={places} selectedPlace={selected?.id} onPlace={setSelected}
-                  onRegion={r => setRegion(current => current === r.id ? "" : r.id)} />
+                  onRegion={r => setRegion(current => current === r.id ? "" : r.id)}
+                  fitNonce={fitNonce} />
               </Suspense>
             ) : (
               <>

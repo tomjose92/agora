@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatDuration, googleMapsDirectionsUrl, googleMapsPlaceUrl, isMapArtifactV1,
-  type MapArtifactPlace,
+  DAY_COLORS, colorForPlace, formatDuration, googleMapsDirectionsUrl,
+  googleMapsPlaceUrl, isMapArtifactV1,
+  type MapArtifactData, type MapArtifactPlace,
 } from "../src";
 
 const place: MapArtifactPlace = {
@@ -39,5 +40,26 @@ describe("map artifacts", () => {
   it("formats itinerary durations", () => {
     expect(formatDuration(45)).toBe("45 min");
     expect(formatDuration(90)).toBe("1 hr 30 min");
+  });
+
+  it("colors places by itinerary day with a neutral fallback", () => {
+    const data: MapArtifactData = {
+      initial_view: { mode: "fit" },
+      regions: [],
+      days: [
+        { id: "day-1", number: 1, label: "One", region_id: "r", place_ids: [] },
+        { id: "day-12", number: 12, label: "Twelve", region_id: "r", place_ids: [] },
+      ],
+      places: [],
+      routes: [],
+    };
+    expect(colorForPlace({ ...place, day_ids: ["day-1"] }, data)).toBe(DAY_COLORS[0]);
+    // Day numbers cycle through the palette.
+    expect(colorForPlace({ ...place, day_ids: ["day-12"] }, data))
+      .toBe(DAY_COLORS[(12 - 1) % DAY_COLORS.length]);
+    expect(colorForPlace({ ...place, day_ids: [] }, data)).toBe("#8aa0c0");
+    expect(colorForPlace({ ...place, day_ids: ["missing"] }, data)).toBe("#8aa0c0");
+    expect(colorForPlace(place, { ...data, days: undefined as unknown as MapArtifactData["days"] }))
+      .toBe("#8aa0c0");
   });
 });

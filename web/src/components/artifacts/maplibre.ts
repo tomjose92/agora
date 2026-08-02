@@ -1,4 +1,3 @@
-import type { MapArtifactData, MapArtifactPlace } from "@agora/core";
 import "maplibre-gl/dist/maplibre-gl.css";
 // MapLibre loads its parser off a Web Worker. Vite 8/rolldown doesn't emit the
 // package's internal `new URL('./maplibre-gl-worker.mjs', import.meta.url)`
@@ -36,18 +35,6 @@ export function prefersReducedMotion(): boolean {
     && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-/* Distinct, colour-blind-friendly hues cycled per itinerary day so a place's
-   marker reads as "which day". Places without a day fall back to the accent. */
-export const DAY_COLORS = [
-  "#5aa0ff", "#f97362", "#4ec9a8", "#e8a13c", "#b98bff",
-  "#ec6ba8", "#54c1e0", "#c0b03a", "#7c9cff", "#5fbf7a",
-];
-const NEUTRAL = "#8aa0c0";
-
-export function colorForPlace(place: MapArtifactPlace, data: MapArtifactData): string {
-  const dayId = place.day_ids[0];
-  if (!dayId) return NEUTRAL;
-  const day = data.days.find(d => d.id === dayId);
-  if (!day) return NEUTRAL;
-  return DAY_COLORS[(day.number - 1 + DAY_COLORS.length) % DAY_COLORS.length];
-}
+/* Day colors live in @agora/core so the mobile tile WebView paints identical
+   pins; re-exported here to keep existing imports working. */
+export { DAY_COLORS, colorForPlace } from "@agora/core";
