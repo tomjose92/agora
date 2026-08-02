@@ -150,7 +150,7 @@ export function MessageItem({
           <Reactions message={message} />
           <View style={styles.foot}>
             {flags}
-            <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
+            <Text style={styles.ts}>{message.meta?.edited_at ? "edited · " : ""}{fmtTs(message.ts)}</Text>
           </View>
           {replies}
         </View>
@@ -179,7 +179,7 @@ export function MessageItem({
             {message.author_type === "agent" ? <Text style={styles.agentTag}> · agent</Text> : null}
           </Text>
           {flags}
-          <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
+          <Text style={styles.ts}>{message.meta?.edited_at ? "edited · " : ""}{fmtTs(message.ts)}</Text>
         </View>
         <MdText text={body} onLongPress={longPress} />
         <Attachments session={session} attachments={message.attachments ?? []} />

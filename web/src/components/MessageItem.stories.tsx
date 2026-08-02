@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, within } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 import type { Message } from "@agora/core";
 import { fixtureAgents } from "@agora/core/testing/fixtures";
 import { MessageItem } from "./MessageItem";
@@ -88,12 +88,49 @@ export const CurrentUser: Story = {
       reactions: [],
     },
   },
+  parameters: {
+    apiRoutes: {
+      ...baseRoutes,
+      "PATCH /api/channels/general/messages/42": {
+        ...message,
+        author_type: "user",
+        author_id: "tom",
+        author_name: "Tom",
+        text: "Edited in Storybook.",
+        meta: { edited_at: 1_700_000_100 },
+      },
+    },
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const bubble = (await canvas.findByText("This is how a message from the signed-in user is presented."))
       .closest(".bubble");
     await expect(bubble).toHaveClass("user");
     expect(canvas.queryByText(/· agent/)).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByTitle("Edit this message"));
+    const editor = canvas.getByRole("textbox", { name: "Edit message" });
+    await expect(editor).toHaveValue("This is how a message from the signed-in user is presented.");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "Edited in Storybook.");
+    await userEvent.click(canvas.getByRole("button", { name: "Save" }));
+    await expect(canvas.findByTitle("Edit this message")).resolves.toBeInTheDocument();
+    expect(canvas.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument();
+  },
+};
+
+export const EditedMessage: Story = {
+  args: {
+    message: {
+      ...message,
+      author_type: "user",
+      author_id: "tom",
+      author_name: "Tom",
+      meta: { edited_at: 1_700_000_100 },
+      text: "This message was edited after it was sent.",
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).findByText(/edited ·/)).resolves.toBeInTheDocument();
   },
 };
 

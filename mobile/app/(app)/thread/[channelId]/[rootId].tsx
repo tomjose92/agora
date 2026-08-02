@@ -11,9 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -22,21 +20,19 @@ import {
 } from "react-native";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
-import { Headphones, Maximize2, Minimize2, Star, Trash2, Volume2 } from "lucide-react-native";
+import { Headphones, Volume2 } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys } from "@agora/core";
 import { useSendVoice } from "../../../../src/api/voice";
 import {
   flattenMessages,
   useChannelAgents,
-  useDeleteMessage,
   useGroups,
   useMarkThreadRead,
   useMembers,
   useMessage,
   useMessages,
   useSendMessage,
-  useStarMessage,
   useStars,
 } from "@agora/core";
 import type { Message, ThreadRow } from "@agora/core";
@@ -45,14 +41,13 @@ import { EmojiPicker } from "../../../../src/components/EmojiPicker";
 import { Icon } from "../../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../../src/components/LiveRows";
 import { MessageItem } from "../../../../src/components/MessageItem";
+import { MessageActions } from "../../../../src/components/MessageActions";
 import { SectionRail, useSectionJump } from "../../../../src/components/SectionRail";
 import { ProfileSheet } from "../../../../src/components/ProfileSheet";
-import { QuickReactions, useReactWith } from "../../../../src/components/Reactions";
-import { toastErr } from "../../../../src/components/Toast";
+import { useReactWith } from "../../../../src/components/Reactions";
 import { onAgentMessage } from "../../../../src/lib/agentBus";
 import { headerActions } from "../../../../src/lib/headerItems";
 import { useHeaderKeyboardOffset } from "../../../../src/lib/keyboard";
-import { speakMessage } from "../../../../src/lib/nativeSpeech";
 import {
   enqueueSpeech,
   prepareSpeechAudio,
@@ -63,7 +58,6 @@ import { threadAddressKey } from "@agora/core";
 import { useChannelLive } from "@agora/core";
 import { usePrefs } from "../../../../src/state/prefs";
 import { useSession } from "../../../../src/state/session";
-import { tldrOf, useTldrView } from "@agora/core";
 
 type Row = { kind: "root"; m: Message } | { kind: "msg"; m: Message };
 const MAX_DEEP_LINK_PAGES = 10;
@@ -90,7 +84,6 @@ export default function ThreadScreen() {
   const voiceOk = useSession((s) => s.voiceOk);
   const channelAgents = useChannelAgents(channelId);
   const stars = useStars(channelId);
-  const star = useStarMessage(channelId);
   const markThreadRead = useMarkThreadRead(rootId);
   const { typing, progress } = useChannelLive(channelId, rootId);
 
@@ -177,43 +170,14 @@ export default function ThreadScreen() {
   const [reactFor, setReactFor] = useState<Message | null>(null);
   const reactWith = useReactWith();
   const [profileFor, setProfileFor] = useState<Message | null>(null);
-  const toggleTldr = useTldrView((s) => s.toggle);
-  const showingTldr = useTldrView((s) => s.showing);
 
   /* Delete gating: the sender, or any group admin (the groups payload's
      `role` already folds in instance admins). Deleting the root takes the
      whole thread, so the screen pops back to the channel. */
-  const del = useDeleteMessage();
   const username = useSession((s) => s.username);
   const canDelete = (m: Message) =>
     groupRole === "admin" ||
     (m.author_type === "user" && username !== "" && m.author_id === username);
-  const confirmDelete = (m: Message) => {
-    Alert.alert(
-      "Delete message?",
-      m.id === rootId
-        ? "This deletes the message and its whole thread for everyone."
-        : "This deletes the message for everyone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () =>
-            del.mutate(
-              { message: m },
-              {
-                onError: (e) => toastErr("Delete failed", e),
-                onSuccess: () => {
-                  if (m.id === rootId) router.back();
-                },
-              },
-            ),
-        },
-      ],
-    );
-  };
-
   /* 🔊 speak-aloud: while this thread is focused (and not covered by the
      live screen), agent replies landing in it are read out via server TTS —
      the thread-scoped mirror of the channel screen's effect. */
@@ -434,87 +398,20 @@ export default function ThreadScreen() {
         />
       </KeyboardAvoidingView>
       {actionsFor ? (
-        <Modal transparent animationType="fade" onRequestClose={() => setActionsFor(null)}>
-          <Pressable style={styles.sheetBackdrop} onPress={() => setActionsFor(null)}>
-            <View style={styles.sheet}>
-              <QuickReactions
-                message={actionsFor}
-                onDone={() => setActionsFor(null)}
-                onMore={() => {
-                  setReactFor(actionsFor);
-                  setActionsFor(null);
-                }}
-              />
-              {tldrOf(actionsFor) != null ? (
-                <Pressable
-                  style={styles.sheetBtn}
-                  onPress={() => {
-                    toggleTldr(actionsFor.id);
-                    setActionsFor(null);
-                  }}
-                >
-                  <Icon
-                    icon={showingTldr[actionsFor.id] ? Maximize2 : Minimize2}
-                    size={18}
-                    color={colors.text}
-                  />
-                  <Text style={styles.sheetText}>
-                    {showingTldr[actionsFor.id] ? "Show full message" : "Show TL;DR"}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {Platform.OS === "ios" && actionsFor.text.trim() ? (
-                <Pressable
-                  style={styles.sheetBtn}
-                  onPress={() => {
-                    const message = actionsFor;
-                    setActionsFor(null);
-                    void speakMessage(message, (e) => toastErr("Speak failed", e)).catch((e) =>
-                      toastErr("Speak failed", e),
-                    );
-                  }}
-                >
-                  <Icon icon={Volume2} size={18} color={colors.text} />
-                  <Text style={styles.sheetText}>Speak</Text>
-                </Pressable>
-              ) : null}
-              <Pressable
-                style={styles.sheetBtn}
-                onPress={() => {
-                  const starred = starredIds.has(actionsFor.id);
-                  star.mutate(
-                    { messageId: actionsFor.id, starred: !starred },
-                    { onError: (e) => toastErr("Star failed", e) },
-                  );
-                  setActionsFor(null);
-                }}
-              >
-                <Icon
-                  icon={Star}
-                  size={18}
-                  color={starredIds.has(actionsFor.id) ? colors.amber : colors.text}
-                  fill={starredIds.has(actionsFor.id) ? colors.amber : "none"}
-                />
-                <Text style={styles.sheetText}>
-                  {starredIds.has(actionsFor.id) ? "Unstar" : "Star"}
-                </Text>
-              </Pressable>
-              {canDelete(actionsFor) ? (
-                <Pressable
-                  style={styles.sheetBtn}
-                  onPress={() => {
-                    const m = actionsFor;
-                    setActionsFor(null);
-                    confirmDelete(m);
-                  }}
-                >
-                  <Icon icon={Trash2} size={18} color={colors.red} />
-                  <Text style={[styles.sheetText, styles.sheetDanger]}>Delete</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </Pressable>
-        </Modal>
+        <MessageActions
+          message={actionsFor}
+          channelId={channelId}
+          starred={starredIds.has(actionsFor.id)}
+          canPin={false}
+          canEdit={actionsFor.author_type === "user" && username !== "" && actionsFor.author_id === username}
+          canDelete={canDelete(actionsFor)}
+          onDeleted={actionsFor.id === rootId ? () => router.back() : undefined}
+          onClose={() => setActionsFor(null)}
+          onReact={() => {
+            setReactFor(actionsFor);
+            setActionsFor(null);
+          }}
+        />
       ) : null}
       <EmojiPicker
         visible={reactFor != null}
@@ -547,20 +444,4 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 24 },
-  sheetBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: "#14161d",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    padding: 16,
-    gap: 4,
-    paddingBottom: 34,
-  },
-  sheetBtn: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
-  sheetText: { color: colors.text, fontSize: 15.5 },
-  sheetDanger: { color: colors.red },
 });

@@ -2,9 +2,10 @@
    prose, attachments/unfurls/sources/forms/options/reactions, the foot
    buttons, and the agent avatar row wrapper. */
 
+import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import {
-  fmtTs, tldrOf, useAgents, useDeleteMessage, useMe, usePinMessage, usePins,
+  fmtTs, tldrOf, useAgents, useDeleteMessage, useEditMessage, useMe, usePinMessage, usePins,
   useStarMessage, useStars, useTldrView, type LinkPreview, type Message,
 } from "@agora/core";
 import { Icon } from "../lib/icons";
@@ -118,18 +119,40 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
   const pinMut = usePinMessage(m.channel_id);
   const starMut = useStarMessage(m.channel_id);
   const del = useDeleteMessage();
+  const edit = useEditMessage();
   const { showing, toggle: toggleTldr } = useTldrView();
   const armed = useConfirm(s => s.armed) === `msg:${m.id}`;
   const armKey = useConfirm(s => s.arm);
   const disarm = useConfirm(s => s.disarm);
   const openPicker = useEmojiPicker(s => s.open);
   const groupId = useUiState(s => s.sel.g);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(m.text);
+  const editRef = useRef<HTMLTextAreaElement>(null);
 
   const pinnable = m.thread_id == null;
   const pinned = pinnable && pins.some(p => p.id === m.id);
   const starred = stars.some(s => s.id === m.id);
   const tldr = tldrOf(m);
   const onTldr = tldr != null && !!showing[m.id];
+
+  useEffect(() => { if (!editing) setEditText(m.text); }, [m.text, editing]);
+  useEffect(() => { if (editing) editRef.current?.focus(); }, [editing]);
+
+  const cancelEdit = () => { setEditText(m.text); setEditing(false); };
+  const saveEdit = () => {
+    const text = editText.trim();
+    if (!text || edit.isPending) return;
+    edit.mutate({ message: m, text }, {
+      onSuccess: () => setEditing(false),
+      onError: (e) => toast("Edit failed: " + (e as Error).message, { variant: "warn" }),
+    });
+  };
+  const openEdit = () => {
+    setEditText(m.text);
+    if (onTldr) toggleTldr(m.id);
+    setEditing(true);
+  };
 
   const onDelete = () => {
     if (!armed) { armKey(`msg:${m.id}`); return; }
@@ -148,9 +171,28 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
         {pinned && <span className="ago-pinned-mark" title="Pinned"><Icon name="pin" /></span>}
         {starred && <span className="ago-starred-mark" title="Starred by you"><Icon name="star" cls="fill" /></span>}
         {onTldr && <span className="ago-tldr-mark" title="Short version — the full message is one click away">TL;DR</span>}
-        <span className="bubble-ts">{fmtTs(m.ts)}</span>
+        <span className="bubble-ts">{m.meta?.edited_at ? "edited · " : ""}{fmtTs(m.ts)}</span>
       </div>
-      <MdText text={onTldr ? (tldr as string) : visibleText(m)} mentions={mentions} />
+      {editing ? (
+        <div className="ago-message-edit">
+          <textarea ref={editRef} value={editText} aria-label="Edit message"
+            onChange={e => setEditText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Escape") cancelEdit();
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                saveEdit();
+              }
+            }} />
+          <div className="ago-message-edit-actions">
+            <button className="btn sm" onClick={cancelEdit} disabled={edit.isPending}>Cancel</button>
+            <button className="btn sm primary" onClick={saveEdit}
+              disabled={!editText.trim() || edit.isPending}>
+              {edit.isPending ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      ) : <MdText text={onTldr ? (tldr as string) : visibleText(m)} mentions={mentions} />}
       <ArtifactList artifacts={m.meta?.artifacts} />
       <Attachments message={m} />
       <Unfurls message={m} />
@@ -202,6 +244,11 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
             title={onTldr ? "Show the full message" : "Show the short version"}
             onClick={() => toggleTldr(m.id)}>
             {onTldr ? <><Icon name="maximize-2" /> full</> : <><Icon name="minimize-2" /> tl;dr</>}
+          </button>
+        )}
+        {mine && !!m.text.trim() && !editing && (
+          <button className="ago-thread-btn ago-edit-btn" title="Edit this message" onClick={openEdit}>
+            <Icon name="pencil" /> edit
           </button>
         )}
         {(mine || isAdmin) && (

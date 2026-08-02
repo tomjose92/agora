@@ -10,7 +10,7 @@ jest.mock("lucide-react-native", () => new Proxy({}, { get: () => () => null }))
 
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { ScrollView, StyleSheet } from "react-native";
+import { ScrollView, StyleSheet, Text } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MessageItem } from "../src/components/MessageItem";
 import { useSession } from "../src/state/session";
@@ -102,4 +102,13 @@ test("long-press still reaches the handler from the text, and the backdrop exist
 test("without an onLongPress handler no backdrop Pressable is rendered", () => {
   const tree = render(message(TABLE));
   expect(tree.root.findAll(isBackdrop)).toHaveLength(0);
+});
+
+test("shows an edited marker when edited_at is present", () => {
+  const edited = message("Updated text");
+  edited.meta = { edited_at: 1_700_000_100 };
+  const tree = render(edited);
+  expect(tree.root.findAllByType(Text).some((node) =>
+    Array.isArray(node.props.children) && node.props.children.includes("edited · "),
+  )).toBe(true);
 });

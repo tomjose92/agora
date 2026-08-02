@@ -15,6 +15,7 @@ import { useLive } from "../state/live";
 import {
   appendMessage,
   applyMessageDelete,
+  applyMessageUpdate,
   applyMessageToGroups,
   replaceMessage,
   type MessagePages,
@@ -481,6 +482,21 @@ export function useDeleteMessage() {
         message_id: v.message.id,
         thread_id: v.message.thread_id,
       }),
+  });
+}
+
+/** Edit the signed-in author's message. The server broadcasts the same
+    message_update to other UI clients; applying it locally avoids latency. */
+export function useEditMessage() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { message: Message; text: string }) =>
+      api.patch<Message>(
+        `/api/channels/${encodeURIComponent(v.message.channel_id)}/messages/${v.message.id}`,
+        { text: v.text },
+      ),
+    onSuccess: (message) => applyMessageUpdate(qc, message),
   });
 }
 
