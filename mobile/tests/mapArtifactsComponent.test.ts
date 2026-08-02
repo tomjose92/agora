@@ -150,10 +150,24 @@ test("configured map style uses the tile WebView", () => {
       typeof node.props.onShouldStartLoadWithRequest === "function",
   )[0];
   expect(tile.props.source.baseUrl).toBe("https://unpkg.com/");
-  expect(tile.props.originWhitelist).toEqual(["https://unpkg.com/*"]);
+  // Must be origin-shaped (no trailing "/*"): react-native-webview matches
+  // whitelist patterns against the request's origin, which never carries a
+  // path — "https://unpkg.com/*" would cancel the initial load and bounce
+  // the base URL out to Safari.
+  expect(tile.props.originWhitelist).toEqual(["https://unpkg.com"]);
+  // Only the initial document may load; tapping anything that navigates
+  // (attribution links, unpkg deep links) must not replace the map.
   expect(
-    tile.props.onShouldStartLoadWithRequest({ url: "https://unpkg.com/a" }),
+    tile.props.onShouldStartLoadWithRequest({ url: "about:blank" }),
   ).toBe(true);
+  expect(
+    tile.props.onShouldStartLoadWithRequest({ url: "https://unpkg.com/" }),
+  ).toBe(true);
+  expect(
+    tile.props.onShouldStartLoadWithRequest({
+      url: "https://unpkg.com/maplibre-gl@6.0.0/",
+    }),
+  ).toBe(false);
   expect(
     tile.props.onShouldStartLoadWithRequest({ url: "https://evil.test/" }),
   ).toBe(false);
@@ -179,6 +193,50 @@ test("reset always injects a refit even when filters are already clear", () => {
   pressText(tree, "Reset view");
   expect(mockWebView.injected).toHaveLength(before + 1);
   expect(mockWebView.injected.at(-1)).toContain('["p","p2"]');
+});
+
+test("in-map region taps toggle the area filter", () => {
+  const tree = renderWithStyle("https://tiles.test/style.json");
+  const tile = () =>
+    tree.root.findAll(
+      (node) =>
+        node.props.testID === "tile-map" &&
+        typeof node.props.onMessage === "function",
+    )[0];
+  act(() =>
+    tile().props.onMessage({
+      nativeEvent: { data: JSON.stringify({ regionId: "r" }) },
+    }),
+  );
+  expect(mockWebView.injected.at(-1)).toContain('"region":"r"');
+  act(() =>
+    tile().props.onMessage({
+      nativeEvent: { data: JSON.stringify({ regionId: "r" }) },
+    }),
+  );
+  expect(mockWebView.injected.at(-1)).toContain('"region":""');
+});
+
+test("selecting a place highlights its pin in the tile document", () => {
+  const tree = renderWithStyle("https://tiles.test/style.json");
+  pressText(tree, "Second place");
+  expect(
+    mockWebView.injected.some((script) =>
+      script.includes('window.__agoraSelect?.("p2")'),
+    ),
+  ).toBe(true);
+});
+
+test("areas-only artifacts still render the tile map", () => {
+  const areasOnly = {
+    ...artifact,
+    data: { ...artifact.data, places: [], routes: [] },
+  };
+  const tree = renderWithStyle("https://tiles.test/style.json", areasOnly);
+  expect(
+    tree.root.findAll((node) => node.props.testID === "tile-map").length,
+  ).toBeGreaterThan(0);
+  expect(textOf(tree)).toContain("No individual places pinned");
 });
 
 test("configured style with zero matches keeps the tile document mounted", () => {

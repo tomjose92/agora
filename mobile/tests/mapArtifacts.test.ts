@@ -1,7 +1,8 @@
 import {
   filterMapPlaces,
   mapArtifactHtml,
-  mapVisibilityScript,
+  mapSelectScript,
+  mapUpdateScript,
   projectMapPoints,
 } from "../src/lib/mapArtifacts";
 import type { MapArtifactData } from "@agora/core";
@@ -72,7 +73,13 @@ test("tile HTML uses the MapLibre module build, preserves GeoJSON, and escapes m
   );
   expect(html).toContain('type="module"');
   expect(html).toContain("Content-Security-Policy");
-  expect(html).toContain("script-src 'unsafe-inline' https://unpkg.com blob:");
+  // WebKit needs worker-src/child-src spelled out (no script-src fallback for
+  // workers): without them MapLibre's worker dies silently and the map shows
+  // tiles but no pins.
+  expect(html).toContain(
+    "script-src 'unsafe-inline' https://unpkg.com blob:; "
+      + "worker-src blob: https://unpkg.com; child-src blob: https://unpkg.com",
+  );
   expect(html).toContain("maplibre-gl@6.0.0/dist/maplibre-gl.mjs");
   expect(html).not.toContain("dist/maplibre-gl.js");
   expect(html).toContain("Could not load the map renderer");
@@ -92,9 +99,40 @@ test("tile HTML uses the MapLibre module build, preserves GeoJSON, and escapes m
   expect(html).toContain("\\u003c/script>\\u003cimg src=x onerror=alert(1)>");
 });
 
-test("visibility injection escapes ids and returns a WebView completion value", () => {
-  const script = mapVisibilityScript(["p1", "</script><img onerror=alert(1)>"]);
-  expect(script).toContain('window.__agoraSetVisible?.(["p1"');
+test("tile HTML carries desktop parity: colors, clusters, chips, popups, dashed route", () => {
+  const html = mapArtifactHtml(data, "https://tiles.test/style.json");
+  // Day 1 place gets the first shared day color; regions ride along for chips.
+  expect(html).toContain('"color":"#5aa0ff"');
+  expect(html).toContain('"regions":[{"id":"r1","label":"One"');
+  // Same clustering profile as web's supercluster config.
+  expect(html).toContain("clusterRadius: 56");
+  expect(html).toContain("clusterMaxZoom: 16");
+  expect(html).toContain("getClusterExpansionZoom");
+  // Dashed route styling matching the desktop canvas.
+  expect(html).toContain('"line-dasharray": [2, 1.4]');
+  // The RN-driven hooks and interactive affordances.
+  expect(html).toContain("window.__agoraUpdate");
+  expect(html).toContain("window.__agoraSelect");
+  expect(html).toContain('JSON.stringify({ regionId: region.id })');
+  expect(html).toContain("popupHtml");
+});
+
+test("update injection escapes ids and returns a WebView completion value", () => {
+  const script = mapUpdateScript(
+    ["p1", "</script><img onerror=alert(1)>"],
+    "r1",
+  );
+  expect(script).toContain('window.__agoraUpdate?.({"ids":["p1"');
+  expect(script).toContain('"region":"r1"');
+  expect(script).toContain('"fit":true');
+  expect(script).toContain("\\u003c/script>\\u003cimg onerror=alert(1)>");
+  expect(script).not.toContain("</script>");
+  expect(script).toMatch(/true;$/);
+});
+
+test("select injection escapes the id and returns a completion value", () => {
+  const script = mapSelectScript("</script><img onerror=alert(1)>");
+  expect(script).toContain("window.__agoraSelect?.(");
   expect(script).toContain("\\u003c/script>\\u003cimg onerror=alert(1)>");
   expect(script).not.toContain("</script>");
   expect(script).toMatch(/true;$/);

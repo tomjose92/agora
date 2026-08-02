@@ -31,7 +31,8 @@ import { colors } from "../lib/theme";
 import {
   filterMapPlaces,
   mapArtifactHtml,
-  mapVisibilityScript,
+  mapSelectScript,
+  mapUpdateScript,
   projectMapPoints,
   type MapFilters,
 } from "../lib/mapArtifacts";
@@ -283,9 +284,13 @@ export function MapViewer({
   useEffect(() => {
     if (!styleUrl || mapFailed) return;
     mapRef.current?.injectJavaScript(
-      mapVisibilityScript(places.map((place) => place.id)),
+      mapUpdateScript(places.map((place) => place.id), filters.region),
     );
-  }, [mapFailed, places, refitNonce, styleUrl]);
+  }, [mapFailed, places, filters.region, refitNonce, styleUrl]);
+  useEffect(() => {
+    if (!styleUrl || mapFailed) return;
+    mapRef.current?.injectJavaScript(mapSelectScript(selectedId));
+  }, [mapFailed, selectedId, styleUrl]);
   return (
     <Modal animationType="slide" onRequestClose={onClose}>
       <View style={styles.modal}>
@@ -330,16 +335,34 @@ export function MapViewer({
             <Text style={styles.reset}>Reset view</Text>
           </Pressable>
           <View style={styles.mapFrame}>
-            {styleUrl && data.places.length && !mapFailed ? (
+            {styleUrl &&
+            (data.places.length || data.regions.length) &&
+            !mapFailed ? (
               <WebView
                 ref={mapRef}
                 testID="tile-map"
-                originWhitelist={["https://unpkg.com/*"]}
+                // react-native-webview matches whitelist patterns against the
+                // request's *origin* ("https://unpkg.com" — no trailing
+                // slash), so "https://unpkg.com/*" can never match: the
+                // library would cancel the initial document load (empty map)
+                // and push the base URL into Safari. Keep this origin-shaped.
+                originWhitelist={["https://unpkg.com"]}
                 source={mapSource}
-                onShouldStartLoadWithRequest={(request: WebViewNavigation) =>
-                  request.url === "about:blank" ||
-                  request.url.startsWith("https://unpkg.com/")
-                }
+                onShouldStartLoadWithRequest={(request: WebViewNavigation) => {
+                  // Only the initial document (about:blank rendered against
+                  // the unpkg base URL) may load inside the WebView. Any
+                  // in-page navigation — attribution links, unexpected
+                  // redirects — opens in the system browser instead of
+                  // replacing the map with that page.
+                  if (
+                    request.url === "about:blank" ||
+                    request.url === "https://unpkg.com/"
+                  )
+                    return true;
+                  if (/^https?:\/\//.test(request.url))
+                    void openLink(request.url);
+                  return false;
+                }}
                 style={styles.web}
                 onMessage={(event) => {
                   try {
@@ -348,8 +371,23 @@ export function MapViewer({
                       setMapFailed(true);
                     } else if (message.ready === true) {
                       mapRef.current?.injectJavaScript(
-                        mapVisibilityScript(places.map((place) => place.id)),
+                        mapUpdateScript(
+                          places.map((place) => place.id),
+                          filters.region,
+                        ),
                       );
+                      if (selectedId)
+                        mapRef.current?.injectJavaScript(
+                          mapSelectScript(selectedId),
+                        );
+                    } else if (typeof message.regionId === "string") {
+                      setFilters((old) => ({
+                        ...old,
+                        region:
+                          old.region === message.regionId
+                            ? ""
+                            : message.regionId,
+                      }));
                     } else if (typeof message.placeId === "string") {
                       setSelectedId(message.placeId);
                     }
