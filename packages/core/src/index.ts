@@ -12,6 +12,7 @@ export * from "./ws/reducer";
 export * from "./state/live";
 export * from "./state/tldr";
 export * from "./state/addressed";
+export * from "./state/drafts";
 export * from "./state/attachments";
 export * from "./lib/mdlite";
 export * from "./lib/mdliteHtml";

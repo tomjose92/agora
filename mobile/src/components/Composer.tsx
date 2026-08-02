@@ -52,7 +52,7 @@ import { fmtSize, MAX_MESSAGE_CHARS, slugify } from "@agora/core";
 import { toOutgoing, type LocalFile } from "../api/voice";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
-import { useAddressed } from "@agora/core";
+import { useAddressed, useDrafts } from "@agora/core";
 import { AgentAvatar } from "./AgentAvatar";
 import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
@@ -181,7 +181,16 @@ export function Composer({
   /* Keep this render-time so platform-branch tests can verify Android rather
      than inheriting the test runtime's iOS value captured at module load. */
   const nativePasteInput = Platform.OS === "ios" || Platform.OS === "android";
-  const [text, setText] = useState("");
+  const storedText = useDrafts((s) => (addressKey ? s.byConvo[addressKey] ?? "" : undefined));
+  const setStoredText = useDrafts((s) => s.set);
+  const [localText, setLocalText] = useState("");
+  const text = storedText ?? localText;
+  const textRef = useRef(text);
+  textRef.current = text;
+  const setText = (next: string) => {
+    if (addressKey) setStoredText(addressKey, next);
+    else setLocalText(next);
+  };
   const [files, setFiles] = useState<LocalFile[]>(initialFiles);
   const filesRef = useRef<LocalFile[]>(initialFiles);
   const [preview, setPreview] = useState<LocalFile | null>(null);
@@ -511,6 +520,7 @@ export function Composer({
 
   const send = async () => {
     if (pasteOps > 0) return;
+    const sentText = text;
     const body = text.trim();
     if (!body && files.length === 0) return;
     const prefix = addressedAgents.map((a) => `@${slugify(a.name)}`).join(", ");
@@ -520,7 +530,13 @@ export function Composer({
         files: files.map(toOutgoing),
         replyInThread: threadToggle ? replyInThread : undefined,
       });
-      setText("");
+      const currentText = addressKey
+        ? useDrafts.getState().byConvo[addressKey] ?? ""
+        : textRef.current;
+      if (currentText === sentText) {
+        if (addressKey) useDrafts.getState().clear(addressKey);
+        else setLocalText("");
+      }
       filesRef.current = [];
       setFiles([]);
       setReplyInThread(false);

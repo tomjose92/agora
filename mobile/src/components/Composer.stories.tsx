@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-native";
 import { fn } from "storybook/test";
-import { useAddressed } from "@agora/core";
+import { useAddressed, useDrafts } from "@agora/core";
 import { fixtureTemplates } from "@agora/core/testing/fixtures";
 import { Composer } from "./Composer";
 
@@ -35,6 +35,14 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Empty: Story = {};
+
+export const RestoredDraft: Story = {
+  parameters: {
+    setup: () => useDrafts.setState({
+      byConvo: { general: "This draft was waiting when I came back." },
+    }),
+  },
+};
 
 export const ImageAndDocuments: Story = {
   args: {
