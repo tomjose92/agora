@@ -246,7 +246,7 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
             {onTldr ? <><Icon name="maximize-2" /> full</> : <><Icon name="minimize-2" /> tl;dr</>}
           </button>
         )}
-        {mine && !editing && (
+        {mine && !!m.text.trim() && !editing && (
           <button className="ago-thread-btn ago-edit-btn" title="Edit this message" onClick={openEdit}>
             <Icon name="pencil" /> edit
           </button>

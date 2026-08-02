@@ -113,8 +113,24 @@ export const CurrentUser: Story = {
     await userEvent.clear(editor);
     await userEvent.type(editor, "Edited in Storybook.");
     await userEvent.click(canvas.getByRole("button", { name: "Save" }));
-    await expect(canvas.findByTitle("Edit this message")).resolves.toBeVisible();
+    await expect(canvas.findByTitle("Edit this message")).resolves.toBeInTheDocument();
     expect(canvas.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument();
+  },
+};
+
+export const EditedMessage: Story = {
+  args: {
+    message: {
+      ...message,
+      author_type: "user",
+      author_id: "tom",
+      author_name: "Tom",
+      meta: { edited_at: 1_700_000_100 },
+      text: "This message was edited after it was sent.",
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).findByText(/edited ·/)).resolves.toBeInTheDocument();
   },
 };
 

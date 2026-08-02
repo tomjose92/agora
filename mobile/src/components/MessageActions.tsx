@@ -18,12 +18,13 @@ import { QuickReactions } from "./Reactions";
 import { toastErr } from "./Toast";
 
 export function MessageActions({
-  message, channelId, starred, pinned, canEdit, canDelete, onClose, onReact, onThread, onDeleted,
+  message, channelId, starred, pinned = false, canPin, canEdit, canDelete, onClose, onReact, onThread, onDeleted,
 }: {
   message: Message;
   channelId: string;
   starred: boolean;
   pinned?: boolean;
+  canPin: boolean;
   canEdit: boolean;
   canDelete: boolean;
   onClose: () => void;
@@ -105,7 +106,8 @@ export function MessageActions({
           {hasText ? <Row icon={Copy} label="Copy" onPress={() => act(() => {
             void Clipboard.setStringAsync(message.text).catch((e) => toastErr("Copy failed", e));
           })} /> : null}
-          {canEdit && hasText ? <Row icon={Pencil} label="Edit" onPress={() => setEditing(true)} /> : null}
+          {canEdit && hasText ? <Row icon={Pencil} label="Edit"
+            onPress={() => { setText(message.text); setEditing(true); }} /> : null}
           {Platform.OS === "ios" && hasText ? <Row icon={Volume2} label="Speak" onPress={() => act(() => {
             void speakMessage(message, (e) => toastErr("Speak failed", e)).catch((e) => toastErr("Speak failed", e));
           })} /> : null}
@@ -113,7 +115,7 @@ export function MessageActions({
             fill={starred ? colors.amber : "none"} onPress={() => act(() => star.mutate(
               { messageId: message.id, starred: !starred }, { onError: (e) => toastErr("Star failed", e) },
             ))} />
-          {isRoot && pinned !== undefined ? <Row icon={Pin} label={pinned ? "Unpin" : "Pin"} color={pinned ? colors.a1 : colors.text}
+          {isRoot && canPin ? <Row icon={Pin} label={pinned ? "Unpin" : "Pin"} color={pinned ? colors.a1 : colors.text}
             onPress={() => act(() => pin.mutate(
               { messageId: message.id, pinned: !pinned }, { onError: (e) => toastErr("Pin failed", e) },
             ))} /> : null}

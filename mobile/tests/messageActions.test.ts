@@ -36,7 +36,7 @@ function render(overrides: Partial<React.ComponentProps<typeof MessageActions>> 
         React.createElement(ApiProvider, { client: api },
           React.createElement(MessageActions, {
             message, channelId: "general", starred: false, canEdit: true,
-            canDelete: false, onClose: jest.fn(), onReact: jest.fn(), ...overrides,
+            canPin: true, canDelete: false, onClose: jest.fn(), onReact: jest.fn(), ...overrides,
           }),
         ),
       ),

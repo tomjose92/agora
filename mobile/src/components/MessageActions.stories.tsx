@@ -12,6 +12,7 @@ const meta = {
     channelId: edited.channel_id,
     starred: false,
     pinned: false,
+    canPin: true,
     canEdit: true,
     canDelete: true,
     onClose: fn(),

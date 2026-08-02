@@ -2223,11 +2223,12 @@ async fn edit_message(
     if text.chars().count() > MAX_MESSAGE_CHARS {
         return Err(err(StatusCode::BAD_REQUEST, "Message too long"));
     }
-    let (message, changed) = state
-        .hub
-        .store
-        .update_message_text(message_id, &text)
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    let updated = state.hub.store.update_message_text(message_id, &text).map_err(|e| {
+        tracing::error!(message_id, "message edit failed: {e}");
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to edit message")
+    })?;
+    let (message, changed) =
+        updated.ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
     if changed {
         state.hub.post_transient(
             &channel_id,

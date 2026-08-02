@@ -402,7 +402,8 @@ export default function ThreadScreen() {
           message={actionsFor}
           channelId={channelId}
           starred={starredIds.has(actionsFor.id)}
-          canEdit={actionsFor.author_type === "user" && actionsFor.author_id === username}
+          canPin={false}
+          canEdit={actionsFor.author_type === "user" && username !== "" && actionsFor.author_id === username}
           canDelete={canDelete(actionsFor)}
           onDeleted={actionsFor.id === rootId ? () => router.back() : undefined}
           onClose={() => setActionsFor(null)}

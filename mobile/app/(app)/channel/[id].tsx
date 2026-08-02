@@ -506,7 +506,8 @@ export default function ChannelScreen() {
           channelId={channelId}
           starred={starredIds.has(actionsFor.id)}
           pinned={pinnedIds.has(actionsFor.id)}
-          canEdit={actionsFor.author_type === "user" && actionsFor.author_id === username}
+          canPin
+          canEdit={actionsFor.author_type === "user" && username !== "" && actionsFor.author_id === username}
           canDelete={canDelete(actionsFor)}
           onThread={actionsFor.thread_id == null
             ? () => openThread(channelId, actionsFor, channelName)

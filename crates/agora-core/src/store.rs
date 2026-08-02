@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, params_from_iter, Connection, ErrorCode};
+use rusqlite::{params, params_from_iter, Connection, ErrorCode, OptionalExtension};
 use serde_json::{json, Value};
 
 const SCHEMA: &str = r#"
@@ -1765,17 +1765,24 @@ impl Store {
     /// Replace a message's text and stamp its meta in one locked write. The
     /// meta merge shares the lock with unfurl/form writers so an edit cannot
     /// overwrite keys they added concurrently. Unchanged text is a true no-op.
-    pub fn update_message_text(&self, message_id: i64, text: &str) -> Option<(Value, bool)> {
+    pub fn update_message_text(
+        &self,
+        message_id: i64,
+        text: &str,
+    ) -> rusqlite::Result<Option<(Value, bool)>> {
         let changed;
         {
             let conn = self.conn.lock().unwrap();
-            let (old_text, raw_meta): (String, Option<String>) = conn
+            let Some((old_text, raw_meta)): Option<(String, Option<String>)> = conn
                 .query_row(
                     "SELECT text, meta FROM messages WHERE id = ?1",
                     params![message_id],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
-                .ok()?;
+                .optional()?
+            else {
+                return Ok(None);
+            };
             changed = old_text != text;
             if changed {
                 let mut meta = raw_meta
@@ -1790,11 +1797,10 @@ impl Store {
                 conn.execute(
                     "UPDATE messages SET text = ?1, meta = ?2 WHERE id = ?3",
                     params![text, meta.to_string(), message_id],
-                )
-                .ok()?;
+                )?;
             }
         }
-        self.message(message_id).map(|message| (message, changed))
+        Ok(self.message(message_id).map(|message| (message, changed)))
     }
 
     /// Load a message's meta for a form mutation, or the error the caller
