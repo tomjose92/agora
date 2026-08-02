@@ -26,6 +26,8 @@ on:
       - "package-lock.json"
       - "scripts/gen-emoji.js"
       - "scripts/check-agent-docs.mjs"
+      - "scripts/worktree.sh"
+      - "scripts/worktree.test.sh"
       - "bridges/*-cli/**"
       - ".github/workflows/web-ci.yml"
   push:
@@ -39,6 +41,8 @@ on:
       - "package-lock.json"
       - "scripts/gen-emoji.js"
       - "scripts/check-agent-docs.mjs"
+      - "scripts/worktree.sh"
+      - "scripts/worktree.test.sh"
       - "bridges/*-cli/**"
       - ".github/workflows/web-ci.yml"
 
@@ -61,6 +65,8 @@ jobs:
         run: npm run typecheck
       - name: Unit tests (@agora/core)
         run: npm test
+      - name: Worktree lifecycle test
+        run: npm run test:worktree
       - name: Web build succeeds (web/dist is gitignored, never committed)
         run: npm run build
       - name: Emoji dataset drift check
