@@ -64,16 +64,21 @@ test("projection is stable for empty and coincident points", () => {
 });
 
 test("tile HTML uses the MapLibre module build, preserves GeoJSON, and escapes markup", () => {
+  const hostile = "</script><img src=x onerror=alert(1)>";
   const html = mapArtifactHtml(
-    data,
+    { ...data, places: [{ ...data.places[0], label: hostile }] },
     "https://tiles.test/<style>.json",
-    data.places,
+    [{ ...data.places[0], label: hostile }],
   );
   expect(html).toContain('type="module"');
   expect(html).toContain("maplibre-gl@6.0.0/dist/maplibre-gl.mjs");
   expect(html).not.toContain("dist/maplibre-gl.js");
   expect(html).toContain("Could not load the map renderer");
+  expect(html).toContain("ReactNativeWebView?.postMessage");
+  expect(html).toContain("(async () => {");
   expect(html).toContain('"coordinates":[[20,10],[24,12]]');
   expect(html).toContain("https://tiles.test/\\u003cstyle>.json");
   expect(html).not.toContain("<style>.json");
+  expect(html).not.toContain(hostile);
+  expect(html).toContain("\\u003c/script>\\u003cimg src=x onerror=alert(1)>");
 });

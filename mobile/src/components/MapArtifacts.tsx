@@ -51,17 +51,22 @@ function CoordinateMap({
   onPlace?: (place: MapArtifactPlace) => void;
 }) {
   const detail = places !== undefined;
-  const showRegions = !detail || places.length === 0;
-  const source = !showRegions
-    ? places!.map((place) => ({
-        id: place.id,
-        lat: place.position.lat,
-        lng: place.position.lng,
-      }))
-    : data.regions.map((region) => ({
+  const plottedPlaces = detail
+    ? places
+    : data.regions.length
+      ? []
+      : data.places;
+  const plottedRegions = plottedPlaces.length === 0 && data.regions.length > 0;
+  const source = plottedRegions
+    ? data.regions.map((region) => ({
         id: region.id,
         lat: region.center.lat,
         lng: region.center.lng,
+      }))
+    : plottedPlaces.map((place) => ({
+        id: place.id,
+        lat: place.position.lat,
+        lng: place.position.lng,
       }));
   const projected = projectMapPoints(source);
   const byId = new Map(projected.map((point) => [point.id, point]));
@@ -110,8 +115,8 @@ function CoordinateMap({
           strokeDasharray="3 2"
         />
       ) : null}
-      {!showRegions
-        ? places!.map((place, index) => {
+      {!plottedRegions
+        ? plottedPlaces.map((place, index) => {
             const point = byId.get(place.id);
             if (!point) return null;
             return (
@@ -122,6 +127,7 @@ function CoordinateMap({
                   r={selected === place.id ? 5 : 4}
                   fill={selected === place.id ? colors.a2 : colors.a1}
                   onPress={() => onPlace?.(place)}
+                  accessibilityLabel={place.label}
                 />
                 <SvgText
                   x={point.x}
@@ -141,7 +147,13 @@ function CoordinateMap({
             if (!point) return null;
             return (
               <React.Fragment key={region.id}>
-                <Circle cx={point.x} cy={point.y} r="3" fill={colors.a2} />
+                <Circle
+                  cx={point.x}
+                  cy={point.y}
+                  r="3"
+                  fill={colors.a2}
+                  accessibilityLabel={region.label}
+                />
                 <SvgText
                   x={point.x + 5}
                   y={point.y + 1.5}
@@ -188,6 +200,7 @@ function FilterChips({
         contentContainerStyle={styles.chips}
       >
         <Pressable
+          accessibilityRole="button"
           style={[styles.chip, !value && styles.chipOn]}
           onPress={() => onChange("")}
         >
@@ -195,6 +208,7 @@ function FilterChips({
         </Pressable>
         {values.map((item) => (
           <Pressable
+            accessibilityRole="button"
             key={item.id}
             style={[styles.chip, value === item.id && styles.chipOn]}
             onPress={() => onChange(item.id)}
@@ -222,18 +236,38 @@ export function MapViewer({
     ...EMPTY_FILTERS,
     region: initialRegion || "",
   });
-  const [selected, setSelected] = useState<MapArtifactPlace | null>(null);
+  const [selectedId, setSelectedId] = useState("");
+  const [mapFailed, setMapFailed] = useState(false);
   const places = useMemo(() => filterMapPlaces(data, filters), [data, filters]);
   const days = data.days.filter(
     (day) => !filters.region || day.region_id === filters.region,
   );
-  const categories = [...new Set(data.places.map((place) => place.category))];
+  const categories = [
+    ...new Set(
+      data.places
+        .filter(
+          (place) => !filters.region || place.region_id === filters.region,
+        )
+        .map((place) => place.category),
+    ),
+  ];
   useEffect(() => {
     if (filters.day && !days.some((day) => day.id === filters.day))
       setFilters((old) => ({ ...old, day: "" }));
-    setSelected(null);
+    if (
+      filters.category &&
+      !categories.some((category) => category === filters.category)
+    )
+      setFilters((old) => ({ ...old, category: "" }));
   }, [filters.region]); // eslint-disable-line react-hooks/exhaustive-deps
-  const detail = selected || places[0] || null;
+  useEffect(() => setMapFailed(false), [styleUrl]);
+  const detail =
+    places.find((place) => place.id === selectedId) ?? places[0] ?? null;
+  const mapHtml = useMemo(
+    () =>
+      styleUrl && places.length ? mapArtifactHtml(data, styleUrl, places) : "",
+    [data, places, styleUrl],
+  );
   return (
     <Modal animationType="slide" onRequestClose={onClose}>
       <View style={styles.modal}>
@@ -268,20 +302,27 @@ export function MapViewer({
             values={categories.map((c) => ({ id: c, label: c }))}
             onChange={(category) => setFilters((old) => ({ ...old, category }))}
           />
-          <Pressable onPress={() => setFilters(EMPTY_FILTERS)}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setFilters(EMPTY_FILTERS)}
+          >
             <Text style={styles.reset}>Reset view</Text>
           </Pressable>
           <View style={styles.mapFrame}>
-            {styleUrl && places.length ? (
+            {styleUrl && places.length && !mapFailed ? (
               <WebView
                 testID="tile-map"
                 originWhitelist={["*"]}
-                source={{ html: mapArtifactHtml(data, styleUrl, places) }}
+                source={{ html: mapHtml }}
                 style={styles.web}
                 onMessage={(event) => {
                   try {
-                    const id = JSON.parse(event.nativeEvent.data).placeId;
-                    setSelected(places.find((p) => p.id === id) || null);
+                    const message = JSON.parse(event.nativeEvent.data);
+                    if (typeof message.error === "string") {
+                      setMapFailed(true);
+                    } else if (typeof message.placeId === "string") {
+                      setSelectedId(message.placeId);
+                    }
                   } catch {
                     /* ignore untrusted messages */
                   }
@@ -291,8 +332,8 @@ export function MapViewer({
               <CoordinateMap
                 data={data}
                 places={places}
-                selected={selected?.id}
-                onPlace={setSelected}
+                selected={selectedId}
+                onPlace={(place) => setSelectedId(place.id)}
               />
             )}
           </View>
@@ -325,9 +366,9 @@ export function MapViewer({
                   key={place.id}
                   style={[
                     styles.placeRow,
-                    selected?.id === place.id && styles.placeOn,
+                    selectedId === place.id && styles.placeOn,
                   ]}
-                  onPress={() => setSelected(place)}
+                  onPress={() => setSelectedId(place.id)}
                 >
                   <Text style={styles.placeNum}>{place.order || "•"}</Text>
                   <Text style={styles.body}>{place.label}</Text>

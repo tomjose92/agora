@@ -57,7 +57,17 @@ html,body,#map { margin:0; width:100%; height:100%; background:#0b1220; }
 <script type="module">
 const data = ${payload};
 const holder = document.getElementById("map");
-try {
+const reportError = (prefix, error) => {
+  const detail = String(error?.message || error || "Unknown map error");
+  window.ReactNativeWebView?.postMessage(JSON.stringify({ error: detail }));
+  const message = document.createElement("div");
+  message.id = "err";
+  message.textContent = prefix + "\\n\\n" + detail;
+  holder.replaceChildren(message);
+};
+(async () => {
+  // This CDN keeps the renderer aligned with web's MapLibre major version;
+  // operators still control the separate tile/style endpoint.
   const imported = await import("https://unpkg.com/maplibre-gl@6.0.0/dist/maplibre-gl.mjs");
   const maplibregl = imported.default || imported;
   const map = new maplibregl.Map({ container: holder, style: ${style}, dragRotate: false });
@@ -65,12 +75,8 @@ try {
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
   map.on("error", (event) => {
     if (loaded) return;
-    const message = document.createElement("div");
-    message.id = "err";
-    message.textContent = "Could not load the map style.\\n\\n"
-      + String(event?.error?.message || event?.error || "Unknown map error");
     map.remove();
-    holder.replaceChildren(message);
+    reportError("Could not load the map style.", event?.error);
   });
   map.on("load", () => {
     loaded = true;
@@ -105,11 +111,6 @@ try {
       map.fitBounds(bounds, { padding: 45, maxZoom: 14 });
     }
   });
-} catch (error) {
-  const message = document.createElement("div");
-  message.id = "err";
-  message.textContent = "Could not load the map renderer.\\n\\n" + String(error?.message || error);
-  holder.replaceChildren(message);
-}
+})().catch((error) => reportError("Could not load the map renderer.", error));
 </script></body></html>`;
 }
