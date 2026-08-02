@@ -444,20 +444,4 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   empty: { color: colors.dim, textAlign: "center", paddingVertical: 24 },
-  sheetBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: "#14161d",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    padding: 16,
-    gap: 4,
-    paddingBottom: 34,
-  },
-  sheetBtn: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
-  sheetText: { color: colors.text, fontSize: 15.5 },
-  sheetDanger: { color: colors.red },
 });

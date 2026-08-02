@@ -1794,6 +1794,11 @@ impl Store {
                 meta.as_object_mut()
                     .unwrap()
                     .insert("edited_at".into(), json!(now()));
+                if let Some(unfurls) = meta.get_mut("unfurls").and_then(Value::as_array_mut) {
+                    unfurls.retain(|unfurl| {
+                        unfurl["url"].as_str().is_some_and(|url| text.contains(url))
+                    });
+                }
                 conn.execute(
                     "UPDATE messages SET text = ?1, meta = ?2 WHERE id = ?3",
                     params![text, meta.to_string(), message_id],

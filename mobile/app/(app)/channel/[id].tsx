@@ -610,9 +610,6 @@ const styles = StyleSheet.create({
   },
   listSheet: { maxHeight: "70%" },
   sheetTitle: { color: colors.text, fontSize: 16, fontWeight: "800", marginBottom: 8 },
-  sheetBtn: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
-  sheetText: { color: colors.text, fontSize: 15.5 },
-  sheetDanger: { color: colors.red },
   sheetEmpty: { color: colors.dim, paddingVertical: 20, textAlign: "center" },
   sheetItem: {
     paddingVertical: 10,

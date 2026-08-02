@@ -49,10 +49,17 @@ export function MessageActions({
       ? "This deletes the message and its whole thread for everyone."
       : "This deletes the message for everyone.",
     [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => del.mutate(
-        { message }, { onError: (e) => toastErr("Delete failed", e), onSuccess: onDeleted },
-      ) },
+      { text: "Cancel", style: "cancel", onPress: onClose },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        try {
+          await del.mutateAsync({ message });
+          onDeleted?.();
+        } catch (e) {
+          toastErr("Delete failed", e);
+        } finally {
+          onClose();
+        }
+      } },
     ],
   );
 
@@ -119,7 +126,7 @@ export function MessageActions({
             onPress={() => act(() => pin.mutate(
               { messageId: message.id, pinned: !pinned }, { onError: (e) => toastErr("Pin failed", e) },
             ))} /> : null}
-          {canDelete ? <Row icon={Trash2} label="Delete" color={colors.red} danger onPress={() => act(confirmDelete)} /> : null}
+          {canDelete ? <Row icon={Trash2} label="Delete" color={colors.red} danger onPress={confirmDelete} /> : null}
         </View>
       </Pressable>
     </Modal>

@@ -4237,15 +4237,28 @@ mod tests {
         });
         let own = store.add_message(&cid, "old searchable phrase", "user", "ana", None, None, &[]);
         let mid = own["id"].as_i64().unwrap();
+        store.update_message_meta(mid, &json!({"unfurls": [
+            {"url": "https://keep.example", "title": "Keep"},
+            {"url": "https://spoof.example", "title": "Spoof"}
+        ]}));
+        let (ui_tx, mut ui_rx) = unbounded_channel();
+        state.hub.attach_socket("ana", false, ui_tx);
         let q = || Query(HashMap::new());
 
         let edited = edit_message(
             State(state.clone()), Path((cid.clone(), mid)), q(),
-            session_headers(&state, "ana"), Json(json!({"text": "new @mal phrase"})),
+            session_headers(&state, "ana"),
+            Json(json!({"text": "new @mal phrase https://keep.example"})),
         ).await.unwrap().0;
-        assert_eq!(edited["text"], "new @mal phrase");
+        assert_eq!(edited["text"], "new @mal phrase https://keep.example");
         assert!(edited["meta"]["edited_at"].as_f64().is_some());
+        assert_eq!(edited["meta"]["unfurls"], json!([
+            {"url": "https://keep.example", "title": "Keep"}
+        ]));
         assert!(rx.try_recv().is_err(), "an edit must not be fanned out to agents");
+        let update = ui_rx.try_recv().expect("changed edits must reach UI sockets");
+        assert_eq!(update["type"], "message_update");
+        assert_eq!(update["message"]["id"], mid);
         assert_eq!(store.unread_counts("mal", std::slice::from_ref(&cid))[&cid]["mentions"], 0,
             "mentions added by an edit must not create mention rows");
 
@@ -4253,9 +4266,11 @@ mod tests {
         let stamp = edited["meta"]["edited_at"].clone();
         let same = edit_message(
             State(state.clone()), Path((cid.clone(), mid)), q(),
-            session_headers(&state, "ana"), Json(json!({"text": "  new @mal phrase  "})),
+            session_headers(&state, "ana"),
+            Json(json!({"text": "  new @mal phrase https://keep.example  "})),
         ).await.unwrap().0;
         assert_eq!(same["meta"]["edited_at"], stamp);
+        assert!(ui_rx.try_recv().is_err(), "no-op edits must not broadcast");
 
         // Neither another member nor a group admin may rewrite the author.
         for username in ["mal", "boss"] {

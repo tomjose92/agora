@@ -4,7 +4,7 @@ jest.mock("../src/lib/nativeSpeech", () => ({ speakMessage: jest.fn(async () => 
 
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { Text, TextInput } from "react-native";
+import { Alert, Text, TextInput } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { ApiClient, ApiProvider, type Message } from "@agora/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,10 +13,15 @@ import { useSession } from "../src/state/session";
 
 class RecordingApi extends ApiClient {
   patches: Array<{ path: string; body: unknown }> = [];
+  deletes: string[] = [];
   constructor() { super({ baseUrl: "https://agora.example", token: "test" }); }
   override async patch<T>(path: string, body?: unknown): Promise<T> {
     this.patches.push({ path, body });
     return { ...message, text: (body as { text: string }).text, meta: { edited_at: 123 } } as T;
+  }
+  override async delete<T>(path: string): Promise<T> {
+    this.deletes.push(path);
+    return { ok: true } as T;
   }
 }
 
@@ -76,4 +81,23 @@ test("Edit is author-gated and saves raw multiline text", async () => {
   const hidden = render({ canEdit: false }).tree;
   expect(hidden.root.findAllByType(Text).some((n) => n.props.children === "Edit")).toBe(false);
   act(() => { tree.unmount(); hidden.unmount(); });
+});
+
+test("Delete keeps the sheet mounted until the alert action finishes", async () => {
+  const onClose = jest.fn();
+  const onDeleted = jest.fn();
+  const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+  const { tree, api } = render({ canDelete: true, onClose, onDeleted });
+
+  act(() => pressLabel(tree, "Delete"));
+  expect(onClose).not.toHaveBeenCalled();
+  const buttons = alert.mock.calls[0][2]!;
+  const confirm = buttons.find((button) => button.text === "Delete")!;
+  await act(async () => { await confirm.onPress?.(); });
+
+  expect(api.deletes).toEqual(["/api/channels/general/messages/7"]);
+  expect(onDeleted).toHaveBeenCalledTimes(1);
+  expect(onClose).toHaveBeenCalledTimes(1);
+  alert.mockRestore();
+  act(() => tree.unmount());
 });
