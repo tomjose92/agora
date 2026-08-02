@@ -168,7 +168,7 @@ export function MessageItem({
           <Reactions message={message} />
           <View style={styles.foot}>
             {flags}
-            <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
+            <Text style={styles.ts}>{message.meta?.edited_at ? "edited · " : ""}{fmtTs(message.ts)}</Text>
           </View>
           {replies}
         </View>
@@ -199,7 +199,7 @@ export function MessageItem({
             ) : null}
           </Text>
           {flags}
-          <Text style={styles.ts}>{fmtTs(message.ts)}</Text>
+          <Text style={styles.ts}>{message.meta?.edited_at ? "edited · " : ""}{fmtTs(message.ts)}</Text>
         </View>
         <MdText text={body} onLongPress={longPress} />
         <ArtifactList artifacts={message.meta?.artifacts} />

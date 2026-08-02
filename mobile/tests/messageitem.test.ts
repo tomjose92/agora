@@ -13,14 +13,13 @@ jest.mock(
 
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { ScrollView, StyleSheet } from "react-native";
+import { ScrollView, StyleSheet, Text } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MessageItem } from "../src/components/MessageItem";
 import { useSession } from "../src/state/session";
 import { ApiClient, ApiProvider } from "@agora/core";
 import type { Message } from "@agora/core";
 import type { Session } from "@agora/core";
-import { Text } from "react-native";
 
 const session: Session = { baseUrl: "http://test", token: "t" };
 
@@ -181,4 +180,13 @@ test("renders a supported map artifact from message metadata", () => {
   expect(
     tree.root.findAll((node) => node.props.testID === "coordinate-map").length,
   ).toBeGreaterThan(0);
+});
+
+test("shows an edited marker when edited_at is present", () => {
+  const edited = message("Updated text");
+  edited.meta = { edited_at: 1_700_000_100 };
+  const tree = render(edited);
+  expect(tree.root.findAllByType(Text).some((node) =>
+    Array.isArray(node.props.children) && node.props.children.includes("edited · "),
+  )).toBe(true);
 });

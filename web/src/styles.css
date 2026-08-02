@@ -804,6 +804,13 @@ a.btn { text-decoration: none; }
 .ago-thread-btn:hover, .ago-replies:hover { color: var(--a1); }
 .ago-del-btn:hover { color: #f87171; }
 .ago-del-btn.armed { opacity: 1; color: #f87171; font-weight: 700; }
+.ago-message-edit { display: grid; gap: 8px; margin-top: 4px; }
+.ago-message-edit textarea {
+  box-sizing: border-box; width: min(620px, 70vw); min-height: 96px; resize: vertical;
+  border: 1px solid var(--a1); border-radius: 8px; padding: 9px 10px;
+  background: var(--bg); color: var(--text); font: inherit; line-height: 1.45;
+}
+.ago-message-edit-actions { display: flex; justify-content: flex-end; gap: 7px; }
 /* TL;DR view: the toggle stays visible while the short version is shown, and
    the bubble header carries a badge so a summarized message reads as such. */
 .ago-tldr-btn.on { opacity: 1; color: var(--a1); }

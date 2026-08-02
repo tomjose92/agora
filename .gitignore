@@ -1,5 +1,8 @@
 # Rust build artifacts
 /target/
+/.worktrees/
+.worktree-env
+.cargo-target/
 
 # Tauri codegen (regenerated on every build)
 crates/agora-desktop/gen/schemas/
@@ -35,3 +38,4 @@ web/storybook-static/
 
 # Claude Code local session/agent state
 .claude/
+.codex/
