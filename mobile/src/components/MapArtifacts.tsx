@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -15,7 +15,7 @@ import Svg, {
   Text as SvgText,
 } from "react-native-svg";
 import { Map as MapIcon, Maximize2, X } from "lucide-react-native";
-import { WebView } from "react-native-webview";
+import { WebView, type WebViewNavigation } from "react-native-webview";
 import {
   formatDuration,
   googleMapsDirectionsUrl,
@@ -31,6 +31,7 @@ import { colors } from "../lib/theme";
 import {
   filterMapPlaces,
   mapArtifactHtml,
+  mapVisibilityScript,
   projectMapPoints,
   type MapFilters,
 } from "../lib/mapArtifacts";
@@ -44,11 +45,13 @@ function CoordinateMap({
   places,
   selected,
   onPlace,
+  activeRegion,
 }: {
   data: MapArtifactData;
   places?: MapArtifactPlace[];
   selected?: string;
   onPlace?: (place: MapArtifactPlace) => void;
+  activeRegion?: string;
 }) {
   const detail = places !== undefined;
   const plottedPlaces = detail
@@ -56,9 +59,13 @@ function CoordinateMap({
     : data.regions.length
       ? []
       : data.places;
-  const plottedRegions = plottedPlaces.length === 0 && data.regions.length > 0;
+  const visibleRegions = activeRegion
+    ? data.regions.filter((region) => region.id === activeRegion)
+    : data.regions;
+  const plottedRegions =
+    plottedPlaces.length === 0 && visibleRegions.length > 0;
   const source = plottedRegions
-    ? data.regions.map((region) => ({
+    ? visibleRegions.map((region) => ({
         id: region.id,
         lat: region.center.lat,
         lng: region.center.lng,
@@ -137,12 +144,12 @@ function CoordinateMap({
                   fontSize="4"
                   fontWeight="700"
                 >
-                  {place.order || index + 1}
+                  {place.order ?? index + 1}
                 </SvgText>
               </React.Fragment>
             );
           })
-        : data.regions.map((region) => {
+        : visibleRegions.map((region) => {
             const point = byId.get(region.id);
             if (!point) return null;
             return (
@@ -238,8 +245,10 @@ export function MapViewer({
   });
   const [selectedId, setSelectedId] = useState("");
   const [mapFailed, setMapFailed] = useState(false);
+  const [refitNonce, setRefitNonce] = useState(0);
+  const mapRef = useRef<WebView>(null);
   const places = useMemo(() => filterMapPlaces(data, filters), [data, filters]);
-  const days = data.days.filter(
+  const days = (data.days ?? []).filter(
     (day) => !filters.region || day.region_id === filters.region,
   );
   const categories = [
@@ -264,10 +273,19 @@ export function MapViewer({
   const detail =
     places.find((place) => place.id === selectedId) ?? places[0] ?? null;
   const mapHtml = useMemo(
-    () =>
-      styleUrl && places.length ? mapArtifactHtml(data, styleUrl, places) : "",
-    [data, places, styleUrl],
+    () => (styleUrl ? mapArtifactHtml(data, styleUrl) : ""),
+    [data, styleUrl],
   );
+  const mapSource = useMemo(
+    () => ({ html: mapHtml, baseUrl: "https://unpkg.com/" }),
+    [mapHtml],
+  );
+  useEffect(() => {
+    if (!styleUrl || mapFailed) return;
+    mapRef.current?.injectJavaScript(
+      mapVisibilityScript(places.map((place) => place.id)),
+    );
+  }, [mapFailed, places, refitNonce, styleUrl]);
   return (
     <Modal animationType="slide" onRequestClose={onClose}>
       <View style={styles.modal}>
@@ -304,22 +322,34 @@ export function MapViewer({
           />
           <Pressable
             accessibilityRole="button"
-            onPress={() => setFilters(EMPTY_FILTERS)}
+            onPress={() => {
+              setFilters(EMPTY_FILTERS);
+              setRefitNonce((value) => value + 1);
+            }}
           >
             <Text style={styles.reset}>Reset view</Text>
           </Pressable>
           <View style={styles.mapFrame}>
-            {styleUrl && places.length && !mapFailed ? (
+            {styleUrl && data.places.length && !mapFailed ? (
               <WebView
+                ref={mapRef}
                 testID="tile-map"
-                originWhitelist={["*"]}
-                source={{ html: mapHtml }}
+                originWhitelist={["https://unpkg.com/*"]}
+                source={mapSource}
+                onShouldStartLoadWithRequest={(request: WebViewNavigation) =>
+                  request.url === "about:blank" ||
+                  request.url.startsWith("https://unpkg.com/")
+                }
                 style={styles.web}
                 onMessage={(event) => {
                   try {
                     const message = JSON.parse(event.nativeEvent.data);
                     if (typeof message.error === "string") {
                       setMapFailed(true);
+                    } else if (message.ready === true) {
+                      mapRef.current?.injectJavaScript(
+                        mapVisibilityScript(places.map((place) => place.id)),
+                      );
                     } else if (typeof message.placeId === "string") {
                       setSelectedId(message.placeId);
                     }
@@ -334,6 +364,7 @@ export function MapViewer({
                 places={places}
                 selected={selectedId}
                 onPlace={(place) => setSelectedId(place.id)}
+                activeRegion={filters.region || undefined}
               />
             )}
           </View>
@@ -370,7 +401,7 @@ export function MapViewer({
                   ]}
                   onPress={() => setSelectedId(place.id)}
                 >
-                  <Text style={styles.placeNum}>{place.order || "•"}</Text>
+                  <Text style={styles.placeNum}>{place.order ?? "•"}</Text>
                   <Text style={styles.body}>{place.label}</Text>
                 </Pressable>
               ))}

@@ -9,6 +9,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, ApiProvider, type MapMessageArtifact } from "@agora/core";
 import { ArtifactList, MapViewer } from "../src/components/MapArtifacts";
 import { Text } from "react-native";
+import { WebView } from "react-native-webview";
+
+const mockWebView = WebView as typeof WebView & { injected: string[] };
+
+beforeEach(() => {
+  mockWebView.injected.length = 0;
+});
 
 const artifact: MapMessageArtifact = {
   id: "map",
@@ -56,6 +63,7 @@ const artifact: MapMessageArtifact = {
         region_id: "r",
         day_ids: ["d1"],
         category: "sight",
+        order: 0,
       },
       {
         id: "p2",
@@ -136,18 +144,54 @@ test("configured map style uses the tile WebView", () => {
   expect(
     tree.root.findAll((node) => node.props.testID === "coordinate-map"),
   ).toHaveLength(0);
+  const tile = tree.root.findAll(
+    (node) =>
+      node.props.testID === "tile-map" &&
+      typeof node.props.onShouldStartLoadWithRequest === "function",
+  )[0];
+  expect(tile.props.source.baseUrl).toBe("https://unpkg.com/");
+  expect(tile.props.originWhitelist).toEqual(["https://unpkg.com/*"]);
+  expect(
+    tile.props.onShouldStartLoadWithRequest({ url: "https://unpkg.com/a" }),
+  ).toBe(true);
+  expect(
+    tile.props.onShouldStartLoadWithRequest({ url: "https://evil.test/" }),
+  ).toBe(false);
 });
 
-test("configured style with zero matches uses the coordinate renderer", () => {
+test("filter changes keep the document stable and inject visible ids", () => {
   const tree = renderWithStyle("https://tiles.test/style.json");
+  const tile = () =>
+    tree.root.findAll((node) => node.props.testID === "tile-map")[0];
+  const source = tile().props.source;
+  const before = mockWebView.injected.length;
+  pressText(tree, "sight");
+  expect(tile().props.source).toBe(source);
+  expect(mockWebView.injected).toHaveLength(before + 1);
+  expect(mockWebView.injected.some((script) => script.includes('["p"]'))).toBe(
+    true,
+  );
+});
+
+test("reset always injects a refit even when filters are already clear", () => {
+  const tree = renderWithStyle("https://tiles.test/style.json");
+  const before = mockWebView.injected.length;
+  pressText(tree, "Reset view");
+  expect(mockWebView.injected).toHaveLength(before + 1);
+  expect(mockWebView.injected.at(-1)).toContain('["p","p2"]');
+});
+
+test("configured style with zero matches keeps the tile document mounted", () => {
+  const tree = renderWithStyle("https://tiles.test/style.json");
+  const tile = tree.root.findAll((node) => node.props.testID === "tile-map")[0];
+  const source = tile.props.source;
   pressText(tree, "Empty region");
   expect(
-    tree.root.findAll((node) => node.props.testID === "tile-map"),
-  ).toHaveLength(0);
-  expect(
-    tree.root.findAll((node) => node.props.testID === "coordinate-map").length,
-  ).toBeGreaterThan(0);
+    tree.root.findAll((node) => node.props.testID === "tile-map")[0].props
+      .source,
+  ).toBe(source);
   expect(textOf(tree)).toContain("No places match these filters");
+  expect(mockWebView.injected.at(-1)).toContain("[]");
 });
 
 test("tile bridge selects a place, ignores malformed data, and falls back on error", () => {
@@ -161,6 +205,14 @@ test("tile bridge selects a place, ignores malformed data, and falls back on err
 
   act(() => tile().props.onMessage({ nativeEvent: { data: "not json" } }));
   expect(tile()).toBeTruthy();
+  act(() =>
+    tile().props.onMessage({
+      nativeEvent: { data: JSON.stringify({ ready: true }) },
+    }),
+  );
+  expect(mockWebView.injected.some((script) => script.includes("p2"))).toBe(
+    true,
+  );
   act(() =>
     tile().props.onMessage({
       nativeEvent: { data: JSON.stringify({ placeId: "p2" }) },
@@ -216,4 +268,18 @@ test("places-only artifacts plot their places in the inline card", () => {
       .length,
   ).toBeGreaterThan(0);
   expect(textOf(tree)).not.toContain("No mappable locations");
+  expect(
+    tree.root.findAll((node) => node.props.children === 0).length,
+  ).toBeGreaterThan(0);
+});
+
+test("missing days default to an empty list", () => {
+  const withoutDays = {
+    ...artifact,
+    data: {
+      ...artifact.data,
+      days: undefined as unknown as MapMessageArtifact["data"]["days"],
+    },
+  };
+  expect(() => renderWithStyle("", withoutDays)).not.toThrow();
 });

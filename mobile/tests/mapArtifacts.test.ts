@@ -1,6 +1,7 @@
 import {
   filterMapPlaces,
   mapArtifactHtml,
+  mapVisibilityScript,
   projectMapPoints,
 } from "../src/lib/mapArtifacts";
 import type { MapArtifactData } from "@agora/core";
@@ -68,17 +69,41 @@ test("tile HTML uses the MapLibre module build, preserves GeoJSON, and escapes m
   const html = mapArtifactHtml(
     { ...data, places: [{ ...data.places[0], label: hostile }] },
     "https://tiles.test/<style>.json",
-    [{ ...data.places[0], label: hostile }],
   );
   expect(html).toContain('type="module"');
+  expect(html).toContain("Content-Security-Policy");
+  expect(html).toContain("script-src 'unsafe-inline' https://unpkg.com blob:");
   expect(html).toContain("maplibre-gl@6.0.0/dist/maplibre-gl.mjs");
   expect(html).not.toContain("dist/maplibre-gl.js");
   expect(html).toContain("Could not load the map renderer");
   expect(html).toContain("ReactNativeWebView?.postMessage");
+  expect(html).toContain("Timed out after 8 seconds");
+  expect(html.indexOf("await import")).toBeLessThan(
+    html.indexOf("watchdog = setTimeout"),
+  );
+  expect(html).toContain("duration: 400");
+  expect(html).toContain('console.warn("Map resource error"');
+  expect(html).not.toContain('map.on("error", (event) => {\n    if');
   expect(html).toContain("(async () => {");
   expect(html).toContain('"coordinates":[[20,10],[24,12]]');
   expect(html).toContain("https://tiles.test/\\u003cstyle>.json");
   expect(html).not.toContain("<style>.json");
   expect(html).not.toContain(hostile);
   expect(html).toContain("\\u003c/script>\\u003cimg src=x onerror=alert(1)>");
+});
+
+test("visibility injection escapes ids and returns a WebView completion value", () => {
+  const script = mapVisibilityScript(["p1", "</script><img onerror=alert(1)>"]);
+  expect(script).toContain('window.__agoraSetVisible?.(["p1"');
+  expect(script).toContain("\\u003c/script>\\u003cimg onerror=alert(1)>");
+  expect(script).not.toContain("</script>");
+  expect(script).toMatch(/true;$/);
+});
+
+test("missing routes default to an empty list", () => {
+  const html = mapArtifactHtml(
+    { ...data, routes: undefined as unknown as MapArtifactData["routes"] },
+    "https://tiles.test/style.json",
+  );
+  expect(html).toContain('"routes":[]');
 });

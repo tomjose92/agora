@@ -41,8 +41,14 @@ function message(text: string): Message {
   };
 }
 
-beforeAll(() => {
-  useSession.setState({ status: "signedIn", session });
+const initialSessionState = useSession.getState();
+
+beforeEach(() => {
+  act(() => useSession.setState({ status: "signedIn", session }));
+});
+
+afterEach(() => {
+  act(() => useSession.setState(initialSessionState, true));
 });
 
 function render(m: Message, onLongPress?: (msg: Message) => void) {

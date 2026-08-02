@@ -37,15 +37,16 @@ export function projectMapPoints(
 export function mapArtifactHtml(
   data: MapArtifactData,
   styleUrl: string,
-  places: MapArtifactPlace[],
 ): string {
   const payload = JSON.stringify({
-    places,
-    routes: data.routes.filter((route) => route.coordinates.length > 1),
+    places: data.places,
+    routes: (data.routes ?? []).filter((route) => route.coordinates.length > 1),
   }).replace(/</g, "\\u003c");
   const style = JSON.stringify(styleUrl).replace(/</g, "\\u003c");
   return `<!doctype html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="script-src 'unsafe-inline' https://unpkg.com blob:">
 <link href="https://unpkg.com/maplibre-gl@6.0.0/dist/maplibre-gl.css" rel="stylesheet">
 <style>
 html,body,#map { margin:0; width:100%; height:100%; background:#0b1220; }
@@ -57,7 +58,9 @@ html,body,#map { margin:0; width:100%; height:100%; background:#0b1220; }
 <script type="module">
 const data = ${payload};
 const holder = document.getElementById("map");
+let watchdog;
 const reportError = (prefix, error) => {
+  clearTimeout(watchdog);
   const detail = String(error?.message || error || "Unknown map error");
   window.ReactNativeWebView?.postMessage(JSON.stringify({ error: detail }));
   const message = document.createElement("div");
@@ -69,17 +72,35 @@ const reportError = (prefix, error) => {
   // This CDN keeps the renderer aligned with web's MapLibre major version;
   // operators still control the separate tile/style endpoint.
   const imported = await import("https://unpkg.com/maplibre-gl@6.0.0/dist/maplibre-gl.mjs");
+  watchdog = setTimeout(
+    () => reportError("The map renderer did not finish loading.", "Timed out after 8 seconds"),
+    8000,
+  );
   const maplibregl = imported.default || imported;
   const map = new maplibregl.Map({ container: holder, style: ${style}, dragRotate: false });
-  let loaded = false;
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
   map.on("error", (event) => {
-    if (loaded) return;
-    map.remove();
-    reportError("Could not load the map style.", event?.error);
+    console.warn("Map resource error", event?.error || event);
   });
+  const markers = new Map();
+  const showPlaces = (visibleIds) => {
+    const visible = new Set(visibleIds);
+    const points = [];
+    markers.forEach((marker, id) => {
+      const shown = visible.has(id);
+      marker.getElement().style.display = shown ? "" : "none";
+      if (shown) points.push(marker.getLngLat());
+    });
+    if (!points.length) return;
+    const bounds = points.reduce(
+      (value, point) => value.extend(point),
+      new maplibregl.LngLatBounds(points[0], points[0]),
+    );
+    map.fitBounds(bounds, { padding: 45, maxZoom: 14, duration: 400 });
+  };
+  window.__agoraSetVisible = showPlaces;
   map.on("load", () => {
-    loaded = true;
+    clearTimeout(watchdog);
     data.routes.forEach((route, index) => {
       map.addSource("route-" + index, {
         type: "geojson",
@@ -92,25 +113,24 @@ const reportError = (prefix, error) => {
         paint: { "line-color": "#5aa0ff", "line-width": 3 },
       });
     });
-    const points = data.places.map((place) => [place.position.lng, place.position.lat]);
     data.places.forEach((place, index) => {
       const marker = document.createElement("button");
       marker.className = "pin";
-      marker.textContent = place.order || index + 1;
-      marker.onclick = () => window.ReactNativeWebView.postMessage(
+      marker.textContent = place.order ?? index + 1;
+      marker.onclick = () => window.ReactNativeWebView?.postMessage(
         JSON.stringify({ placeId: place.id }),
       );
-      new maplibregl.Marker({ element: marker })
-        .setLngLat([place.position.lng, place.position.lat]).addTo(map);
+      markers.set(place.id, new maplibregl.Marker({ element: marker })
+        .setLngLat([place.position.lng, place.position.lat]).addTo(map));
     });
-    if (points.length) {
-      const bounds = points.reduce(
-        (value, point) => value.extend(point),
-        new maplibregl.LngLatBounds(points[0], points[0]),
-      );
-      map.fitBounds(bounds, { padding: 45, maxZoom: 14 });
-    }
+    showPlaces(data.places.map((place) => place.id));
+    window.ReactNativeWebView?.postMessage(JSON.stringify({ ready: true }));
   });
 })().catch((error) => reportError("Could not load the map renderer.", error));
 </script></body></html>`;
+}
+
+export function mapVisibilityScript(placeIds: string[]): string {
+  const ids = JSON.stringify(placeIds).replace(/</g, "\\u003c");
+  return `window.__agoraSetVisible?.(${ids}); true;`;
 }
