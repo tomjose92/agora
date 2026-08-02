@@ -21,6 +21,7 @@ jest.mock("expo-constants", () => ({
 }));
 
 import * as SecureStore from "expo-secure-store";
+import { useAddressed, useMessageDrafts } from "@agora/core";
 import { KEY_RECENT } from "../src/state/servers";
 import {
   KEY_INSTANCE_ADMIN,
@@ -48,6 +49,8 @@ afterEach(() => {
 
 describe("signIn", () => {
   it("stores the canonical https origin learned from the probe", async () => {
+    useMessageDrafts.setState({ byConvo: { general: "old account" } });
+    useAddressed.setState({ byConvo: { general: ["old-agent"] } });
     jest.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/api/auth/config")) {
@@ -66,6 +69,8 @@ describe("signIn", () => {
       KEY_RECENT,
       JSON.stringify(["https://a.example"]),
     );
+    expect(useMessageDrafts.getState().byConvo).toEqual({});
+    expect(useAddressed.getState().byConvo).toEqual({});
   });
 
   it("surfaces a 401 as an error", async () => {
@@ -109,10 +114,14 @@ describe("cached instance role", () => {
     "%s clears the cached role",
     async (action) => {
       useSession.setState({ session: null });
+      useMessageDrafts.setState({ byConvo: { general: "private draft" } });
+      useAddressed.setState({ byConvo: { general: ["agent"] } });
       await useSession.getState()[action]();
       expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith(
         KEY_INSTANCE_ADMIN,
       );
+      expect(useMessageDrafts.getState().byConvo).toEqual({});
+      expect(useAddressed.getState().byConvo).toEqual({});
     },
   );
 });

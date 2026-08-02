@@ -9,6 +9,7 @@ interface AddressedState {
   byConvo: Record<string, string[]>;
   toggle: (key: string, agentId: string) => void;
   clear: (key: string) => void;
+  resetAll: () => void;
 }
 
 export const useAddressed = create<AddressedState>((set) => ({
@@ -32,6 +33,8 @@ export const useAddressed = create<AddressedState>((set) => ({
       delete byConvo[key];
       return { byConvo };
     }),
+
+  resetAll: () => set({ byConvo: {} }),
 }));
 
 export function threadAddressKey(channelId: string, rootId: number): string {

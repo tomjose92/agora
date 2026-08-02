@@ -52,7 +52,7 @@ import { fmtSize, MAX_MESSAGE_CHARS, slugify } from "@agora/core";
 import { toOutgoing, type LocalFile } from "../api/voice";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
-import { useAddressed } from "@agora/core";
+import { useAddressed, useMessageDrafts } from "@agora/core";
 import { AgentAvatar } from "./AgentAvatar";
 import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
@@ -181,7 +181,14 @@ export function Composer({
   /* Keep this render-time so platform-branch tests can verify Android rather
      than inheriting the test runtime's iOS value captured at module load. */
   const nativePasteInput = Platform.OS === "ios" || Platform.OS === "android";
-  const [text, setText] = useState("");
+  const storedText = useMessageDrafts((s) => (addressKey ? s.byConvo[addressKey] ?? "" : undefined));
+  const setStoredText = useMessageDrafts((s) => s.setDraft);
+  const [localText, setLocalText] = useState("");
+  const text = storedText ?? localText;
+  const setText = (next: string) => {
+    if (addressKey) setStoredText(addressKey, next);
+    else setLocalText(next);
+  };
   const [files, setFiles] = useState<LocalFile[]>(initialFiles);
   const filesRef = useRef<LocalFile[]>(initialFiles);
   const [preview, setPreview] = useState<LocalFile | null>(null);
@@ -220,6 +227,8 @@ export function Composer({
   useEffect(() => {
     pasteGeneration.current += 1;
     setPasteOps(0);
+    /* Production composers remount per conversation, naturally resetting all
+       local state (including attachments); only text survives via the store. */
     return () => {
       pasteGeneration.current += 1;
     };
@@ -511,6 +520,7 @@ export function Composer({
 
   const send = async () => {
     if (pasteOps > 0) return;
+    const sentText = text;
     const body = text.trim();
     if (!body && files.length === 0) return;
     const prefix = addressedAgents.map((a) => `@${slugify(a.name)}`).join(", ");
@@ -520,7 +530,13 @@ export function Composer({
         files: files.map(toOutgoing),
         replyInThread: threadToggle ? replyInThread : undefined,
       });
-      setText("");
+      if (addressKey) {
+        if ((useMessageDrafts.getState().byConvo[addressKey] ?? "") === sentText) {
+          useMessageDrafts.getState().clear(addressKey);
+        }
+      } else {
+        setLocalText((cur) => (cur === sentText ? "" : cur));
+      }
       filesRef.current = [];
       setFiles([]);
       setReplyInThread(false);
@@ -577,7 +593,7 @@ export function Composer({
           ))}
         </ScrollView>
       ) : null}
-      {candidates.length > 0 ? (
+      {focused && candidates.length > 0 ? (
         <ScrollView horizontal keyboardShouldPersistTaps="always" style={styles.mentionBar}>
           {candidates.map((c) => (
             <Pressable key={c.id} style={styles.mentionChip} onPress={() => insertMention(c)}>

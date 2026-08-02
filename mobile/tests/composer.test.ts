@@ -5,6 +5,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
 import { Composer } from "../src/components/Composer";
 import { Attachments } from "../src/components/Attachments";
+import { useMessageDrafts } from "@agora/core";
 
 jest.mock("expo-file-system/legacy", () => ({
   cacheDirectory: "file:///cache/",
@@ -45,9 +46,83 @@ const files = [
 
 beforeEach(() => {
   jest.clearAllMocks();
+  useMessageDrafts.setState({ byConvo: {} });
   (FileSystem.copyAsync as jest.Mock).mockResolvedValue(undefined);
   (FileSystem.deleteAsync as jest.Mock).mockResolvedValue(undefined);
   (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({ exists: true, size: 4_096 });
+});
+
+test("drafts follow in-place conversation changes and restore when returning", () => {
+  const props = { placeholder: "Message #test", mentions: [], sending: false, onSend: async () => {} };
+  const screen = (addressKey: string) => React.createElement(
+    SafeAreaProvider,
+    { initialMetrics: { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, right: 0, bottom: 0, left: 0 } } },
+    React.createElement(Composer, { ...props, addressKey }),
+  );
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(screen("channel-a"));
+  });
+  act(() => tree.root.findByType(TextInput).props.onChangeText("draft for A"));
+  act(() => tree.update(screen("channel-b")));
+  expect(tree.root.findByType(TextInput).props.value).toBe("");
+  act(() => tree.root.findByType(TextInput).props.onChangeText("draft for B"));
+  act(() => tree.update(screen("channel-a")));
+  expect(tree.root.findByType(TextInput).props.value).toBe("draft for A");
+  expect(useMessageDrafts.getState().byConvo).toEqual({ "channel-a": "draft for A", "channel-b": "draft for B" });
+  act(() => tree.unmount());
+
+  act(() => { tree = TestRenderer.create(screen("channel-a")); });
+  expect(tree.root.findByType(TextInput).props.value).toBe("draft for A");
+  act(() => tree.unmount());
+});
+
+test("successful send clears its draft while a failed send retains it", async () => {
+  const onSend = jest.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(undefined);
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {
+    tree = TestRenderer.create(React.createElement(
+      SafeAreaProvider,
+      { initialMetrics: { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, right: 0, bottom: 0, left: 0 } } },
+      React.createElement(Composer, {
+        placeholder: "Message #test", mentions: [], addressKey: "channel-a", sending: false, onSend,
+      }),
+    ));
+  });
+  act(() => tree.root.findByType(TextInput).props.onChangeText("keep me"));
+  await act(async () => { await labelled(tree.root, "Send message").props.onPress(); });
+  expect(useMessageDrafts.getState().byConvo["channel-a"]).toBe("keep me");
+  await act(async () => { await labelled(tree.root, "Send message").props.onPress(); });
+  expect(useMessageDrafts.getState().byConvo["channel-a"]).toBeUndefined();
+  expect(tree.root.findByType(TextInput).props.value).toBe("");
+  act(() => tree.unmount());
+});
+
+test("text typed while a send is pending survives when the earlier send completes", async () => {
+  let finishSend!: () => void;
+  const onSend = jest.fn(() => new Promise<void>((resolve) => { finishSend = resolve; }));
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {
+    tree = TestRenderer.create(React.createElement(
+      SafeAreaProvider,
+      { initialMetrics: { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, right: 0, bottom: 0, left: 0 } } },
+      React.createElement(Composer, {
+        placeholder: "Message #test", mentions: [], addressKey: "channel-a", sending: false, onSend,
+      }),
+    ));
+  });
+  act(() => tree.root.findByType(TextInput).props.onChangeText("first message"));
+  let pending!: Promise<void>;
+  act(() => { pending = labelled(tree.root, "Send message").props.onPress(); });
+  act(() => tree.root.findByType(TextInput).props.onChangeText("next message"));
+  await act(async () => {
+    finishSend();
+    await pending;
+  });
+
+  expect(useMessageDrafts.getState().byConvo["channel-a"]).toBe("next message");
+  expect(tree.root.findByType(TextInput).props.value).toBe("next message");
+  act(() => tree.unmount());
 });
 
 function labelled(root: TestRenderer.ReactTestInstance, label: string) {

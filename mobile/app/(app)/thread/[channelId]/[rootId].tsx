@@ -379,6 +379,7 @@ export default function ThreadScreen() {
         <TypingRow typing={typing} />
         <ProgressBubbles progress={progress} />
         <Composer
+          key={threadAddressKey(channelId, rootId)}
           placeholder="Reply in thread"
           mentions={mentionCandidates}
           agents={agentCandidates}
