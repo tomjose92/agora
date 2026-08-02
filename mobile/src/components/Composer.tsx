@@ -52,7 +52,7 @@ import { fmtSize, MAX_MESSAGE_CHARS, slugify } from "@agora/core";
 import { toOutgoing, type LocalFile } from "../api/voice";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
-import { useAddressed, useDrafts } from "@agora/core";
+import { useAddressed, useMessageDrafts } from "@agora/core";
 import { AgentAvatar } from "./AgentAvatar";
 import { Icon } from "./Icon";
 import { toast, toastErr } from "./Toast";
@@ -181,12 +181,10 @@ export function Composer({
   /* Keep this render-time so platform-branch tests can verify Android rather
      than inheriting the test runtime's iOS value captured at module load. */
   const nativePasteInput = Platform.OS === "ios" || Platform.OS === "android";
-  const storedText = useDrafts((s) => (addressKey ? s.byConvo[addressKey] ?? "" : undefined));
-  const setStoredText = useDrafts((s) => s.set);
+  const storedText = useMessageDrafts((s) => (addressKey ? s.byConvo[addressKey] ?? "" : undefined));
+  const setStoredText = useMessageDrafts((s) => s.set);
   const [localText, setLocalText] = useState("");
   const text = storedText ?? localText;
-  const textRef = useRef(text);
-  textRef.current = text;
   const setText = (next: string) => {
     if (addressKey) setStoredText(addressKey, next);
     else setLocalText(next);
@@ -229,6 +227,12 @@ export function Composer({
   useEffect(() => {
     pasteGeneration.current += 1;
     setPasteOps(0);
+    hasSelection.current = false;
+    selection.current = { start: 0, end: 0 };
+    setForcedSelection(undefined);
+    setReplyInThread(false);
+    /* Attachments intentionally stay with this mounted composer; per-target
+       attachment drafts and their temp-file lifecycle are a separate feature. */
     return () => {
       pasteGeneration.current += 1;
     };
@@ -530,12 +534,12 @@ export function Composer({
         files: files.map(toOutgoing),
         replyInThread: threadToggle ? replyInThread : undefined,
       });
-      const currentText = addressKey
-        ? useDrafts.getState().byConvo[addressKey] ?? ""
-        : textRef.current;
-      if (currentText === sentText) {
-        if (addressKey) useDrafts.getState().clear(addressKey);
-        else setLocalText("");
+      if (addressKey) {
+        if ((useMessageDrafts.getState().byConvo[addressKey] ?? "") === sentText) {
+          useMessageDrafts.getState().clear(addressKey);
+        }
+      } else {
+        setLocalText((cur) => (cur === sentText ? "" : cur));
       }
       filesRef.current = [];
       setFiles([]);

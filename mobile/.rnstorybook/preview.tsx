@@ -11,7 +11,7 @@ import {
 import {
   ApiProvider,
   useAddressed,
-  useDrafts,
+  useMessageDrafts,
   useLive,
   useTldrView,
 } from "@agora/core";
@@ -76,7 +76,7 @@ const preview: Preview = {
     useLive.setState({ typing: {}, progress: {} });
     useTldrView.setState({ showing: {} });
     useAddressed.setState({ byConvo: {} });
-    useDrafts.setState({ byConvo: {} });
+    useMessageDrafts.setState({ byConvo: {} });
     usePrefs.setState({
       loaded: true,
       collapsedGroups: {},

@@ -9,6 +9,8 @@ import {
   normalizeBaseUrl,
   originOf,
   parseError,
+  useAddressed,
+  useMessageDrafts,
   type Session,
 } from "@agora/core";
 import type { Me } from "@agora/core";
@@ -169,6 +171,8 @@ export const useSession = create<SessionState>((set) => ({
 
   async signOut() {
     const session = useSession.getState().session;
+    useMessageDrafts.getState().resetAll();
+    useAddressed.setState({ byConvo: {} });
     await unregisterPushToken(session);
     // Keep KEY_URL: the login screen should only ask for credentials again.
     await Promise.all([
@@ -188,6 +192,8 @@ export const useSession = create<SessionState>((set) => ({
 
   async forgetServer() {
     const session = useSession.getState().session;
+    useMessageDrafts.getState().resetAll();
+    useAddressed.setState({ byConvo: {} });
     await unregisterPushToken(session);
     await Promise.all([
       SecureStore.deleteItemAsync(KEY_URL),

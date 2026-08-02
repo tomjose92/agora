@@ -10,9 +10,10 @@ interface DraftState {
   byConvo: Record<string, string>;
   set: (key: string, text: string) => void;
   clear: (key: string) => void;
+  resetAll: () => void;
 }
 
-export const useDrafts = create<DraftState>((set) => ({
+export const useMessageDrafts = create<DraftState>((set) => ({
   byConvo: {},
   set: (key, text) => set((state) => {
     const byConvo = { ...state.byConvo };
@@ -26,4 +27,5 @@ export const useDrafts = create<DraftState>((set) => ({
     delete byConvo[key];
     return { byConvo };
   }),
+  resetAll: () => set({ byConvo: {} }),
 }));

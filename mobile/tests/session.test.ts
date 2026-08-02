@@ -21,6 +21,7 @@ jest.mock("expo-constants", () => ({
 }));
 
 import * as SecureStore from "expo-secure-store";
+import { useAddressed, useMessageDrafts } from "@agora/core";
 import { KEY_RECENT } from "../src/state/servers";
 import {
   KEY_INSTANCE_ADMIN,
@@ -109,10 +110,14 @@ describe("cached instance role", () => {
     "%s clears the cached role",
     async (action) => {
       useSession.setState({ session: null });
+      useMessageDrafts.setState({ byConvo: { general: "private draft" } });
+      useAddressed.setState({ byConvo: { general: ["agent"] } });
       await useSession.getState()[action]();
       expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith(
         KEY_INSTANCE_ADMIN,
       );
+      expect(useMessageDrafts.getState().byConvo).toEqual({});
+      expect(useAddressed.getState().byConvo).toEqual({});
     },
   );
 });

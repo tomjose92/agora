@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-native";
 import { fn } from "storybook/test";
-import { useAddressed, useDrafts } from "@agora/core";
+import { useAddressed, useMessageDrafts } from "@agora/core";
 import { fixtureTemplates } from "@agora/core/testing/fixtures";
 import { Composer } from "./Composer";
 
@@ -38,7 +38,7 @@ export const Empty: Story = {};
 
 export const RestoredDraft: Story = {
   parameters: {
-    setup: () => useDrafts.setState({
+    setup: () => useMessageDrafts.setState({
       byConvo: { general: "This draft was waiting when I came back." },
     }),
   },
