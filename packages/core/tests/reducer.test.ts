@@ -1,8 +1,10 @@
 /* The pure page-set transforms behind live updates. */
 
 import { describe, expect, it } from "vitest";
-import { appendMessage, replaceMessage, type MessagePages } from "../src/ws/reducer";
-import type { Message } from "../src/api/types";
+import { QueryClient } from "@tanstack/react-query";
+import { appendMessage, applyMessageUpdate, replaceMessage, type MessagePages } from "../src/ws/reducer";
+import { keys } from "../src/api/keys";
+import type { Message, PinnedMessage, StarredMessage, ThreadRow } from "../src/api/types";
 
 const msg = (id: number, text = `m${id}`): Message =>
   ({
@@ -39,5 +41,35 @@ describe("replaceMessage", () => {
     const before = pages([1, 2]);
     const next = replaceMessage(before, msg(9));
     expect(next!.pages[0].map(m => m.id)).toEqual([1, 2]);
+  });
+});
+
+describe("applyMessageUpdate", () => {
+  it("refreshes message, thread, pin, and star previews", () => {
+    const qc = new QueryClient();
+    const old = msg(1, "old");
+    qc.setQueryData(keys.messages("c1", null), pages([1]));
+    qc.setQueryData<ThreadRow[]>(keys.threads, [{ root: old } as ThreadRow]);
+    qc.setQueryData<PinnedMessage[]>(keys.pins("c1"), [{ ...old, pinned_at: 1, pinned_by: null }]);
+    qc.setQueryData<StarredMessage[]>(keys.stars("c1"), [{ ...msg(2), starred_at: 1, root: old }]);
+    applyMessageUpdate(qc, { ...old, text: "edited", meta: { edited_at: 2 } });
+    expect(qc.getQueryData<MessagePages>(keys.messages("c1", null))!.pages[0][0].text).toBe("edited");
+    expect(qc.getQueryData<ThreadRow[]>(keys.threads)![0].root.text).toBe("edited");
+    expect(qc.getQueryData<PinnedMessage[]>(keys.pins("c1"))![0].text).toBe("edited");
+    expect(qc.getQueryData<StarredMessage[]>(keys.stars("c1"))![0].root!.text).toBe("edited");
+  });
+
+  it("preserves unrelated cache references", () => {
+    const qc = new QueryClient();
+    const threads = [{ root: msg(9) } as ThreadRow];
+    const pins = [{ ...msg(9), pinned_at: 1, pinned_by: null }];
+    const stars = [{ ...msg(9), starred_at: 1, root: null }];
+    qc.setQueryData(keys.threads, threads);
+    qc.setQueryData(keys.pins("c1"), pins);
+    qc.setQueryData(keys.stars("c1"), stars);
+    applyMessageUpdate(qc, msg(1, "edited"));
+    expect(qc.getQueryData(keys.threads)).toBe(threads);
+    expect(qc.getQueryData(keys.pins("c1"))).toBe(pins);
+    expect(qc.getQueryData(keys.stars("c1"))).toBe(stars);
   });
 });

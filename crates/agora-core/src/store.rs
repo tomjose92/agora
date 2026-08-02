@@ -1762,6 +1762,41 @@ impl Store {
         self.message(message_id)
     }
 
+    /// Replace a message's text and stamp its meta in one locked write. The
+    /// meta merge shares the lock with unfurl/form writers so an edit cannot
+    /// overwrite keys they added concurrently. Unchanged text is a true no-op.
+    pub fn update_message_text(&self, message_id: i64, text: &str) -> Option<(Value, bool)> {
+        let changed;
+        {
+            let conn = self.conn.lock().unwrap();
+            let (old_text, raw_meta): (String, Option<String>) = conn
+                .query_row(
+                    "SELECT text, meta FROM messages WHERE id = ?1",
+                    params![message_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .ok()?;
+            changed = old_text != text;
+            if changed {
+                let mut meta = raw_meta
+                    .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                    .unwrap_or_else(|| json!({}));
+                if !meta.is_object() {
+                    meta = json!({});
+                }
+                meta.as_object_mut()
+                    .unwrap()
+                    .insert("edited_at".into(), json!(now()));
+                conn.execute(
+                    "UPDATE messages SET text = ?1, meta = ?2 WHERE id = ?3",
+                    params![text, meta.to_string(), message_id],
+                )
+                .ok()?;
+            }
+        }
+        self.message(message_id).map(|message| (message, changed))
+    }
+
     /// Load a message's meta for a form mutation, or the error the caller
     /// should surface: rows without a form can't take form writes, and a
     /// locked form refuses everything. Callers hold the connection lock.

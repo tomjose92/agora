@@ -5,7 +5,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -19,28 +18,21 @@ import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import {
   Headphones,
-  Maximize2,
-  MessageCircle,
-  Minimize2,
   Pin,
   Star,
-  Trash2,
   Users,
   Volume2,
 } from "lucide-react-native";
 import {
   flattenMessages,
   useChannelAgents,
-  useDeleteMessage,
   useGroups,
   useMarkRead,
   useMembers,
   useMessages,
-  usePinMessage,
   usePins,
   useSendMessage,
   useSeedActivity,
-  useStarMessage,
   useStars,
 } from "@agora/core";
 import { useSendVoice } from "../../../src/api/voice";
@@ -50,21 +42,20 @@ import { EmojiPicker } from "../../../src/components/EmojiPicker";
 import { Icon } from "../../../src/components/Icon";
 import { ProgressBubbles, TypingRow } from "../../../src/components/LiveRows";
 import { MessageItem } from "../../../src/components/MessageItem";
+import { MessageActions } from "../../../src/components/MessageActions";
 import { SectionRail, useSectionJump } from "../../../src/components/SectionRail";
 import { ProfileSheet } from "../../../src/components/ProfileSheet";
-import { QuickReactions, useReactWith } from "../../../src/components/Reactions";
+import { useReactWith } from "../../../src/components/Reactions";
 import { toastErr } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
 import { fmtTs } from "@agora/core";
 import { headerActions } from "../../../src/lib/headerItems";
 import { useHeaderKeyboardOffset } from "../../../src/lib/keyboard";
-import { speakMessage } from "../../../src/lib/nativeSpeech";
 import { enqueueSpeech, prepareSpeechAudio, stopSpeech } from "../../../src/lib/speech";
 import { colors } from "../../../src/lib/theme";
 import { useChannelLive } from "@agora/core";
 import { usePrefs } from "../../../src/state/prefs";
 import { useSession } from "../../../src/state/session";
-import { tldrOf, useTldrView } from "@agora/core";
 
 type Row = { kind: "msg"; m: Message } | { kind: "divider" };
 const MAX_DEEP_LINK_PAGES = 10;
@@ -74,147 +65,6 @@ function openThread(channelId: string, root: Message, channelName: string) {
     pathname: "/(app)/thread/[channelId]/[rootId]",
     params: { channelId, rootId: String(root.id), channelName },
   });
-}
-
-/* Long-press action sheet. */
-function MessageActions({
-  message,
-  channelId,
-  channelName,
-  starred,
-  pinned,
-  canDelete,
-  onClose,
-  onReact,
-}: {
-  message: Message;
-  channelId: string;
-  channelName: string;
-  starred: boolean;
-  pinned: boolean;
-  /** Sender-or-group-admin, mirroring the server check. */
-  canDelete: boolean;
-  onClose: () => void;
-  /** Open the full emoji picker for this message (quick row's "more"). */
-  onReact: () => void;
-}) {
-  const star = useStarMessage(channelId);
-  const pin = usePinMessage(channelId);
-  const del = useDeleteMessage();
-  const toggleTldr = useTldrView((s) => s.toggle);
-  const showingTldr = useTldrView((s) => !!s.showing[message.id]);
-  const hasTldr = tldrOf(message) != null;
-  const isRoot = message.thread_id == null;
-  const act = (fn: () => void) => {
-    fn();
-    onClose();
-  };
-  return (
-    <Modal transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <View style={styles.sheet}>
-          <QuickReactions message={message} onDone={onClose} onMore={onReact} />
-          {hasTldr ? (
-            <Pressable style={styles.sheetBtn} onPress={() => act(() => toggleTldr(message.id))}>
-              <Icon icon={showingTldr ? Maximize2 : Minimize2} size={18} color={colors.text} />
-              <Text style={styles.sheetText}>
-                {showingTldr ? "Show full message" : "Show TL;DR"}
-              </Text>
-            </Pressable>
-          ) : null}
-          {isRoot ? (
-            <Pressable
-              style={styles.sheetBtn}
-              onPress={() => act(() => openThread(channelId, message, channelName))}
-            >
-              <Icon icon={MessageCircle} size={18} color={colors.text} />
-              <Text style={styles.sheetText}>Reply in thread</Text>
-            </Pressable>
-          ) : null}
-          {Platform.OS === "ios" && message.text.trim() ? (
-            <Pressable
-              style={styles.sheetBtn}
-              onPress={() =>
-                act(() => {
-                  void speakMessage(message, (e) => toastErr("Speak failed", e)).catch((e) =>
-                    toastErr("Speak failed", e),
-                  );
-                })
-              }
-            >
-              <Icon icon={Volume2} size={18} color={colors.text} />
-              <Text style={styles.sheetText}>Speak</Text>
-            </Pressable>
-          ) : null}
-          <Pressable
-            style={styles.sheetBtn}
-            onPress={() =>
-              act(() =>
-                star.mutate(
-                  { messageId: message.id, starred: !starred },
-                  { onError: (e) => toastErr("Star failed", e) },
-                ),
-              )
-            }
-          >
-            <Icon
-              icon={Star}
-              size={18}
-              color={starred ? colors.amber : colors.text}
-              fill={starred ? colors.amber : "none"}
-            />
-            <Text style={styles.sheetText}>{starred ? "Unstar" : "Star"}</Text>
-          </Pressable>
-          {isRoot ? (
-            <Pressable
-              style={styles.sheetBtn}
-              onPress={() =>
-                act(() =>
-                  pin.mutate(
-                    { messageId: message.id, pinned: !pinned },
-                    { onError: (e) => toastErr("Pin failed", e) },
-                  ),
-                )
-              }
-            >
-              <Icon icon={Pin} size={18} color={pinned ? colors.a1 : colors.text} />
-              <Text style={styles.sheetText}>{pinned ? "Unpin" : "Pin"}</Text>
-            </Pressable>
-          ) : null}
-          {canDelete ? (
-            <Pressable
-              style={styles.sheetBtn}
-              onPress={() =>
-                act(() =>
-                  Alert.alert(
-                    "Delete message?",
-                    isRoot && (message.reply_count ?? 0) > 0
-                      ? "This deletes the message and its whole thread for everyone."
-                      : "This deletes the message for everyone.",
-                    [
-                      { text: "Cancel", style: "cancel" },
-                      {
-                        text: "Delete",
-                        style: "destructive",
-                        onPress: () =>
-                          del.mutate(
-                            { message },
-                            { onError: (e) => toastErr("Delete failed", e) },
-                          ),
-                      },
-                    ],
-                  ),
-                )
-              }
-            >
-              <Icon icon={Trash2} size={18} color={colors.red} />
-              <Text style={[styles.sheetText, styles.sheetDanger]}>Delete</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </Pressable>
-    </Modal>
-  );
 }
 
 /* Pinned / starred overlays. */
@@ -654,10 +504,13 @@ export default function ChannelScreen() {
         <MessageActions
           message={actionsFor}
           channelId={channelId}
-          channelName={channelName}
           starred={starredIds.has(actionsFor.id)}
           pinned={pinnedIds.has(actionsFor.id)}
+          canEdit={actionsFor.author_type === "user" && actionsFor.author_id === username}
           canDelete={canDelete(actionsFor)}
+          onThread={actionsFor.thread_id == null
+            ? () => openThread(channelId, actionsFor, channelName)
+            : undefined}
           onClose={() => setActionsFor(null)}
           onReact={() => {
             setReactFor(actionsFor);

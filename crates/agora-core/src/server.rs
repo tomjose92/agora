@@ -318,7 +318,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/api/channels/{channel_id}/messages/{message_id}",
-            delete(delete_message),
+            patch(edit_message).delete(delete_message),
         )
         .route(
             "/api/channels/{channel_id}/messages/upload",
@@ -2189,6 +2189,52 @@ async fn delete_message(
         }),
     );
     Ok(Json(json!({"ok": true})))
+}
+
+/// Edit a human author's own message without replaying it to agents. Edits
+/// deliberately do not recompute mentions or unfurls: mentions cannot be
+/// retracted by the current schema, and an edit must not summon agents or
+/// create a second round of replies. UI clients receive only message_update.
+async fn edit_message(
+    State(state): State<AppState>,
+    Path((channel_id, message_id)): Path<(String, i64)>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    require_channel_member(&state, &user, &channel_id)?;
+    let existing = state
+        .hub
+        .store
+        .message(message_id)
+        .filter(|m| m["channel_id"] == channel_id.as_str())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    if existing["author_type"] != "user" || existing["author_id"] != user.username.as_str() {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "Only the sender can edit a message",
+        ));
+    }
+    let text = payload["text"].as_str().unwrap_or("").trim().to_string();
+    if text.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "Message text required"));
+    }
+    if text.chars().count() > MAX_MESSAGE_CHARS {
+        return Err(err(StatusCode::BAD_REQUEST, "Message too long"));
+    }
+    let (message, changed) = state
+        .hub
+        .store
+        .update_message_text(message_id, &text)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown message"))?;
+    if changed {
+        state.hub.post_transient(
+            &channel_id,
+            json!({"type": "message_update", "message": message}),
+        );
+    }
+    Ok(Json(message))
 }
 
 async fn channel_agents(
@@ -4162,6 +4208,83 @@ mod tests {
         .await;
         assert!(missed.is_err());
         assert!(store.message(mid(&stray)).is_some());
+    }
+
+    #[tokio::test]
+    async fn edit_message_is_author_only_and_never_reaches_agents() {
+        use crate::hub::AgentHandle;
+        use tokio::sync::mpsc::unbounded_channel;
+
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        for (id, role) in [("ana", "member"), ("boss", "admin"), ("mal", "member")] {
+            store.create_user(id, "", None, role).unwrap();
+        }
+        let g = store.create_group("Team", "", Some("boss"));
+        let gid = g["id"].as_str().unwrap();
+        for (id, role) in [("ana", "member"), ("boss", "admin"), ("mal", "member")] {
+            store.add_member(gid, "user", id, role, None);
+        }
+        store.add_member(gid, "agent", "bot", "member", None);
+        let c = store.create_channel(gid, "general", "");
+        let cid = c["id"].as_str().unwrap().to_string();
+        let (tx, mut rx) = unbounded_channel();
+        state.hub.register_agent(AgentHandle {
+            agent_id: "bot".into(), agent_name: "Bot".into(), requires_mention: false,
+            wants_context_feed: false, has_avatar: false, avatar_v: 0,
+            source: "test".into(), conn_id: state.hub.next_conn_id(), tx,
+        });
+        let own = store.add_message(&cid, "old searchable phrase", "user", "ana", None, None, &[]);
+        let mid = own["id"].as_i64().unwrap();
+        let q = || Query(HashMap::new());
+
+        let edited = edit_message(
+            State(state.clone()), Path((cid.clone(), mid)), q(),
+            session_headers(&state, "ana"), Json(json!({"text": "new @mal phrase"})),
+        ).await.unwrap().0;
+        assert_eq!(edited["text"], "new @mal phrase");
+        assert!(edited["meta"]["edited_at"].as_f64().is_some());
+        assert!(rx.try_recv().is_err(), "an edit must not be fanned out to agents");
+        assert_eq!(store.unread_counts("mal", std::slice::from_ref(&cid))[&cid]["mentions"], 0,
+            "mentions added by an edit must not create mention rows");
+
+        // Saving identical trimmed text is a no-op and keeps the first stamp.
+        let stamp = edited["meta"]["edited_at"].clone();
+        let same = edit_message(
+            State(state.clone()), Path((cid.clone(), mid)), q(),
+            session_headers(&state, "ana"), Json(json!({"text": "  new @mal phrase  "})),
+        ).await.unwrap().0;
+        assert_eq!(same["meta"]["edited_at"], stamp);
+
+        // Neither another member nor a group admin may rewrite the author.
+        for username in ["mal", "boss"] {
+            assert!(edit_message(
+                State(state.clone()), Path((cid.clone(), mid)), q(),
+                session_headers(&state, username), Json(json!({"text": "hijack"})),
+            ).await.is_err());
+        }
+        for bad_text in ["   ".to_string(), "x".repeat(MAX_MESSAGE_CHARS + 1)] {
+            assert!(edit_message(
+                State(state.clone()), Path((cid.clone(), mid)), q(),
+                session_headers(&state, "ana"), Json(json!({"text": bad_text})),
+            ).await.is_err());
+        }
+        let other = store.create_channel(gid, "other", "");
+        assert!(edit_message(
+            State(state.clone()),
+            Path((other["id"].as_str().unwrap().to_string(), mid)), q(),
+            session_headers(&state, "ana"), Json(json!({"text": "wrong channel"})),
+        ).await.is_err());
+        let agent = store.add_message(&cid, "agent text", "agent", "bot", None, None, &[]);
+        assert!(edit_message(
+            State(state.clone()), Path((cid.clone(), agent["id"].as_i64().unwrap())), q(),
+            session_headers(&state, "boss"), Json(json!({"text": "rewrite"})),
+        ).await.is_err());
+
+        assert!(store.search_messages("new", false, Some(&cid), None, None, None, None, false, 10, 0)
+            .iter().any(|m| m["id"] == mid));
+        assert!(store.search_messages("old", false, Some(&cid), None, None, None, None, false, 10, 0)
+            .iter().all(|m| m["id"] != mid));
     }
 
     #[tokio::test]

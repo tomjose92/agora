@@ -183,6 +183,8 @@ export interface LinkPreview {
 }
 
 export interface MessageMeta {
+  /** Unix seconds when a human author last changed the message text. */
+  edited_at?: number;
   options?: MessageOption[];
   options_id?: string;
   resolved?: {

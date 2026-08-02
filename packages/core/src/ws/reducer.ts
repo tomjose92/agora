@@ -9,10 +9,12 @@ import type {
   MessageDeleteEvent,
   MessageEvent,
   PinEvent,
+  PinnedMessage,
   ReadEvent,
   ThreadReadEvent,
   ThreadRenamedEvent,
   ThreadRow,
+  StarredMessage,
   WsEvent,
 } from "../api/types";
 import { keys } from "../api/keys";
@@ -50,6 +52,36 @@ export function replaceMessage(
     }),
   );
   return found ? { ...data, pages } : data;
+}
+
+/** Patch every cached presentation of a message, including embedded thread,
+    pin, and star rows whose previews would otherwise retain stale text. */
+export function applyMessageUpdate(qc: QueryClient, message: Message): void {
+  qc.setQueryData<MessagePages>(
+    keys.messages(message.channel_id, message.thread_id),
+    (data) => replaceMessage(data, message),
+  );
+  qc.setQueryData<Message>(keys.message(message.id), (old) =>
+    old ? { ...old, ...message } : old,
+  );
+  qc.setQueryData<ThreadRow[]>(keys.threads, (rows) => {
+    if (!rows?.some((row) => row.root.id === message.id)) return rows;
+    return rows.map((row) => row.root.id === message.id
+      ? { ...row, root: { ...row.root, ...message } }
+      : row);
+  });
+  qc.setQueryData<PinnedMessage[]>(keys.pins(message.channel_id), (rows) => {
+    if (!rows?.some((row) => row.id === message.id)) return rows;
+    return rows.map((row) => row.id === message.id ? { ...row, ...message } : row);
+  });
+  qc.setQueryData<StarredMessage[]>(keys.stars(message.channel_id), (rows) => {
+    if (!rows?.some((row) => row.id === message.id || row.root?.id === message.id)) return rows;
+    return rows.map((row) => ({
+      ...row,
+      ...(row.id === message.id ? message : {}),
+      root: row.root?.id === message.id ? { ...row.root, ...message } : row.root,
+    }));
+  });
 }
 
 /** Drop a message from its page set (deleted by its sender or an admin). */
@@ -266,10 +298,7 @@ export function applyWsEvent(
     }
     case "message_update": {
       const { message } = ev as { type: "message_update"; message: Message };
-      qc.setQueryData<MessagePages>(
-        keys.messages(message.channel_id, message.thread_id),
-        (data) => replaceMessage(data, message),
-      );
+      applyMessageUpdate(qc, message);
       break;
     }
     case "message_delete": {
