@@ -1,0 +1,540 @@
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import Svg, {
+  Circle,
+  Line,
+  Polyline,
+  Rect,
+  Text as SvgText,
+} from "react-native-svg";
+import { Map as MapIcon, Maximize2, X } from "lucide-react-native";
+import { WebView } from "react-native-webview";
+import {
+  formatDuration,
+  googleMapsDirectionsUrl,
+  googleMapsPlaceUrl,
+  isMapArtifactV1,
+  useMe,
+  type MapArtifactData,
+  type MapArtifactPlace,
+  type MapMessageArtifact,
+  type MessageArtifact,
+} from "@agora/core";
+import { colors } from "../lib/theme";
+import {
+  filterMapPlaces,
+  mapArtifactHtml,
+  projectMapPoints,
+  type MapFilters,
+} from "../lib/mapArtifacts";
+import { openLink } from "../lib/openLink";
+import { Icon } from "./Icon";
+
+const EMPTY_FILTERS: MapFilters = { region: "", day: "", category: "" };
+
+function CoordinateMap({
+  data,
+  places,
+  selected,
+  onPlace,
+}: {
+  data: MapArtifactData;
+  places?: MapArtifactPlace[];
+  selected?: string;
+  onPlace?: (place: MapArtifactPlace) => void;
+}) {
+  const detail = places !== undefined;
+  const showRegions = !detail || places.length === 0;
+  const source = !showRegions
+    ? places!.map((place) => ({
+        id: place.id,
+        lat: place.position.lat,
+        lng: place.position.lng,
+      }))
+    : data.regions.map((region) => ({
+        id: region.id,
+        lat: region.center.lat,
+        lng: region.center.lng,
+      }));
+  const projected = projectMapPoints(source);
+  const byId = new Map(projected.map((point) => [point.id, point]));
+  if (!projected.length)
+    return (
+      <View style={styles.empty}>
+        <Text style={styles.dim}>No mappable locations</Text>
+      </View>
+    );
+  return (
+    <Svg
+      testID="coordinate-map"
+      viewBox="0 0 100 100"
+      style={styles.svg}
+      accessibilityLabel="Itinerary map"
+    >
+      <Rect width="100" height="100" rx="4" fill="#0b1220" />
+      {[25, 50, 75].map((n) => (
+        <Line
+          key={`h${n}`}
+          x1="0"
+          x2="100"
+          y1={n}
+          y2={n}
+          stroke="#283348"
+          strokeWidth=".35"
+        />
+      ))}
+      {[25, 50, 75].map((n) => (
+        <Line
+          key={`v${n}`}
+          y1="0"
+          y2="100"
+          x1={n}
+          x2={n}
+          stroke="#283348"
+          strokeWidth=".35"
+        />
+      ))}
+      {projected.length > 1 ? (
+        <Polyline
+          points={projected.map((p) => `${p.x},${p.y}`).join(" ")}
+          fill="none"
+          stroke="#5aa0ff"
+          strokeWidth="1.5"
+          strokeDasharray="3 2"
+        />
+      ) : null}
+      {!showRegions
+        ? places!.map((place, index) => {
+            const point = byId.get(place.id);
+            if (!point) return null;
+            return (
+              <React.Fragment key={place.id}>
+                <Circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={selected === place.id ? 5 : 4}
+                  fill={selected === place.id ? colors.a2 : colors.a1}
+                  onPress={() => onPlace?.(place)}
+                />
+                <SvgText
+                  x={point.x}
+                  y={point.y + 1.5}
+                  textAnchor="middle"
+                  fill="#071019"
+                  fontSize="4"
+                  fontWeight="700"
+                >
+                  {place.order || index + 1}
+                </SvgText>
+              </React.Fragment>
+            );
+          })
+        : data.regions.map((region) => {
+            const point = byId.get(region.id);
+            if (!point) return null;
+            return (
+              <React.Fragment key={region.id}>
+                <Circle cx={point.x} cy={point.y} r="3" fill={colors.a2} />
+                <SvgText
+                  x={point.x + 5}
+                  y={point.y + 1.5}
+                  fill={colors.text}
+                  fontSize="4"
+                >
+                  {region.label}
+                </SvgText>
+              </React.Fragment>
+            );
+          })}
+      {detail && !places.length && data.places.length ? (
+        <SvgText
+          x="50"
+          y="96"
+          textAnchor="middle"
+          fill={colors.dim}
+          fontSize="4"
+        >
+          No places match
+        </SvgText>
+      ) : null}
+    </Svg>
+  );
+}
+
+function FilterChips({
+  label,
+  values,
+  value,
+  onChange,
+}: {
+  label: string;
+  values: Array<{ id: string; label: string }>;
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <View style={styles.filterRow}>
+      <Text style={styles.filterLabel}>{label}</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chips}
+      >
+        <Pressable
+          style={[styles.chip, !value && styles.chipOn]}
+          onPress={() => onChange("")}
+        >
+          <Text style={styles.chipText}>All</Text>
+        </Pressable>
+        {values.map((item) => (
+          <Pressable
+            key={item.id}
+            style={[styles.chip, value === item.id && styles.chipOn]}
+            onPress={() => onChange(item.id)}
+          >
+            <Text style={styles.chipText}>{item.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+export function MapViewer({
+  artifact,
+  initialRegion,
+  onClose,
+}: {
+  artifact: MapMessageArtifact;
+  initialRegion?: string;
+  onClose: () => void;
+}) {
+  const { data } = artifact;
+  const styleUrl = useMe().data?.map_style_url?.trim() || "";
+  const [filters, setFilters] = useState<MapFilters>({
+    ...EMPTY_FILTERS,
+    region: initialRegion || "",
+  });
+  const [selected, setSelected] = useState<MapArtifactPlace | null>(null);
+  const places = useMemo(() => filterMapPlaces(data, filters), [data, filters]);
+  const days = data.days.filter(
+    (day) => !filters.region || day.region_id === filters.region,
+  );
+  const categories = [...new Set(data.places.map((place) => place.category))];
+  useEffect(() => {
+    if (filters.day && !days.some((day) => day.id === filters.day))
+      setFilters((old) => ({ ...old, day: "" }));
+    setSelected(null);
+  }, [filters.region]); // eslint-disable-line react-hooks/exhaustive-deps
+  const detail = selected || places[0] || null;
+  return (
+    <Modal animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modal}>
+        <View style={styles.modalHead}>
+          <Icon icon={MapIcon} size={16} color={colors.a2} />
+          <Text style={styles.modalTitle} numberOfLines={1}>
+            {artifact.title}
+          </Text>
+          <Pressable accessibilityLabel="Close map" onPress={onClose}>
+            <Icon icon={X} size={22} color={colors.dim} />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.viewer}>
+          <FilterChips
+            label="Area"
+            value={filters.region}
+            values={data.regions.map((r) => ({ id: r.id, label: r.label }))}
+            onChange={(region) => setFilters((old) => ({ ...old, region }))}
+          />
+          <FilterChips
+            label="Day"
+            value={filters.day}
+            values={days.map((d) => ({
+              id: d.id,
+              label: `${d.number} · ${d.label}`,
+            }))}
+            onChange={(day) => setFilters((old) => ({ ...old, day }))}
+          />
+          <FilterChips
+            label="Category"
+            value={filters.category}
+            values={categories.map((c) => ({ id: c, label: c }))}
+            onChange={(category) => setFilters((old) => ({ ...old, category }))}
+          />
+          <Pressable onPress={() => setFilters(EMPTY_FILTERS)}>
+            <Text style={styles.reset}>Reset view</Text>
+          </Pressable>
+          <View style={styles.mapFrame}>
+            {styleUrl && places.length ? (
+              <WebView
+                testID="tile-map"
+                originWhitelist={["*"]}
+                source={{ html: mapArtifactHtml(data, styleUrl, places) }}
+                style={styles.web}
+                onMessage={(event) => {
+                  try {
+                    const id = JSON.parse(event.nativeEvent.data).placeId;
+                    setSelected(places.find((p) => p.id === id) || null);
+                  } catch {
+                    /* ignore untrusted messages */
+                  }
+                }}
+              />
+            ) : (
+              <CoordinateMap
+                data={data}
+                places={places}
+                selected={selected?.id}
+                onPlace={setSelected}
+              />
+            )}
+          </View>
+          {detail ? (
+            <View style={styles.details}>
+              <Text style={styles.category}>{detail.category}</Text>
+              <Text style={styles.placeTitle}>{detail.label}</Text>
+              <Text style={styles.dim}>
+                {[detail.start_time, formatDuration(detail.duration_minutes)]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+              {detail.description ? (
+                <Text style={styles.body}>{detail.description}</Text>
+              ) : null}
+              <View style={styles.actions}>
+                <Pressable
+                  onPress={() => void openLink(googleMapsPlaceUrl(detail))}
+                >
+                  <Text style={styles.link}>Open in Google Maps</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void openLink(googleMapsDirectionsUrl(detail))}
+                >
+                  <Text style={styles.link}>Directions</Text>
+                </Pressable>
+              </View>
+              {places.map((place) => (
+                <Pressable
+                  key={place.id}
+                  style={[
+                    styles.placeRow,
+                    selected?.id === place.id && styles.placeOn,
+                  ]}
+                  onPress={() => setSelected(place)}
+                >
+                  <Text style={styles.placeNum}>{place.order || "•"}</Text>
+                  <Text style={styles.body}>{place.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.empty}>
+              <Text style={styles.placeTitle}>
+                {data.places.length
+                  ? "No places match these filters"
+                  : "No individual places pinned"}
+              </Text>
+              <Text style={styles.dim}>
+                {data.places.length
+                  ? "Change a filter or reset the view."
+                  : "This map marks areas only."}
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+export function MapArtifactCard({
+  artifact,
+}: {
+  artifact: MapMessageArtifact;
+}) {
+  const [openRegion, setOpenRegion] = useState<string | null>(null);
+  const { data } = artifact;
+  return (
+    <>
+      <View style={styles.card}>
+        <Pressable
+          accessibilityLabel={`Open ${artifact.title}`}
+          onPress={() => setOpenRegion("")}
+        >
+          <View style={styles.cardHead}>
+            <View style={styles.grow}>
+              <Text style={styles.kicker}>Interactive map</Text>
+              <Text style={styles.title}>{artifact.title}</Text>
+              {artifact.summary ? (
+                <Text style={styles.dim}>{artifact.summary}</Text>
+              ) : null}
+            </View>
+            <Icon icon={Maximize2} size={17} color={colors.a1} />
+          </View>
+          <View style={styles.preview}>
+            <CoordinateMap data={data} />
+          </View>
+        </Pressable>
+        <View style={styles.cardFoot}>
+          <Text style={styles.dim}>
+            {data.regions.length} areas · {data.places.length} places
+          </Text>
+          <View style={styles.chips}>
+            {data.regions.map((region) => (
+              <Pressable
+                key={region.id}
+                style={styles.chip}
+                onPress={() => setOpenRegion(region.id)}
+              >
+                <Text style={styles.chipText}>{region.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </View>
+      {openRegion !== null ? (
+        <MapViewer
+          artifact={artifact}
+          initialRegion={openRegion || undefined}
+          onClose={() => setOpenRegion(null)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export function ArtifactList({ artifacts }: { artifacts?: MessageArtifact[] }) {
+  if (!artifacts?.length) return null;
+  return (
+    <View style={styles.list}>
+      {artifacts.map((artifact) =>
+        isMapArtifactV1(artifact) ? (
+          <MapArtifactCard key={artifact.id} artifact={artifact} />
+        ) : (
+          <View key={artifact.id} style={styles.unsupported}>
+            <Text style={styles.kicker}>{artifact.type} artifact</Text>
+            <Text style={styles.title}>{artifact.title}</Text>
+            <Text style={styles.dim}>
+              This version of Agora cannot display this artifact.
+            </Text>
+          </View>
+        ),
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  list: { gap: 8, marginTop: 7 },
+  card: {
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#0b0f18",
+  },
+  cardHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+  },
+  grow: { flex: 1, gap: 3 },
+  kicker: {
+    color: colors.a2,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+  },
+  title: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  preview: { height: 150 },
+  svg: { width: "100%", height: "100%" },
+  cardFoot: { padding: 10, gap: 7 },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  chip: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.panelStrong,
+  },
+  chipOn: { borderColor: colors.a1, backgroundColor: "rgba(139,124,255,.22)" },
+  chipText: { color: colors.text, fontSize: 11 },
+  unsupported: {
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 10,
+    gap: 4,
+  },
+  modal: { flex: 1, backgroundColor: colors.bg, paddingTop: 52 },
+  modalHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: { flex: 1, color: colors.text, fontSize: 16, fontWeight: "700" },
+  viewer: { padding: 14, paddingBottom: 40, gap: 10 },
+  filterRow: { gap: 5 },
+  filterLabel: {
+    color: colors.dim,
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  reset: {
+    color: colors.a1,
+    fontSize: 12,
+    fontWeight: "700",
+    alignSelf: "flex-end",
+  },
+  mapFrame: {
+    height: 330,
+    borderRadius: 12,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+  },
+  web: { flex: 1, backgroundColor: "#0b1220" },
+  details: {
+    gap: 8,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+  },
+  category: {
+    color: colors.a2,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  placeTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
+  body: { color: colors.text, fontSize: 13 },
+  dim: { color: colors.dim, fontSize: 12 },
+  actions: { flexDirection: "row", gap: 18 },
+  link: { color: colors.a1, fontSize: 12, fontWeight: "700" },
+  placeRow: { flexDirection: "row", gap: 9, padding: 8, borderRadius: 7 },
+  placeOn: { backgroundColor: "rgba(139,124,255,.16)" },
+  placeNum: { color: colors.a2, width: 18, fontWeight: "800" },
+  empty: {
+    minHeight: 100,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    gap: 5,
+  },
+});
