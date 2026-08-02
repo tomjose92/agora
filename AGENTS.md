@@ -68,7 +68,9 @@ others reuse those processes. Gitignored per-tool skill directories that do
 not travel with a new checkout are linked back to the main checkout, without
 sharing broader per-session state. Root dependencies are installed only when
 requested with `--install-deps`; mobile dependencies and generated native
-projects remain opt-in.
+projects remain opt-in. Without `--install-deps`, Node resolution falls back
+to the main checkout's hoisted `node_modules`; use `--install-deps` whenever a
+branch changes `package.json` or `package-lock.json`.
 
 Use `scripts/worktree.sh list` to inspect worktrees and
 `scripts/worktree.sh rm <branch-or-path>` after the work is merged. Removal

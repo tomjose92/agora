@@ -15,6 +15,7 @@ export default defineConfig({
   // `?worker&url` bundle (see MapCanvas.tsx) is spawned in matching form.
   worker: { format: "es" },
   server: {
+    port: Number(process.env.AGORA_WEB_PORT) || 5173,
     proxy: {
       "/api": apiOrigin,
       "/ws": { target: apiOrigin, ws: true },

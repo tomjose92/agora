@@ -23,7 +23,7 @@ worktree="$fixture/.worktrees/feat-one"
 [[ "$(git -C "$worktree" branch --show-current)" == "feat/one" ]]
 grep -q '^export AGORA_PORT=4480$' "$worktree/.worktree-env"
 grep -q '^export AGORA_BASE=' "$worktree/.worktree-env"
-[[ "$(stat -f '%Lp' "$worktree/.env" 2>/dev/null || stat -c '%a' "$worktree/.env")" == "600" ]]
+[[ "$(stat -c '%a' "$worktree/.env" 2>/dev/null || stat -f '%Lp' "$worktree/.env")" == "600" ]]
 [[ -L "$worktree/.claude/skills" ]]
 [[ -L "$worktree/mobile/.claude/skills" ]]
 

@@ -45,13 +45,14 @@ link_skills() {
 
 reserve_slot_and_write_env() {
   local worktree=$1 slug=$2
-  local lock="$worktrees_dir/.slot-lock" attempts=0 slot=1 env_file used
+  local lock="$worktrees_dir/.slot-lock" lock_q attempts=0 slot=1 env_file used
   while ! mkdir "$lock" 2>/dev/null; do
     attempts=$((attempts + 1))
-    (( attempts < 100 )) || die "timed out waiting for the port-slot lock"
+    (( attempts < 100 )) || die "timed out waiting for the port-slot lock; if no other run is active, remove $lock"
     sleep 0.1
   done
-  trap 'rmdir "$lock" 2>/dev/null || true' RETURN
+  printf -v lock_q '%q' "$lock"
+  trap "rmdir $lock_q 2>/dev/null || true" RETURN EXIT INT TERM
   while :; do
     used=false
     for env_file in "$worktrees_dir"/*/.worktree-env; do
@@ -115,10 +116,12 @@ new_worktree() {
   [[ ! -e "$target" ]] || die "target already exists: $target"
 
   if git show-ref --verify --quiet "refs/heads/$branch"; then
+    [[ -z "$from_ref" ]] || echo "worktree: warning: --from is ignored because local branch '$branch' already exists" >&2
     if ! git worktree add "$target" "$branch"; then
       die "could not attach '$branch'; it may already be checked out in another worktree"
     fi
   elif git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    [[ -z "$from_ref" ]] || echo "worktree: warning: --from is ignored because origin/$branch already exists" >&2
     git worktree add --track -b "$branch" "$target" "origin/$branch"
   else
     if [[ -z "$from_ref" ]]; then
