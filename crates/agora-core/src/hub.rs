@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc::UnboundedSender, Notify};
 
 use crate::store::{slugify, NewAttachment, Store};
+use crate::attachments::{safe_filename, sniff_image_mime};
 
 /// Max consecutive agent-authored messages fanned out to other agents in one
 /// channel/thread before the hub goes quiet until a human speaks again: the
@@ -34,6 +35,7 @@ const ROOT_CONTEXT_MAX_CHARS: usize = 500;
 /// Attachments larger than this are referenced by name only in the inbound
 /// frame (no inline bytes) — remote agents may not be able to reach our HTTP.
 pub const MAX_INLINE_ATTACHMENT: usize = 8 * 1024 * 1024;
+pub const MAX_FILES_PER_AGENT_POST: usize = 5;
 
 /// Page size for an agent `history_request` when it names none, and the hard
 /// cap applied regardless of what it asks for — an agent can page back with
@@ -248,16 +250,22 @@ pub struct Hub {
     /// Queue to the link-unfurl worker (installed at boot; unit tests leave
     /// it empty so posting never touches the network).
     unfurl_tx: Mutex<Option<UnboundedSender<i64>>>,
+    max_attachment_bytes: usize,
 }
 
 impl Hub {
     pub fn new(store: Arc<Store>) -> Self {
+        Self::new_with_attachment_limit(store, 10 * 1024 * 1024)
+    }
+
+    pub fn new_with_attachment_limit(store: Arc<Store>, max_attachment_bytes: usize) -> Self {
         Self {
             store,
             state: Mutex::new(HubState::default()),
             ui_active: AtomicBool::new(true),
             notifier: Mutex::new(None),
             unfurl_tx: Mutex::new(None),
+            max_attachment_bytes,
         }
     }
 
@@ -745,8 +753,31 @@ impl Hub {
     ) -> Value {
         self.post_agent_message_with_options(
             agent_id, agent_name, channel_id, text, thread_id, None, None, None, None, None, None,
-            None,
+            None, vec![],
         )
+    }
+
+    fn decode_agent_attachments(&self, raw: Option<&Value>) -> Result<Vec<NewAttachment>, String> {
+        let Some(raw) = raw else { return Ok(vec![]) };
+        let files = raw.as_array().ok_or("attachments must be an array")?;
+        if files.len() > MAX_FILES_PER_AGENT_POST {
+            return Err(format!("too many attachments (max {MAX_FILES_PER_AGENT_POST})"));
+        }
+        let mut out = Vec::with_capacity(files.len());
+        for file in files {
+            let filename = file["filename"].as_str().ok_or("attachment filename required")?;
+            let encoded = file["data_b64"].as_str().ok_or("attachment data_b64 required")?;
+            let encoded_limit = self.max_attachment_bytes.saturating_add(2) / 3 * 4 + 4;
+            if encoded.len() > encoded_limit { return Err("attachment too large".into()); }
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(encoded).map_err(|_| "invalid attachment base64")?;
+            if data.is_empty() { return Err("empty attachment".into()); }
+            if data.len() > self.max_attachment_bytes { return Err("attachment too large".into()); }
+            let mime = sniff_image_mime(&data)
+                .ok_or("unsupported attachment type (images only)")?.to_string();
+            out.push(NewAttachment { filename: safe_filename(filename), mime, data });
+        }
+        Ok(out)
     }
 
     pub fn post_agent_message_with_options(
@@ -763,6 +794,7 @@ impl Hub {
         form: Option<&Value>,
         form_id: Option<&str>,
         artifacts: Option<&Value>,
+        attachments: Vec<NewAttachment>,
     ) -> Value {
         let mut meta_obj = serde_json::Map::new();
         if let Some(opts) = options {
@@ -814,7 +846,7 @@ impl Hub {
             agent_id,
             Some(agent_name),
             thread_id,
-            &[],
+            &attachments,
             meta.as_ref(),
         );
         let streak = {
@@ -1391,7 +1423,20 @@ impl Hub {
         match frame["type"].as_str() {
             Some("post") => {
                 let text = frame["text"].as_str().unwrap_or_default();
-                if !text.is_empty() {
+                let attachments = match self.decode_agent_attachments(frame.get("attachments")) {
+                    Ok(files) => files,
+                    Err(error) => {
+                        if sender_conn_id.is_some() {
+                            let _ = handle.tx.send(json!({
+                                "type": "error", "frame_type": "post", "agent_id": agent_id,
+                                "request_id": frame["request_id"], "error": error,
+                                "channel_id": channel_id, "thread_id": thread_id,
+                            }));
+                        }
+                        return;
+                    }
+                };
+                if !text.is_empty() || !attachments.is_empty() {
                     let options = frame.get("options");
                     let options_id = frame["options_id"].as_str();
                     let tldr = frame["tldr"].as_str().map(str::trim).filter(|t| {
@@ -1412,6 +1457,7 @@ impl Hub {
                         frame.get("form"),
                         frame["form_id"].as_str(),
                         frame.get("artifacts"),
+                        attachments,
                     );
                 }
             }
@@ -2608,6 +2654,46 @@ mod tests {
     }
 
     #[test]
+    fn agent_image_only_post_is_stored_and_fanned_out() {
+        let h = hub();
+        let _sender_rx = add_agent(&h, "bot-a", "Bot A", false);
+        let mut recipient_rx = add_agent_full(&h, "bot-b", "Bot B", false, true);
+        let conn_id = h.agent_handle("bot-a").unwrap().conn_id;
+        let cid = setup_channel(&h, &["bot-a", "bot-b"]);
+        let png = b"\x89PNG\r\n\x1a\nimage";
+        h.handle_agent_frame_from(conn_id, &json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "request_id": "image-only", "text": "",
+            "attachments": [{"filename": "../shot.png", "mime": "text/plain",
+                "data_b64": base64::engine::general_purpose::STANDARD.encode(png)}],
+        }));
+        let messages = h.store.messages(&cid, None, None, 10);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["attachments"][0]["filename"], "shot.png");
+        assert_eq!(messages[0]["attachments"][0]["mime"], "image/png");
+        let inbound = last_frame(&mut recipient_rx, "inbound").unwrap();
+        assert_eq!(inbound["attachments"][0]["data_b64"],
+            base64::engine::general_purpose::STANDARD.encode(png));
+    }
+
+    #[test]
+    fn invalid_agent_attachment_rejects_the_whole_post() {
+        let h = Hub::new_with_attachment_limit(Arc::new(Store::open_in_memory().unwrap()), 8);
+        let mut rx = add_agent(&h, "bot-a", "Bot A", false);
+        let conn_id = h.agent_handle("bot-a").unwrap().conn_id;
+        let cid = setup_channel(&h, &["bot-a"]);
+        h.handle_agent_frame_from(conn_id, &json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "request_id": "bad-image", "text": "must not land",
+            "attachments": [{"filename": "x.png", "mime": "image/png", "data_b64": "not-base64"}],
+        }));
+        assert!(h.store.messages(&cid, None, None, 10).is_empty());
+        let error = last_frame(&mut rx, "error").unwrap();
+        assert_eq!(error["request_id"], "bad-image");
+        assert_eq!(error["frame_type"], "post");
+    }
+
+    #[test]
     fn agent_writes_are_denied_outside_channel_membership() {
         let h = hub();
         let _member_rx = add_agent(&h, "bot-a", "Bot A", false);
@@ -2744,6 +2830,7 @@ mod tests {
                 None,
                 None,
                 None,
+                vec![],
             );
         }
         let allowed_mid = h.store.messages(&allowed_id, None, None, 10)[0]["id"]
@@ -2807,6 +2894,7 @@ mod tests {
                 None,
                 None,
                 None,
+                vec![],
             );
         }
         let a_mid = h

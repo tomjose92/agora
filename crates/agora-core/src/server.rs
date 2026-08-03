@@ -30,6 +30,9 @@ use crate::config::{Config, Connection, PairingToken};
 use crate::connections::ConnectionManager;
 use crate::hub::{AgentHandle, Hub};
 use crate::store::{new_token, now, NewAttachment};
+use crate::attachments::{attachment_mime, safe_filename};
+#[cfg(test)]
+use crate::attachments::sniff_image_mime;
 
 const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
@@ -472,60 +475,6 @@ fn group_payload(state: &AppState, group: &Value, user: &AuthedUser) -> Value {
         user.instance_admin || state.hub.store.user_is_group_admin(&user.username, gid);
     out["role"] = json!(if admin { "admin" } else { "member" });
     out
-}
-
-/// Basename only, control chars stripped, bounded length.
-fn safe_filename(name: &str) -> String {
-    let base = name.replace('\\', "/");
-    let base = base.rsplit('/').next().unwrap_or("").trim();
-    let cleaned: String = base
-        .chars()
-        .filter(|c| !c.is_control() && !"<>:\"|?*".contains(*c))
-        .take(120)
-        .collect();
-    if cleaned.is_empty() {
-        "file".to_string()
-    } else {
-        cleaned
-    }
-}
-
-/// Image MIME from magic bytes, or None for anything that isn't a recognized
-/// image. Client-declared content types are unreliable (especially from mobile
-/// pickers), and the stored mime drives both inline rendering in the UI and
-/// the vision path on the agent side — so trust the bytes for images and fall
-/// back to the client's declaration for everything else.
-fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
-    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return Some("image/png");
-    }
-    if data.starts_with(b"\xff\xd8\xff") {
-        return Some("image/jpeg");
-    }
-    if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-        return Some("image/gif");
-    }
-    if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
-        return Some("image/webp");
-    }
-    // ISO-BMFF image brands: HEIC (iPhone default), HEIF, AVIF.
-    if data.len() >= 12 && &data[4..8] == b"ftyp" {
-        return match &data[8..12] {
-            b"heic" | b"heix" | b"hevc" => Some("image/heic"),
-            b"heif" | b"mif1" | b"msf1" => Some("image/heif"),
-            b"avif" | b"avis" => Some("image/avif"),
-            _ => None,
-        };
-    }
-    None
-}
-
-/// The mime to store for an upload: magic bytes for images, the client's
-/// content-type otherwise.
-fn attachment_mime(data: &[u8], declared: &str) -> String {
-    sniff_image_mime(data)
-        .map(str::to_string)
-        .unwrap_or_else(|| declared.split(';').next().unwrap_or("").trim().to_string())
 }
 
 fn resolve_thread(
@@ -3212,7 +3161,14 @@ async fn agent_ws(
     let Some(source) = state.config.valid_pairing_token(&token) else {
         return (StatusCode::UNAUTHORIZED, "bad pairing token").into_response();
     };
-    ws.on_upgrade(move |socket| handle_agent_socket(state, socket, source, token))
+    let per_file = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
+    let wire_limit = per_file
+        .saturating_mul(MAX_FILES_PER_MESSAGE)
+        .saturating_mul(4) / 3
+        + 1024 * 1024;
+    ws.max_frame_size(wire_limit)
+        .max_message_size(wire_limit)
+        .on_upgrade(move |socket| handle_agent_socket(state, socket, source, token))
 }
 
 fn register_pairing_socket(
@@ -3268,7 +3224,18 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String,
                                 registered = true;
                             }
                         } else if registered {
-                            state.hub.handle_agent_frame_from(conn_id, &frame);
+                            let has_attachments = frame["type"] == "post"
+                                && frame["attachments"].as_array().is_some_and(|a| !a.is_empty());
+                            let agent_id = frame["agent_id"].as_str().unwrap_or_default();
+                            if has_attachments && !state.upload_limiter.allow(&format!("agent-conn:{conn_id}")) {
+                                let _ = tx.send(json!({
+                                    "type": "error", "frame_type": "post", "agent_id": agent_id,
+                                    "request_id": frame["request_id"], "error": "too many uploads — slow down",
+                                    "channel_id": frame["channel_id"], "thread_id": frame["thread_id"],
+                                }));
+                            } else {
+                                state.hub.handle_agent_frame_from(conn_id, &frame);
+                            }
                         }
                     }
                     Some(Ok(WsMessage::Close(_))) | None => break,
@@ -4333,6 +4300,7 @@ mod tests {
             })),
             Some("daily-1"),
             None,
+            vec![],
         );
         let mid = m["id"].as_i64().unwrap();
         let q = || Query(HashMap::new());

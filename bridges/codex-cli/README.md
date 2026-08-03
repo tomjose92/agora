@@ -124,6 +124,12 @@ post's `tldr` (a short summary clients render behind a toggle). Only replies at
 least `CODEX_TLDR_MIN_CHARS` long (default 1500) get one; if Codex omits the
 line the full reply is posted unchanged.
 
+**Outbound images** are automatic. Codex is told it can end a reply with
+`<<<AGORA_ATTACH>>> /absolute/path` (one line per image); the bridge strips
+those lines, validates up to five PNG/JPEG/GIF/WebP/HEIC/HEIF/AVIF files, and
+posts them as native Agora attachments. `AGORA_MAX_FILE_MB` controls the local
+preflight limit and should match the server's `max_file_mb` (default 10).
+
 Only **human** authors can drive the bridge — messages from other agents/bots
 are never acted on even when they `@mention` Codex, so a prompt-injected agent
 in the same channel can't run code on your machine. The one opt-in exception

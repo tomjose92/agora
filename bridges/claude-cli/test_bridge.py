@@ -1,6 +1,7 @@
 import asyncio
 import json
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -173,7 +174,7 @@ class AppendSystemArgsTests(unittest.TestCase):
         self.assertEqual(args[0], "--append-system-prompt")
         self.assertEqual(
             args[1],
-            bridge.COLLAB_SYSTEM_PROMPT + "\n\n" + bridge.TLDR_SYSTEM_PROMPT,
+            bridge.COLLAB_SYSTEM_PROMPT + "\n\n" + bridge.TLDR_SYSTEM_PROMPT + "\n\n" + bridge.ATTACH_SYSTEM_PROMPT,
         )
         self.assertEqual(len(args), 2)
 
@@ -182,19 +183,19 @@ class AppendSystemArgsTests(unittest.TestCase):
         instance.tldr_default = False
         self.assertEqual(
             instance._append_system_args({}),
-            ["--append-system-prompt", bridge.COLLAB_SYSTEM_PROMPT],
+            ["--append-system-prompt", bridge.COLLAB_SYSTEM_PROMPT + "\n\n" + bridge.ATTACH_SYSTEM_PROMPT],
         )
         instance.peer_agents = frozenset()
         instance.tldr_default = True
         self.assertEqual(
             instance._append_system_args({}),
-            ["--append-system-prompt", bridge.TLDR_SYSTEM_PROMPT],
+            ["--append-system-prompt", bridge.TLDR_SYSTEM_PROMPT + "\n\n" + bridge.ATTACH_SYSTEM_PROMPT],
         )
 
     def test_neither_block_means_no_flag(self):
         instance = make_bridge()
         instance.tldr_default = False
-        self.assertEqual(instance._append_system_args({}), [])
+        self.assertEqual(instance._append_system_args({}), ["--append-system-prompt", bridge.ATTACH_SYSTEM_PROMPT])
 
 
 
@@ -324,6 +325,42 @@ class BlankResultTests(unittest.TestCase):
         """A held blank still carries the forked session id we must resume from."""
         _, b = run_bridge([_result("", session_id="forked")], grace=0.2)
         self.assertEqual(b.bindings["k"]["session_id"], "forked")
+
+
+class OutboundAttachmentTests(unittest.TestCase):
+    def test_empty_run_posts_original_fallback(self):
+        instance = make_bridge()
+        del instance.forward_to_claude
+        instance.bindings = {"c1": {"cwd": "/tmp", "session_id": "s1"}}
+        instance.run_claude = AsyncMock(return_value="")
+        instance.typing = Mock()
+        instance.tldr_default = False
+        instance.tldr_min_chars = 1500
+        asyncio.run(instance.forward_to_claude("c1", {"channel_id": "c1"}, "hello"))
+        self.assertEqual(instance.post.call_args.args[1], "(no reply — the run ended without any text)")
+
+    def test_extracts_image_and_reports_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "screen shot.png"
+            path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+            body, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                f"Here it is.\n{bridge.ATTACH_SENTINEL} {path}")
+        self.assertEqual((body, notices), ("Here it is.", []))
+        self.assertEqual(attachments[0]["filename"], "screen shot.png")
+        self.assertEqual(attachments[0]["mime"], "image/png")
+        body, attachments, notices = bridge.Bridge._split_outbound_attachments(
+            f"Done\n{bridge.ATTACH_SENTINEL} /missing/nope.png")
+        self.assertEqual((body, attachments, len(notices)), ("Done", [], 1))
+
+    def test_attachments_ride_only_the_first_text_chunk(self):
+        instance = bridge.Bridge.__new__(bridge.Bridge)
+        instance.agent_id = "claude-cli"
+        instance.send = Mock()
+        attachment = {"filename": "x.png", "mime": "image/png", "data_b64": "eA=="}
+        instance.post({"channel_id": "c1"}, "x" * (bridge.MAX_POST_CHARS + 1), attachments=[attachment])
+        self.assertEqual(instance.send.call_count, 2)
+        self.assertEqual(instance.send.call_args_list[0].args[0]["attachments"], [attachment])
+        self.assertNotIn("attachments", instance.send.call_args_list[1].args[0])
 
 
 if __name__ == "__main__":
