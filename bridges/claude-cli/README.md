@@ -84,6 +84,12 @@ least `CLAUDE_TLDR_MIN_CHARS` long (default 1500) get one; if Claude omits the
 line the full reply is posted unchanged, so nothing regresses when it's off or
 the model doesn't comply.
 
+**Outbound images** are automatic. Claude is told it can end a reply with
+`<<<AGORA_ATTACH>>> /absolute/path` (one line per image); the bridge strips
+those lines, validates up to five PNG/JPEG/GIF/WebP/HEIC/HEIF/AVIF files, and
+posts them as native Agora attachments. `AGORA_MAX_FILE_MB` controls the local
+preflight limit and should match the server's `max_file_mb` (default 10).
+
 **Claude slash commands from chat.** Non-bridge messages go to `claude -p`
 (headless — no interactive terminal UI). Only commands the CLI exposes for that
 mode work when forwarded (see each run's `system/init` `slash_commands`).

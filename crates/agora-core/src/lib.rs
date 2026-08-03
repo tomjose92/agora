@@ -7,6 +7,7 @@
 
 pub mod ai;
 pub mod artifacts;
+mod attachments;
 pub mod auth;
 pub mod config;
 pub mod connections;
@@ -69,9 +70,13 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
     migrate::seed_from_env(&data_dir)?;
 
     let config = Arc::new(config::Config::load(&data_dir)?);
+    let snapshot = config.snapshot();
     let store = Arc::new(store::Store::open(&data_dir.join("agora.db"))?);
     bootstrap_admin_user(&config, &store);
-    let hub = Arc::new(hub::Hub::new(store));
+    let hub = Arc::new(hub::Hub::new_with_attachment_limit(
+        store,
+        snapshot.max_file_mb as usize * 1024 * 1024,
+    ));
     // Link previews are fetched off the post path: posts queue their message
     // id here; the worker fetches behind SSRF guards and answers with a
     // `message_update` broadcast when metadata lands.
@@ -79,7 +84,6 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
     let connections = connections::ConnectionManager::new(Arc::clone(&hub), Arc::clone(&config));
     connections.sync();
 
-    let snapshot = config.snapshot();
     let (auth_limiter, upload_limiter) = server::AppState::default_limiters();
     let state = server::AppState {
         hub,

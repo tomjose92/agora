@@ -51,6 +51,13 @@ PROGRESS_THROTTLE = 2.0  # seconds between progress frames
 TAIL_BYTES = 256 * 1024  # how much of a rollout .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
+MAX_OUTBOUND_ATTACHMENT_BYTES = int(os.environ.get("AGORA_MAX_FILE_MB", "10")) * 1024 * 1024
+ATTACH_SENTINEL = "<<<AGORA_ATTACH>>>"
+ATTACH_PROMPT_SUFFIX = (
+    "\n\n(Attachment note from the relay: to send a generated image, end your reply "
+    f"with one `{ATTACH_SENTINEL} /absolute/path` line per image. The relay removes "
+    "those lines and uploads the files. Only use paths for images you intentionally want to share.)"
+)
 
 # TL;DR support. When enabled for a run we ask Cursor to end a long reply with a
 # sentinel line the bridge lifts into the post frame's `tldr` field (a short
@@ -499,7 +506,8 @@ class Bridge:
     def send(self, frame: dict) -> None:
         self.outbox.put_nowait(frame)
 
-    def post(self, key_frame: dict, text: str, tldr: str | None = None) -> None:
+    def post(self, key_frame: dict, text: str, tldr: str | None = None,
+             attachments: list[dict] | None = None) -> None:
         base = {
             "type": "post",
             "agent_id": self.agent_id,
@@ -507,7 +515,7 @@ class Bridge:
             "thread_id": key_frame.get("thread_id"),
         }
         first = True
-        while text:
+        while text or (first and attachments):
             chunk, text = text[:MAX_POST_CHARS], text[MAX_POST_CHARS:]
             frame = {**base, "request_id": f"post-{time.time_ns()}", "text": chunk}
             # A tldr summarizes the whole reply, so it rides only the first
@@ -515,6 +523,8 @@ class Bridge:
             # chunk's text — trivially true for a one-sentence summary).
             if first and tldr:
                 frame["tldr"] = tldr
+            if first and attachments:
+                frame["attachments"] = attachments
             self.send(frame)
             first = False
 
@@ -1035,6 +1045,7 @@ class Bridge:
             parts.append(TLDR_PROMPT_SUFFIX)
         if self.peer_agents:
             parts.append(COLLAB_PROMPT_SUFFIX)
+        parts.append(ATTACH_PROMPT_SUFFIX)
         return "".join(parts)
 
     def _cmd_tldr(self, key: str, arg: str) -> str:
@@ -1119,9 +1130,14 @@ class Bridge:
             if not text.lstrip().startswith("/"):
                 text = self._flush_context(key, text)
             reply = await self.run_agent(key, frame, binding, text)
+            reply, attachments, notices = self._split_outbound_attachments(reply)
             body, tldr = self._split_tldr(
                 reply, self._tldr_enabled(binding), self.tldr_min_chars)
-            self.post(frame, body or "(empty response)", tldr)
+            if notices:
+                body = (body + "\n\n" if body else "") + "\n".join(notices)
+            if not body and not attachments:
+                body = "(empty response)"
+            self.post(frame, body, tldr if body else None, attachments)
         except Exception as e:  # degrade to a chat message, never crash the loop
             log(f"agent run failed: {e!r}")
             self.post(frame, f"Cursor run failed: {e}")
@@ -1164,6 +1180,31 @@ class Bridge:
         if len(body) < min_chars or len(tldr) >= len(body):
             return body, None
         return body, tldr
+
+    @staticmethod
+    def _split_outbound_attachments(reply: str) -> tuple[str, list[dict], list[str]]:
+        lines = reply.splitlines()
+        paths, kept = [], []
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped.startswith(ATTACH_SENTINEL):
+                value = stripped[len(ATTACH_SENTINEL):].strip()
+                if value: paths.append(value)
+            else: kept.append(line)
+        notices, attachments = [], []
+        if len(paths) > 5:
+            return "\n".join(kept).rstrip(), [], ["Could not attach images: maximum 5 files per message."]
+        for value in paths:
+            path = Path(value).expanduser()
+            try: data = path.read_bytes() if path.is_file() else b""
+            except OSError: data = b""
+            mime = _image_mime(data)
+            if not data or len(data) > MAX_OUTBOUND_ATTACHMENT_BYTES or not mime:
+                notices.append(f"Could not attach {path.name or 'image'}: missing, too large, or unsupported.")
+                continue
+            attachments.append({"filename": path.name, "mime": mime,
+                                "data_b64": base64.b64encode(data).decode("ascii")})
+        return "\n".join(kept).rstrip(), attachments, notices
 
     def _stage_attachments(self, frame: dict, text: str) -> tuple[str, list[str], str | None]:
         """Drop any inbound attachments to a temp dir and build the prompt.
@@ -1387,6 +1428,18 @@ class Bridge:
                     )
         finally:
             send_task.cancel()
+
+
+def _image_mime(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"): return "image/png"
+    if data.startswith(b"\xff\xd8\xff"): return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")): return "image/gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP": return "image/webp"
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return {b"heic": "image/heic", b"heix": "image/heic", b"hevc": "image/heic",
+                b"heif": "image/heif", b"mif1": "image/heif", b"msf1": "image/heif",
+                b"avif": "image/avif", b"avis": "image/avif"}.get(data[8:12])
+    return None
 
 
 def load_agent_avatar(value: str, env_file: Path) -> dict | None:

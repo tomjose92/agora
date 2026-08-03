@@ -82,6 +82,12 @@ resolved before checking them to prevent `..` or symlink escapes.
 
 See [SECURITY.md](SECURITY.md) before exposing the agent to other users.
 
+**Outbound images** are automatic. Cursor is told it can end a reply with
+`<<<AGORA_ATTACH>>> /absolute/path` (one line per image); the bridge strips
+those lines, validates up to five PNG/JPEG/GIF/WebP/HEIC/HEIF/AVIF files, and
+posts them as native Agora attachments. `AGORA_MAX_FILE_MB` controls the local
+preflight limit and should match the server's `max_file_mb` (default 10).
+
 ## Configuration
 
 All options are available through `--help`. Common environment variables:
