@@ -83,6 +83,8 @@ const preview: Preview = {
       unreadsOnly: false,
       speakAloud: false,
       recentEmoji: [],
+      preferNativeApps: true,
+      linkBrowser: "in-app",
     });
     useToasts.setState({ items: [] });
     useSession.setState({
