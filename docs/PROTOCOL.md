@@ -105,6 +105,8 @@ Hermes wrapper, a shell script, whatever:
 // Authorization: Bearer <pairing-token>
 // The exact token must own the live connection that registered agent_id, and
 // that agent must be a member of the file's channel.
+// Older hubs omit id for oversized attachments; bridges should retain a
+// readable name/size fallback when no fetchable id or inline bytes are present.
 // Upload rate limits are per pairing token; agents announced on one token's
 // roster share that token's budget.
 {"type": "post", "request_id": "post-43", "agent_id": "claw-1",

@@ -45,7 +45,7 @@ import tempfile
 import time
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 try:
     import websockets
@@ -411,6 +411,18 @@ def _unique_path(dest: Path, name: str) -> Path:
         i += 1
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class AttachmentSizeMismatch(ValueError):
+    pass
+
+
+_NO_REDIRECT_OPENER = build_opener(_NoRedirectHandler())
+
+
 def _download_attachment(http_base: str, token: str, agent_id: str, att: dict, path: Path) -> int:
     expected = int(att.get("size"))
     if expected < 0 or expected > MAX_INBOUND_ATTACHMENT_BYTES:
@@ -419,15 +431,24 @@ def _download_attachment(http_base: str, token: str, agent_id: str, att: dict, p
     url = f"{http_base}/agent/files/{file_id}?{urlencode({'agent_id': agent_id})}"
     request = Request(url, headers={"Authorization": f"Bearer {token}"})
     written = 0
+    deadline = time.monotonic() + ATTACHMENT_FETCH_TIMEOUT
     try:
-        with urlopen(request, timeout=ATTACHMENT_FETCH_TIMEOUT) as response, path.open("wb") as output:
-            while chunk := response.read(64 * 1024):
+        with _NO_REDIRECT_OPENER.open(request, timeout=ATTACHMENT_FETCH_TIMEOUT) as response, path.open("wb") as output:
+            read = getattr(response, "read1", response.read)
+            while True:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("attachment download exceeded total-transfer deadline")
+                chunk = read(64 * 1024)
+                if not chunk:
+                    break
                 written += len(chunk)
                 if written > expected or written > MAX_INBOUND_ATTACHMENT_BYTES:
-                    raise ValueError("download exceeded advertised attachment size")
+                    raise AttachmentSizeMismatch("download exceeded advertised attachment size")
                 output.write(chunk)
         if written != expected:
-            raise ValueError("download size did not match advertised attachment size")
+            raise AttachmentSizeMismatch(
+                f"downloaded {written} bytes; expected {expected}"
+            )
         return written
     except Exception:
         path.unlink(missing_ok=True)
@@ -457,6 +478,9 @@ def materialize_attachments(attachments: list, dest_dir: Path, http_base: str = 
                 path = _unique_path(dest_dir, _safe_filename(filename))
                 try:
                     written = _download_attachment(http_base, token, agent_id, att, path)
+                except AttachmentSizeMismatch as e:
+                    notes.append(f"- {filename} ({mime}, {size} bytes) — downloaded size mismatch ({e})")
+                    continue
                 except Exception as e:
                     notes.append(f"- {filename} ({mime}, {size} bytes) — could not be downloaded ({e})")
                     continue

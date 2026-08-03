@@ -15,26 +15,53 @@ assert SPEC.loader
 SPEC.loader.exec_module(bridge)
 
 
+class FakeResponse(io.BytesIO):
+    def __enter__(self): return self
+    def __exit__(self, *_args): self.close()
+
+
 class AttachmentFetchTests(unittest.TestCase):
     def test_http_base_preserves_server_prefix(self):
         self.assertEqual(bridge.Bridge._http_base("ws://host/p/agent/ws?token=x"), "http://host/p")
 
     def test_fetches_missing_inline_bytes_and_cleans_truncation(self):
-        class Response(io.BytesIO):
-            def __enter__(self): return self
-            def __exit__(self, *_args): self.close()
-        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge, "urlopen", return_value=Response(b"image")):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"image")):
             saved, images, _notes = bridge.materialize_attachments(
                 [{"id": "f1", "filename": "x.png", "mime": "image/png", "size": 5}],
                 Path(tmp), "http://host", "token", "cursor-cli")
             self.assertEqual(saved, images)
             self.assertEqual(saved[0].read_bytes(), b"image")
-        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge, "urlopen", return_value=Response(b"short")):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"short")):
             saved, images, notes = bridge.materialize_attachments(
                 [{"id": "f1", "filename": "x.png", "mime": "image/png", "size": 6}],
                 Path(tmp), "http://host", "token", "cursor-cli")
             self.assertEqual((saved, images, list(Path(tmp).iterdir())), ([], [], []))
-            self.assertIn("could not be downloaded", notes[0])
+            self.assertIn("downloaded size mismatch", notes[0])
+
+    def test_refuses_redirects_and_enforces_total_deadline(self):
+        self.assertIsNone(bridge._NoRedirectHandler().redirect_request(Mock(), None, 302, "Found", {}, "https://elsewhere/file"))
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge.time, "monotonic", side_effect=[0, 31]), patch.object(bridge._NO_REDIRECT_OPENER, "open") as fetch:
+            fetch.return_value.__enter__.return_value.read1.return_value = b"image"
+            saved, images, notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "x.png", "mime": "image/png", "size": 5}], Path(tmp),
+                "http://host", "token", "cursor-cli")
+            self.assertEqual((saved, images, list(Path(tmp).iterdir())), ([], [], []))
+            self.assertIn("total-transfer deadline", notes[0])
+
+    def test_rejects_oversize_and_overread_with_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge._NO_REDIRECT_OPENER, "open") as fetch:
+            saved, images, notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "huge", "size": bridge.MAX_INBOUND_ATTACHMENT_BYTES + 1}],
+                Path(tmp), "http://host", "token", "cursor-cli")
+            fetch.assert_not_called()
+            self.assertEqual((saved, images), ([], []))
+            self.assertIn("safety limit", notes[0])
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"toolong")):
+            saved, images, notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "x", "size": 5}], Path(tmp),
+                "http://host", "token", "cursor-cli")
+            self.assertEqual((saved, images, list(Path(tmp).iterdir())), ([], [], []))
+            self.assertIn("downloaded size mismatch", notes[0])
 
 
 class ModelSelectionTests(unittest.TestCase):

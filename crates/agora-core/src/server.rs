@@ -3791,6 +3791,47 @@ mod tests {
             State(state.clone()), Path(file_id.clone()), query.clone(), HeaderMap::new(),
         ).await.unwrap_err();
         assert_eq!(missing_auth.0, StatusCode::UNAUTHORIZED);
+        let query_token = Query(HashMap::from([
+            ("agent_id".into(), "bot-a".into()),
+            ("token".into(), "token-a".into()),
+        ]));
+        let query_auth = get_agent_file(
+            State(state.clone()), Path(file_id.clone()), query_token, HeaderMap::new(),
+        ).await.unwrap_err();
+        assert_eq!(query_auth.0, StatusCode::UNAUTHORIZED);
+
+        state.hub.store.add_member(group_id, "agent", "outbound", "member", None);
+        let (outbound_tx, _outbound_rx) = unbounded_channel();
+        state.hub.register_agent(AgentHandle {
+            agent_id: "outbound".into(), agent_name: "Outbound".into(),
+            requires_mention: false, wants_context_feed: false, has_avatar: false,
+            avatar_v: 0, source: "remote".into(), conn_id: state.hub.next_conn_id(),
+            tx: outbound_tx,
+        });
+        let mut owner_headers = HeaderMap::new();
+        owner_headers.insert("authorization", "Bearer token-a".parse().unwrap());
+        let outbound_denied = get_agent_file(
+            State(state.clone()), Path(file_id.clone()),
+            Query(HashMap::from([("agent_id".into(), "outbound".into())])), owner_headers,
+        ).await.unwrap_err();
+        assert_eq!(outbound_denied.0, StatusCode::FORBIDDEN);
+
+        let gone_conn = state.hub.next_conn_id();
+        state.hub.register_pairing_conn(gone_conn, "token-a");
+        let (gone_tx, _gone_rx) = unbounded_channel();
+        state.hub.register_agent(AgentHandle {
+            agent_id: "gone".into(), agent_name: "Gone".into(), requires_mention: false,
+            wants_context_feed: false, has_avatar: false, avatar_v: 0,
+            source: "pairing:duplicate".into(), conn_id: gone_conn, tx: gone_tx,
+        });
+        state.hub.unregister_connection(gone_conn);
+        let mut owner_headers = HeaderMap::new();
+        owner_headers.insert("authorization", "Bearer token-a".parse().unwrap());
+        let gone_denied = get_agent_file(
+            State(state.clone()), Path(file_id.clone()),
+            Query(HashMap::from([("agent_id".into(), "gone".into())])), owner_headers,
+        ).await.unwrap_err();
+        assert_eq!(gone_denied.0, StatusCode::FORBIDDEN);
 
         let mut wrong_headers = HeaderMap::new();
         wrong_headers.insert("authorization", "Bearer token-b".parse().unwrap());

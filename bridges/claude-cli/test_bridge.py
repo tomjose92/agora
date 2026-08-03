@@ -16,6 +16,11 @@ assert SPEC.loader
 SPEC.loader.exec_module(bridge)
 
 
+class FakeResponse(io.BytesIO):
+    def __enter__(self): return self
+    def __exit__(self, *_args): self.close()
+
+
 class AttachmentFetchTests(unittest.TestCase):
     def test_http_base_preserves_server_prefix(self):
         self.assertEqual(
@@ -24,12 +29,8 @@ class AttachmentFetchTests(unittest.TestCase):
         )
 
     def test_fetches_missing_inline_bytes_and_rejects_truncation(self):
-        class Response(io.BytesIO):
-            def __enter__(self): return self
-            def __exit__(self, *_args): self.close()
-
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            bridge, "urlopen", return_value=Response(b"video")
+            bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"video")
         ) as fetch:
             saved, notes = bridge.materialize_attachments(
                 [{"id": "f/1", "filename": "clip.mov", "mime": "video/quicktime", "size": 5}],
@@ -39,7 +40,7 @@ class AttachmentFetchTests(unittest.TestCase):
             self.assertIn("Authorization", fetch.call_args.args[0].headers)
             self.assertIn("5 bytes", notes[0])
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            bridge, "urlopen", return_value=Response(b"short")
+            bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"short")
         ):
             saved, notes = bridge.materialize_attachments(
                 [{"id": "f1", "filename": "clip.mov", "mime": "video/quicktime", "size": 6}],
@@ -47,7 +48,45 @@ class AttachmentFetchTests(unittest.TestCase):
             )
             self.assertEqual(saved, [])
             self.assertEqual(list(Path(tmp).iterdir()), [])
-            self.assertIn("could not be downloaded", notes[0])
+            self.assertIn("downloaded size mismatch", notes[0])
+
+    def test_refuses_redirects_and_enforces_total_transfer_deadline(self):
+        self.assertIsNone(bridge._NoRedirectHandler().redirect_request(
+            Mock(), None, 302, "Found", {}, "https://elsewhere.test/file"
+        ))
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            bridge.time, "monotonic", side_effect=[0, 31]
+        ), patch.object(bridge._NO_REDIRECT_OPENER, "open") as fetch:
+            saved, notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "clip.mov", "mime": "video/quicktime", "size": 5}],
+                Path(tmp), "https://example.test", "secret", "claude-cli",
+            )
+            fetch.return_value.__enter__.return_value.read1.return_value = b"video"
+            self.assertEqual(saved, [])
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+            self.assertIn("total-transfer deadline", notes[0])
+
+    def test_rejects_oversize_advertisement_and_midstream_overread(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            bridge._NO_REDIRECT_OPENER, "open"
+        ) as fetch:
+            saved, notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "huge", "size": bridge.MAX_INBOUND_ATTACHMENT_BYTES + 1}],
+                Path(tmp), "https://example.test", "secret", "claude-cli",
+            )
+            fetch.assert_not_called()
+            self.assertEqual(saved, [])
+            self.assertIn("safety limit", notes[0])
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"toolong")
+        ):
+            saved, notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "clip", "size": 5}], Path(tmp),
+                "https://example.test", "secret", "claude-cli",
+            )
+            self.assertEqual(saved, [])
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+            self.assertIn("downloaded size mismatch", notes[0])
 
 
 def make_bridge(peer_agents=""):
