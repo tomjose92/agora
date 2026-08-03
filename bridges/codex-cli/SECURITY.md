@@ -108,7 +108,8 @@ ordered by decreasing severity.
    Inherent to the feature.
 
 2a. **Outbound image exfiltration.** A model can request that a local image be
-   uploaded with the attachment sentinel. Resolved paths must stay inside the
+   uploaded with the attachment sentinel, including after prompt injection
+   from an untrusted channel message. Resolved paths must stay inside the
    bound session cwd or `CODEX_ALLOWED_ROOTS`; this also makes that setting an
    upload-source allowlist. The check resolves symlinks before reading.
 

@@ -1,5 +1,23 @@
 //! Shared validation for files entering the stored attachment contract.
 
+const AGENT_WS_SLACK_BYTES: usize = 1024 * 1024;
+const MAX_AGENT_WS_BYTES: usize = 80 * 1024 * 1024;
+
+pub(crate) fn effective_agent_file_limit(configured_per_file: usize) -> usize {
+    let wire_per_file = MAX_AGENT_WS_BYTES
+        .saturating_sub(AGENT_WS_SLACK_BYTES)
+        .saturating_mul(3) / 4
+        / crate::hub::MAX_FILES_PER_AGENT_POST;
+    configured_per_file.min(wire_per_file)
+}
+
+pub(crate) fn agent_wire_limit(configured_per_file: usize) -> usize {
+    effective_agent_file_limit(configured_per_file)
+        .saturating_mul(crate::hub::MAX_FILES_PER_AGENT_POST)
+        .saturating_mul(4) / 3
+        + AGENT_WS_SLACK_BYTES
+}
+
 /// Basename only, control chars stripped, bounded length.
 pub(crate) fn safe_filename(name: &str) -> String {
     let base = name.replace('\\', "/");
@@ -54,6 +72,16 @@ pub(crate) fn attachment_mime(data: &[u8], declared: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_wire_budget_caps_the_effective_file_limit() {
+        let ten_mb = 10 * 1024 * 1024;
+        assert_eq!(effective_agent_file_limit(ten_mb), ten_mb);
+        assert!(agent_wire_limit(ten_mb) > 16 * 1024 * 1024);
+        let huge = usize::MAX / 8;
+        assert!(effective_agent_file_limit(huge) < huge);
+        assert!(agent_wire_limit(huge) <= MAX_AGENT_WS_BYTES);
+    }
 
     #[test]
     fn sniff_recognizes_classic_web_formats() {

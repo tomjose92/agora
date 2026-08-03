@@ -131,7 +131,8 @@ can *do*) and privacy (what an attacker can *learn*) are kept separate.
    to the feature; bounded only by the permission mode (#1 in Security).
 
 2a. **Outbound image exfiltration.** A model can request that a local image be
-   uploaded with the attachment sentinel. Resolved paths must stay inside the
+   uploaded with the attachment sentinel, including after prompt injection
+   from an untrusted channel message. Resolved paths must stay inside the
    bound session cwd or `CLAUDE_ALLOWED_ROOTS`; this also makes that setting an
    upload-source allowlist. The check resolves symlinks before reading.
 

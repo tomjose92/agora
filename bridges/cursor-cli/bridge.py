@@ -51,6 +51,7 @@ PROGRESS_THROTTLE = 2.0  # seconds between progress frames
 TAIL_BYTES = 256 * 1024  # how much of a rollout .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
+MAX_ATTACHMENTS = 5
 ATTACH_SENTINEL = "<<<AGORA_ATTACH>>>"
 ATTACH_PROMPT_SUFFIX = (
     "\n\n(Attachment note from the relay: to send a generated image, end your reply "
@@ -1202,9 +1203,10 @@ class Bridge:
                 value = stripped[len(ATTACH_SENTINEL):].strip()
                 if value: paths.append(value)
             else: kept.append(line)
+        paths = list(dict.fromkeys(paths))
         notices, attachments = [], []
-        if len(paths) > 5:
-            return "\n".join(kept).rstrip(), [], ["Could not attach images: maximum 5 files per message."]
+        if len(paths) > MAX_ATTACHMENTS:
+            return "\n".join(kept).rstrip(), [], [f"Could not attach images: maximum {MAX_ATTACHMENTS} files per message."]
         for value in paths:
             path = Path(value).expanduser()
             path = (path if path.is_absolute() else Path(cwd) / path).resolve()
