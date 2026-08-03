@@ -6,7 +6,10 @@
 # number server-side on every build.
 #
 # Merges that touch mobile code *without* a bump publish nothing on purpose:
-# the bump is the publish intent.
+# the bump is the publish intent. The paths filter alone can't enforce that —
+# app.json also carries Info.plist/plugin config, and editing those must not
+# republish the current version — so the job diffs `expo.version` against the
+# commit's first parent and skips the build when it is unchanged.
 #
 # The runner only *starts* the build (--no-wait); compilation, signing and
 # the TestFlight submission all happen on Expo's servers. Track progress at
@@ -37,18 +40,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The gate needs the pushed commit's first parent to diff against.
+          fetch-depth: 2
 
-      - uses: actions/setup-node@v4
+      - name: Gate on an expo.version bump
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch: publishing the version currently on main."
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          current=$(node -p 'require("./mobile/app.json").expo.version')
+          # First parent = main before this merge/push. If it can't be read
+          # (shallow edge cases, history rewrites), publish rather than
+          # silently dropping a release.
+          if previous_json=$(git show 'HEAD^:mobile/app.json' 2>/dev/null); then
+            previous=$(node -p 'JSON.parse(process.argv[1]).expo.version' "$previous_json")
+          else
+            echo "Could not read the previous app.json; assuming a bump."
+            previous=""
+          fi
+          if [ "$current" = "$previous" ]; then
+            echo "expo.version unchanged ($current): app.json edit without a bump, publishing nothing."
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "expo.version: ${previous:-<unknown>} -> $current: publishing."
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.bumped == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
       - name: Install dependencies
+        if: steps.gate.outputs.bumped == 'true'
         working-directory: mobile
         run: npm ci
 
       - name: Start EAS build + TestFlight auto-submit
+        if: steps.gate.outputs.bumped == 'true'
         working-directory: mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
