@@ -1,4 +1,5 @@
 import asyncio
+import json
 import importlib.util
 import unittest
 from pathlib import Path
@@ -194,6 +195,135 @@ class AppendSystemArgsTests(unittest.TestCase):
         instance = make_bridge()
         instance.tldr_default = False
         self.assertEqual(instance._append_system_args({}), [])
+
+
+
+
+def _fake_proc(lines, feed_delay=0.0):
+    """A stand-in for the CLI child process that replays `lines` on stdout.
+
+    With ``feed_delay`` the lines trickle out from a background task, so a test
+    can exercise the idle window instead of draining a pre-filled buffer.
+    """
+    stdout = asyncio.StreamReader()
+    if feed_delay:
+        async def feed():
+            for line in lines:
+                await asyncio.sleep(feed_delay)
+                stdout.feed_data(line.encode() + b"\n")
+        asyncio.get_running_loop().create_task(feed())
+    else:
+        for line in lines:
+            stdout.feed_data(line.encode() + b"\n")
+    stderr = asyncio.StreamReader()
+    stderr.feed_eof()
+
+    proc = Mock()
+    proc.stdout = stdout
+    proc.stderr = stderr
+    proc.stdin = Mock()
+    proc.stdin.drain = AsyncMock()
+    proc.stdin.close = Mock()
+    proc.wait = AsyncMock(return_value=0)
+    proc.kill = Mock()
+    proc.returncode = 0
+    return proc
+
+
+def _result(text, **extra):
+    frame = {"type": "result", "subtype": "success", "result": text,
+             "session_id": "sess-1", "num_turns": 1}
+    frame.update(extra)
+    return json.dumps(frame)
+
+
+def run_bridge(lines, grace=None, timeout=10, feed_delay=0.0):
+    """Drive the real run_claude() against a scripted stdout stream."""
+    b = make_bridge()
+    b.claude_bin = "claude"
+    b.base_claude_args = []
+    b.default_model = None
+    b.default_permission_mode = "acceptEdits"
+    b.timeout = timeout
+    b.procs = {}
+    b.stop_requested = set()
+    b.progress = Mock()
+    b._append_system_args = Mock(return_value=[])
+    b._stage_attachments = Mock(return_value=("hi", [], None))
+    b._save_state = Mock()
+
+    original_grace = bridge.BLANK_RESULT_IDLE_GRACE
+    if grace is not None:
+        bridge.BLANK_RESULT_IDLE_GRACE = grace
+
+    async def main():
+        proc = _fake_proc(lines, feed_delay)  # StreamReader needs a running loop
+
+        async def fake_exec(*a, **kw):
+            return proc
+
+        original_exec = asyncio.create_subprocess_exec
+        asyncio.create_subprocess_exec = fake_exec
+        try:
+            return await b.run_claude(
+                "k", {"channel_id": "c1"}, {"cwd": "/tmp"}, "hi")
+        finally:
+            asyncio.create_subprocess_exec = original_exec
+
+    try:
+        return asyncio.run(main()), b
+    finally:
+        bridge.BLANK_RESULT_IDLE_GRACE = original_grace
+
+
+class BlankResultTests(unittest.TestCase):
+    def test_normal_result_is_returned(self):
+        reply, _ = run_bridge([_result("the answer")])
+        self.assertEqual(reply, "the answer")
+
+    def test_blank_result_from_injected_turn_is_skipped(self):
+        """A CLI-injected turn ends with a blank result; ours follows."""
+        reply, _ = run_bridge([_result(""), _result("the real answer")])
+        self.assertEqual(reply, "the real answer")
+
+    def test_repeated_blanks_still_yield_the_real_answer(self):
+        reply, _ = run_bridge([_result(""), _result("   "), _result("finally")])
+        self.assertEqual(reply, "finally")
+
+    def test_genuinely_blank_run_falls_back_once_the_stream_goes_quiet(self):
+        """No further output: accept the blank rather than hanging to --timeout."""
+        reply, _ = run_bridge([_result("")], grace=0.2)
+        self.assertEqual(reply, "")
+
+    def test_idle_window_is_refreshed_by_ongoing_work(self):
+        """Our answer can be far past the window; frames in between must extend it."""
+        chatter = [json.dumps(
+            {"type": "assistant",
+             "message": {"content": [{"type": "tool_use", "name": "Bash"}]}})] * 8
+        # 8 frames x 40ms = 320ms of work, well past the 100ms idle window.
+        # Only refreshing the deadline per frame reaches the real answer.
+        reply, _ = run_bridge([_result("")] + chatter + [_result("late answer")],
+                              grace=0.1, feed_delay=0.04)
+        self.assertEqual(reply, "late answer")
+
+    def test_outer_run_timeout_still_fires_while_holding_a_blank(self):
+        """The inner grace read must not swallow the run-level timeout."""
+        with self.assertRaises(RuntimeError) as cm:
+            run_bridge([_result("")], grace=60, timeout=0.3)
+        self.assertIn("timed out", str(cm.exception))
+
+    def test_no_result_at_all_raises(self):
+        with self.assertRaises(RuntimeError):
+            run_bridge([], timeout=0.3)
+
+    def test_error_result_is_not_held(self):
+        reply, _ = run_bridge([_result("", is_error=True)])
+        self.assertTrue(reply.startswith("(claude error)"))
+
+    def test_session_id_is_tracked_even_from_a_blank_result(self):
+        """A held blank still carries the forked session id we must resume from."""
+        _, b = run_bridge([_result("", session_id="forked")], grace=0.2)
+        self.assertEqual(b.bindings["k"]["session_id"], "forked")
 
 
 if __name__ == "__main__":
