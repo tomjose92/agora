@@ -135,7 +135,7 @@ export const LiveThinkingMuted: Story = {
   parameters: { setup: () => setup("live-thinking-muted") },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("Thinking… · Mic muted")).toBeVisible();
+    await expect(canvas.getByText("Thinking…")).toBeVisible();
     await expect(canvas.getByRole("button", { name: "Unmute" })).toHaveAttribute("aria-pressed", "true");
   },
 };
@@ -145,7 +145,7 @@ export const LiveSpeakingMuted: Story = {
   parameters: { setup: () => setup("live-speaking-muted") },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("Speaking… · Mic muted")).toBeVisible();
+    await expect(canvas.getByText("Speaking — talk to interrupt")).toBeVisible();
     await expect(canvas.getByRole("button", { name: "Unmute" })).toHaveAttribute("aria-pressed", "true");
   },
 };
