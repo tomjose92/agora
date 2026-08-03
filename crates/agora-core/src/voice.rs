@@ -48,14 +48,27 @@ fn non_empty(value: Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+fn valid_voice_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
 fn elevenlabs_config_from(
     key: Option<String>,
     voice_id: Option<String>,
     model_id: Option<String>,
 ) -> Option<ElevenLabsConfig> {
+    let key = non_empty(key)?;
+    let voice_id = non_empty(voice_id).unwrap_or_else(|| ELEVENLABS_VOICE.to_string());
+    if !valid_voice_id(&voice_id) {
+        tracing::warn!("Ignoring ElevenLabs configuration: invalid ELEVENLABS_VOICE_ID");
+        return None;
+    }
     Some(ElevenLabsConfig {
-        key: non_empty(key)?,
-        voice_id: non_empty(voice_id).unwrap_or_else(|| ELEVENLABS_VOICE.to_string()),
+        key,
+        voice_id,
         model_id: non_empty(model_id).unwrap_or_else(|| ELEVENLABS_MODEL.to_string()),
     })
 }
@@ -76,11 +89,7 @@ pub fn clip_for_tts(text: &str) -> String {
         return text.to_string();
     }
     let clipped: String = chars[..MAX_TTS_CHARS].iter().collect();
-    let cut = clipped
-        .rfind(". ")
-        .into_iter()
-        .chain(clipped.rfind('\n'))
-        .max();
+    let cut = clipped.rfind(". ").into_iter().chain(clipped.rfind('\n')).max();
     match cut {
         Some(cut) if cut > clipped.len() / 2 => clipped[..=cut].trim().to_string(),
         _ => clipped.trim().to_string(),
@@ -103,11 +112,7 @@ pub fn transcribe(key: &str, data: &[u8], filename: &str) -> anyhow::Result<Stri
         .filter(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_'))
         .take(80)
         .collect();
-    let safe_name = if safe_name.is_empty() {
-        "voice-note.webm".into()
-    } else {
-        safe_name
-    };
+    let safe_name = if safe_name.is_empty() { "voice-note.webm".into() } else { safe_name };
     part(
         &mut body,
         &format!(
@@ -121,18 +126,11 @@ pub fn transcribe(key: &str, data: &[u8], filename: &str) -> anyhow::Result<Stri
     let response = ureq::post("https://api.openai.com/v1/audio/transcriptions")
         .timeout(TIMEOUT)
         .set("Authorization", &format!("Bearer {key}"))
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={boundary}"),
-        )
+        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
         .send_bytes(&body)
         .map_err(|e| flatten_api_error("OpenAI", e))?;
     let parsed: serde_json::Value = response.into_json()?;
-    Ok(parsed["text"]
-        .as_str()
-        .unwrap_or_default()
-        .trim()
-        .to_string())
+    Ok(parsed["text"].as_str().unwrap_or_default().trim().to_string())
 }
 
 /// Render text to MP3 bytes (Safari's `<audio>` can't decode Opus).
@@ -183,13 +181,6 @@ fn synthesize_openai(key: &str, input: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 fn synthesize_elevenlabs(config: &ElevenLabsConfig, input: &str) -> anyhow::Result<Vec<u8>> {
-    anyhow::ensure!(
-        config
-            .voice_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')),
-        "invalid ELEVENLABS_VOICE_ID"
-    );
     let url = format!(
         "https://api.elevenlabs.io/v1/text-to-speech/{}?output_format={}",
         config.voice_id, ELEVENLABS_OUTPUT
@@ -203,6 +194,25 @@ fn synthesize_elevenlabs(config: &ElevenLabsConfig, input: &str) -> anyhow::Resu
         }))
         .map_err(|e| flatten_api_error("ElevenLabs", e))?;
     read_audio(response)
+}
+
+fn api_error_detail(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return body.to_string();
+    };
+    value["error"]["message"]
+        .as_str()
+        .or_else(|| value["detail"]["message"].as_str())
+        .map(String::from)
+        .or_else(|| {
+            value.get("detail").map(|detail| {
+                detail
+                    .as_str()
+                    .map(String::from)
+                    .unwrap_or_else(|| detail.to_string())
+            })
+        })
+        .unwrap_or_else(|| body.to_string())
 }
 
 fn read_audio(response: ureq::Response) -> anyhow::Result<Vec<u8>> {
@@ -221,10 +231,7 @@ fn flatten_api_error(provider: &str, e: ureq::Error) -> anyhow::Error {
     match e {
         ureq::Error::Status(code, response) => {
             let body = response.into_string().unwrap_or_default();
-            let detail = serde_json::from_str::<serde_json::Value>(&body)
-                .ok()
-                .and_then(|v| v["error"]["message"].as_str().map(String::from))
-                .unwrap_or(body);
+            let detail = api_error_detail(&body);
             anyhow::anyhow!(
                 "{provider} API error {code}: {}",
                 detail.chars().take(300).collect::<String>()
@@ -275,6 +282,29 @@ mod tests {
         .unwrap();
         assert_eq!(configured.voice_id, "voice");
         assert_eq!(configured.model_id, "model");
+    }
+
+    #[test]
+    fn elevenlabs_voice_id_rejects_url_injection_before_requests() {
+        assert!(valid_voice_id(ELEVENLABS_VOICE));
+        assert!(!valid_voice_id("abc/../v1"));
+        assert!(!valid_voice_id("a?b=c"));
+        assert!(elevenlabs_config_from(
+            Some("key".into()),
+            Some("abc/../v1".into()),
+            None,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn api_error_detail_understands_openai_and_elevenlabs_shapes() {
+        assert_eq!(api_error_detail(r#"{"error":{"message":"bad key"}}"#), "bad key");
+        assert_eq!(api_error_detail(r#"{"detail":{"message":"quota used"}}"#), "quota used");
+        assert_eq!(
+            api_error_detail(r#"{"detail":[{"msg":"invalid voice"}]}"#),
+            r#"[{"msg":"invalid voice"}]"#
+        );
     }
 
     #[test]

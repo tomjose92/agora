@@ -246,7 +246,7 @@ endpoint must not break:
   Metro drop Storybook from production builds). `metro.config.js` reads the
   same variable.
 - **No new heavy deps** without good reason, in any of the three stacks.
-- **Secrets** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, OAuth client secret)
+- **Secrets** (`OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `ANTHROPIC_API_KEY`, OAuth client secret)
   live in the process env or `config.json` — never hardcode, never log.
 
 ## Gotchas / invariants
