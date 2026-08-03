@@ -472,7 +472,7 @@ export function Composer({
       if (res.canceled) return;
       addFiles(await Promise.all(res.assets.map((asset) => asset.type === "video" ? {
         uri: asset.uri,
-        name: asset.fileName ?? `video-${Date.now()}.mp4`,
+        name: asset.fileName ?? `video-${Date.now()}.${asset.mimeType === "video/quicktime" ? "mov" : asset.mimeType === "video/webm" ? "webm" : "mp4"}`,
         type: asset.mimeType ?? "video/mp4",
         size: asset.fileSize,
       } : toWebSafeImage(asset))));

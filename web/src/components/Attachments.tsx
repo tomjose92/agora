@@ -25,7 +25,7 @@ export function Attachments({ message }: { message: Message }) {
           );
         }
         if (BROWSER_VIDEO.test(f.mime || "") && !failedVideos.has(f.id)) {
-          return <video key={f.id} className="ago-att-video" src={url} controls preload="metadata"
+          return <video key={f.id} className="ago-att-video" src={url} controls playsInline preload="metadata"
             aria-label={`Play ${f.filename}`}
             onError={() => setFailedVideos(current => new Set(current).add(f.id))} />;
         }

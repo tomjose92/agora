@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  DROP_HEAP_MAX_BYTES, DroppedFileError, dropMaterializationLimit,
+  DroppedFileError, dropMaterializationLimit,
   draftAttachmentPreviewUrl, materializeDroppedFile, MAX_MESSAGE_CHARS,
   useAgents, useAttachmentDrafts, useMe, useSendMessage,
   type ChannelAgent, type DraftAttachment, type OutgoingFile,
@@ -15,6 +15,7 @@ import { autoGrow } from "../lib/autoGrow";
 import { BROWSER_IMAGE, humanSize, withToken } from "../lib/files";
 import { slugify } from "../lib/mentions";
 import { toast } from "../lib/toast";
+import { droppedTooLargeMessage, uploadMaxBytes } from "../lib/uploadLimits";
 import { MicButton } from "./VoiceControls";
 import { ImageLightbox } from "./ImageLightbox";
 import { TemplateControls } from "./TemplateControls";
@@ -125,13 +126,7 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
   );
   const preparingAttachments = attachments.filter(entry => entry.status === "preparing");
   const sendingAttachments = attachments.filter(entry => entry.status === "sending");
-  const serverMaxBytes = typeof me?.max_file_mb === "number" && me.max_file_mb > 0
-    ? me.max_file_mb * 1024 * 1024
-    : undefined;
-  const serverVideoMaxBytes = typeof me?.max_video_mb === "number" && me.max_video_mb > 0
-    ? me.max_video_mb * 1024 * 1024
-    : serverMaxBytes;
-  const maxBytesFor = (file: File) => file.type.startsWith("video/") ? serverVideoMaxBytes : serverMaxBytes;
+  const maxBytesFor = (file: File) => uploadMaxBytes(file.type, me?.max_file_mb, me?.max_video_mb);
   const dropMaxBytes = dropMaterializationLimit(Math.max(me?.max_file_mb ?? 0, me?.max_video_mb ?? 0));
   const inputId = inThread ? "ago-thread-msg" : "ago-msg";
   const selectedAgents = addrSel
@@ -184,9 +179,7 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
       useAttachmentDrafts.getState().complete(draftKey, entry.id, file);
     } catch (error) {
       const message = error instanceof DroppedFileError && error.code === "too_large"
-        ? serverMaxBytes !== undefined && serverMaxBytes <= DROP_HEAP_MAX_BYTES
-          ? `File too large (max ${me!.max_file_mb} MB)`
-          : "Large files must be attached with the paperclip"
+        ? droppedTooLargeMessage(source.type, me?.max_file_mb, me?.max_video_mb)
         : error instanceof DroppedFileError && error.code === "empty"
           ? "Empty files cannot be uploaded"
           : "Could not read the dropped file";
@@ -202,14 +195,11 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
     // reject metadata that already proves the drop cannot be materialized.
     const allowed = dropped.filter((file) => file.size <= dropMaxBytes);
     if (allowed.length < dropped.length) {
-      const serverBound = serverMaxBytes !== undefined
-        && serverMaxBytes <= DROP_HEAP_MAX_BYTES;
-      toast(
-        serverBound
-          ? `File too large (max ${me!.max_file_mb} MB)`
-          : "Large files must be attached with the paperclip",
-        { variant: "warn" },
-      );
+      const rejected = dropped.filter(file => file.size > dropMaxBytes);
+      const messages = new Set(rejected.map(file =>
+        droppedTooLargeMessage(file.type, me?.max_file_mb, me?.max_video_mb)));
+      toast(messages.size === 1 ? [...messages][0] : "Some files are too large; use the paperclip for large videos",
+        { variant: "warn" });
     }
     const result = useAttachmentDrafts.getState().stage(
       draftKey,

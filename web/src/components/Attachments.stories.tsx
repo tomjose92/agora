@@ -44,6 +44,7 @@ export const Video: Story = {
     const video = canvasElement.querySelector("video");
     expect(video).not.toBeNull();
     expect(video).toHaveAttribute("controls");
+    expect(video).toHaveAttribute("playsinline");
     expect(video).toHaveAttribute("preload", "metadata");
   },
 };

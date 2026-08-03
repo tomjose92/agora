@@ -537,7 +537,8 @@ fn sniff_video_mime(data: &[u8]) -> Option<&'static str> {
     if data.len() >= 12 && &data[4..8] == b"ftyp" {
         return match &data[8..12] {
             b"qt  " => Some("video/quicktime"),
-            b"isom" | b"iso2" | b"mp41" | b"mp42" | b"avc1" | b"M4V " => Some("video/mp4"),
+            b"isom" | b"iso2" | b"iso4" | b"iso5" | b"iso6" | b"mp41" | b"mp42"
+            | b"mp4v" | b"avc1" | b"M4V " | b"3gp4" | b"3gp5" | b"dash" => Some("video/mp4"),
             _ => None,
         };
     }
@@ -553,12 +554,17 @@ fn attachment_max_bytes(data: &[u8], config: &crate::config::ConfigData) -> usiz
     (mb as usize).saturating_mul(1024 * 1024)
 }
 
-fn byte_range(raw: &str, size: u64) -> Option<(u64, u64)> {
-    let (start, end) = raw.strip_prefix("bytes=")?.split_once('-')?;
-    let last = size.checked_sub(1)?;
-    let start = start.parse::<u64>().ok()?;
-    let end = if end.is_empty() { last } else { end.parse::<u64>().ok()?.min(last) };
-    (start <= end && start < size).then_some((start, end))
+fn byte_range(raw: &str, size: u64) -> Result<(u64, u64), ()> {
+    let (start, end) = raw.strip_prefix("bytes=").ok_or(())?.split_once('-').ok_or(())?;
+    let last = size.checked_sub(1).ok_or(())?;
+    if start.is_empty() {
+        let suffix = end.parse::<u64>().map_err(|_| ())?;
+        if suffix == 0 { return Err(()); }
+        return Ok((size.saturating_sub(suffix), last));
+    }
+    let start = start.parse::<u64>().map_err(|_| ())?;
+    let end = if end.is_empty() { last } else { end.parse::<u64>().map_err(|_| ())?.min(last) };
+    if start <= end && start < size { Ok((start, end)) } else { Err(()) }
 }
 
 fn resolve_thread(
@@ -585,6 +591,7 @@ async fn me(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
+    let config = state.config.snapshot();
     Ok(Json(json!({
         "username": user.username,
         "display_name": user.display_name,
@@ -592,8 +599,8 @@ async fn me(
         "version": env!("CARGO_PKG_VERSION"),
         // Clients use the real server limit to reject impossible uploads before
         // copying a promised file into the webview heap.
-        "max_file_mb": state.config.snapshot().max_file_mb,
-        "max_video_mb": state.config.snapshot().max_video_mb,
+        "max_file_mb": config.max_file_mb,
+        "max_video_mb": config.max_video_mb,
         // Voice features (voice notes, speak-aloud, live voice) need an
         // OPENAI_API_KEY in the server env; clients hide the controls without it.
         "voice": crate::voice::api_key().is_some(),
@@ -1494,8 +1501,6 @@ async fn post_message_upload(
     }
     require_channel_member(&state, &user, &channel_id)?;
     let config = state.config.snapshot();
-    let max_file_bytes = (config.max_file_mb as usize).saturating_mul(1024 * 1024);
-    let max_video_bytes = (config.max_video_mb as usize).saturating_mul(1024 * 1024);
     let mut text = String::new();
     let mut thread_id: Option<i64> = None;
     let mut timezone: Option<String> = None;
@@ -1536,8 +1541,6 @@ async fn post_message_upload(
                         if data.len() > attachment_max_bytes(&data, &config) {
                             return Err(err(StatusCode::BAD_REQUEST, "File too large"));
                         }
-                    } else if data.len() > max_file_bytes.max(max_video_bytes) {
-                        return Err(err(StatusCode::BAD_REQUEST, "File too large"));
                     }
                 }
                 if data.is_empty() {
@@ -1549,7 +1552,7 @@ async fn post_message_upload(
                 attachments.push(NewAttachment {
                     filename,
                     mime: attachment_mime(&data, &declared),
-                    data: data.to_vec(),
+                    data,
                 });
             }
             _ => {}
@@ -1762,6 +1765,7 @@ async fn get_file(
     let mut resp_headers = HeaderMap::new();
     resp_headers.insert("content-type", mime.parse().unwrap());
     resp_headers.insert("accept-ranges", "bytes".parse().unwrap());
+    resp_headers.insert("x-content-type-options", "nosniff".parse().unwrap());
     if !mime.starts_with("image/") && !mime.starts_with("video/") {
         let filename = meta["filename"].as_str().unwrap_or("file");
         resp_headers.insert(
@@ -1769,19 +1773,26 @@ async fn get_file(
             format!("attachment; filename=\"{filename}\"").parse().unwrap(),
         );
     }
-    let range = headers.get("range").and_then(|v| v.to_str().ok()).and_then(|raw| byte_range(raw, size));
+    let range = headers.get("range").and_then(|v| v.to_str().ok());
     let (status, start, length) = match range {
-        Some((start, end)) => {
+        Some(raw) => match byte_range(raw, size) {
+          Ok((start, end)) => {
             let length = end - start + 1;
             resp_headers.insert("content-range", format!("bytes {start}-{end}/{size}").parse().unwrap());
             (StatusCode::PARTIAL_CONTENT, start, length)
-        }
+          }
+          Err(()) => {
+            resp_headers.insert("content-range", format!("bytes */{size}").parse().unwrap());
+            resp_headers.insert("content-length", "0".parse().unwrap());
+            return Ok((StatusCode::RANGE_NOT_SATISFIABLE, resp_headers, Body::empty()).into_response());
+          }
+        },
         None => (StatusCode::OK, 0, size),
     };
     file.seek(SeekFrom::Start(start)).await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "File seek failed"))?;
     resp_headers.insert("content-length", length.to_string().parse().unwrap());
-    let body = Body::from_stream(ReaderStream::new(file.take(length)));
+    let body = Body::from_stream(ReaderStream::with_capacity(file.take(length), 64 * 1024));
     Ok((status, resp_headers, body).into_response())
 }
 
@@ -3698,10 +3709,46 @@ mod tests {
 
     #[test]
     fn parses_bounded_video_byte_ranges() {
-        assert_eq!(byte_range("bytes=10-19", 100), Some((10, 19)));
-        assert_eq!(byte_range("bytes=90-", 100), Some((90, 99)));
-        assert_eq!(byte_range("bytes=90-999", 100), Some((90, 99)));
-        assert_eq!(byte_range("bytes=100-", 100), None);
+        assert_eq!(byte_range("bytes=10-19", 100), Ok((10, 19)));
+        assert_eq!(byte_range("bytes=90-", 100), Ok((90, 99)));
+        assert_eq!(byte_range("bytes=90-999", 100), Ok((90, 99)));
+        assert_eq!(byte_range("bytes=-10", 100), Ok((90, 99)));
+        assert_eq!(byte_range("bytes=-999", 100), Ok((0, 99)));
+        assert_eq!(byte_range("bytes=100-", 100), Err(()));
+        assert_eq!(byte_range("bytes=-0", 100), Err(()));
+    }
+
+    #[tokio::test]
+    async fn file_endpoint_streams_video_ranges_and_rejects_unsatisfiable_ranges() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("ana", "Ana", None, "member").unwrap();
+        let group = store.create_group("Media", "", Some("ana"));
+        let channel = store.create_channel(group["id"].as_str().unwrap(), "video", "");
+        let message = store.add_message(
+            channel["id"].as_str().unwrap(), "clip", "user", "ana", None, None,
+            &[NewAttachment { filename: "clip.mp4".into(), mime: "video/mp4".into(), data: b"0123456789".to_vec() }],
+        );
+        let file_id = message["attachments"][0]["id"].as_str().unwrap().to_string();
+        let mut headers = session_headers(&state, "ana");
+        headers.insert("range", "bytes=2-5".parse().unwrap());
+        let response = get_file(
+            State(state.clone()), Path(file_id.clone()), Query(HashMap::new()), headers,
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()["content-range"], "bytes 2-5/10");
+        assert_eq!(response.headers()["content-length"], "4");
+        assert_eq!(response.headers()["accept-ranges"], "bytes");
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert!(response.headers().get("content-disposition").is_none());
+        assert_eq!(axum::body::to_bytes(response.into_body(), 16).await.unwrap(), "2345");
+
+        let mut headers = session_headers(&state, "ana");
+        headers.insert("range", "bytes=10-".parse().unwrap());
+        let response = get_file(State(state), Path(file_id), Query(HashMap::new()), headers)
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(response.headers()["content-range"], "bytes */10");
     }
 
     /// Auth headers for a freshly minted session of `username`.

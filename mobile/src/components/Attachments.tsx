@@ -3,6 +3,7 @@
 
 import React, { useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEventListener } from "expo";
 import { Image, type ImageSource } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 // The legacy API is the one with documented header support on downloads.
@@ -54,8 +55,13 @@ function FileChip({ session, att }: { session: Session; att: Attachment }) {
   );
 }
 
-function VideoAttachment({ session, att }: { session: Session; att: Attachment }) {
+const NATIVE_VIDEO = /^video\/(mp4|quicktime|webm)(?:;|$)/i;
+
+function VideoAttachment({ session, att, onError }: {
+  session: Session; att: Attachment; onError: () => void;
+}) {
   const player = useVideoPlayer({ uri: fileUrl(session, att.id), headers: authHeaders(session) });
+  useEventListener(player, "statusChange", ({ status }) => { if (status === "error") onError(); });
   return <VideoView player={player} style={styles.video} nativeControls contentFit="contain" />;
 }
 
@@ -70,6 +76,7 @@ export function Attachments({
   imageSource?: (attachment: Attachment) => { uri: string; headers?: Record<string, string> };
 }) {
   const [preview, setPreview] = useState<{ source: ImageSource; filename: string } | null>(null);
+  const [failedVideos, setFailedVideos] = useState<Set<string>>(new Set());
   if (!attachments || attachments.length === 0) return null;
   return (
     <View style={styles.wrap}>
@@ -84,9 +91,10 @@ export function Attachments({
             onPress={() => setPreview({ source, filename: att.filename })}>
             <Image source={source} style={styles.image} contentFit="cover" transition={100} />
           </Pressable>
-        ) : att.mime.startsWith("video/")
-          && !(Platform.OS === "ios" && att.mime.toLowerCase() === "video/webm") ? (
-          <VideoAttachment key={att.id} session={session} att={att} />
+        ) : NATIVE_VIDEO.test(att.mime) && !failedVideos.has(att.id)
+          && !(Platform.OS === "ios" && att.mime.toLowerCase().startsWith("video/webm")) ? (
+          <VideoAttachment key={att.id} session={session} att={att}
+            onError={() => setFailedVideos(current => new Set(current).add(att.id))} />
         ) : (
           <FileChip key={att.id} session={session} att={att} />
         );

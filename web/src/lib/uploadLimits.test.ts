@@ -1,0 +1,16 @@
+import { describe, expect, it } from "vitest";
+import { droppedTooLargeMessage, uploadMaxBytes } from "./uploadLimits";
+
+describe("attachment upload limits", () => {
+  it("uses the larger advertised video limit", () => {
+    expect(uploadMaxBytes("video/mp4", 10, 100)).toBe(100 * 1024 * 1024);
+    expect(uploadMaxBytes("application/pdf", 10, 100)).toBe(10 * 1024 * 1024);
+  });
+
+  it("directs heap-clamped video drops to the paperclip", () => {
+    expect(droppedTooLargeMessage("video/mp4", 10, 100))
+      .toBe("Large files must be attached with the paperclip");
+    expect(droppedTooLargeMessage("application/pdf", 10, 100))
+      .toBe("File too large (max 10 MB)");
+  });
+});
