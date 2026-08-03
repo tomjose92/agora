@@ -33,6 +33,21 @@ export const Files: Story = {
   },
 };
 
+export const Video: Story = {
+  args: {
+    message: {
+      ...message,
+      attachments: [{ id: "demo-video", filename: "launch-demo.mp4", mime: "video/mp4", size: 24_000_000 }],
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const video = canvasElement.querySelector("video");
+    expect(video).not.toBeNull();
+    expect(video).toHaveAttribute("controls");
+    expect(video).toHaveAttribute("preload", "metadata");
+  },
+};
+
 export const ImageLightbox: Story = {
   args: {
     message: {

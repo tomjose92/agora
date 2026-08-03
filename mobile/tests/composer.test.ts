@@ -458,3 +458,34 @@ test("sent image attachments open and close the full-screen preview", () => {
     .toHaveLength(0);
   act(() => tree.unmount());
 });
+
+test("sent video attachments render an authenticated native player", () => {
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(Attachments, {
+      session: { baseUrl: "https://example.invalid", token: "test" },
+      attachments: [{ id: "video", filename: "demo.mp4", mime: "video/mp4", size: 24_000_000 }],
+    }));
+  });
+  expect(tree.root.findByProps({ testID: "video-view" }).props.player.source).toEqual({
+    uri: "https://example.invalid/api/files/video",
+    headers: { Authorization: "Bearer test" },
+  });
+  act(() => tree.unmount());
+});
+
+test("iOS WebM attachments fall back to the downloadable file card", () => {
+  const original = Platform.OS;
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "ios" });
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(Attachments, {
+      session: { baseUrl: "https://example.invalid", token: "test" },
+      attachments: [{ id: "video", filename: "screen.webm", mime: "video/webm", size: 8_000_000 }],
+    }));
+  });
+  expect(tree.root.findAllByProps({ testID: "video-view" })).toHaveLength(0);
+  expect(tree.root.findByProps({ children: "screen.webm" })).toBeDefined();
+  act(() => tree.unmount());
+  Object.defineProperty(Platform, "OS", { configurable: true, value: original });
+});

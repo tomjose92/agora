@@ -38,6 +38,7 @@ export const fixtureMe: Me = {
   version: "storybook",
   instance_admin: true,
   max_file_mb: 25,
+  max_video_mb: 100,
   voice: false,
   search_ai: true,
 };

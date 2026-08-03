@@ -2,8 +2,9 @@
    header), tap-to-download-and-share for everything else. */
 
 import React, { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { Image, type ImageSource } from "expo-image";
+import { useVideoPlayer, VideoView } from "expo-video";
 // The legacy API is the one with documented header support on downloads.
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -53,6 +54,11 @@ function FileChip({ session, att }: { session: Session; att: Attachment }) {
   );
 }
 
+function VideoAttachment({ session, att }: { session: Session; att: Attachment }) {
+  const player = useVideoPlayer({ uri: fileUrl(session, att.id), headers: authHeaders(session) });
+  return <VideoView player={player} style={styles.video} nativeControls contentFit="contain" />;
+}
+
 export function Attachments({
   session,
   attachments,
@@ -78,6 +84,9 @@ export function Attachments({
             onPress={() => setPreview({ source, filename: att.filename })}>
             <Image source={source} style={styles.image} contentFit="cover" transition={100} />
           </Pressable>
+        ) : att.mime.startsWith("video/")
+          && !(Platform.OS === "ios" && att.mime.toLowerCase() === "video/webm") ? (
+          <VideoAttachment key={att.id} session={session} att={att} />
         ) : (
           <FileChip key={att.id} session={session} att={att} />
         );
@@ -95,6 +104,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: colors.panelStrong,
   },
+  video: { width: 300, height: 210, borderRadius: 10, backgroundColor: "#000" },
   chip: {
     flexDirection: "row",
     alignItems: "center",

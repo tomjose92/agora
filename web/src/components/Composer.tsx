@@ -128,7 +128,11 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
   const serverMaxBytes = typeof me?.max_file_mb === "number" && me.max_file_mb > 0
     ? me.max_file_mb * 1024 * 1024
     : undefined;
-  const dropMaxBytes = dropMaterializationLimit(me?.max_file_mb);
+  const serverVideoMaxBytes = typeof me?.max_video_mb === "number" && me.max_video_mb > 0
+    ? me.max_video_mb * 1024 * 1024
+    : serverMaxBytes;
+  const maxBytesFor = (file: File) => file.type.startsWith("video/") ? serverVideoMaxBytes : serverMaxBytes;
+  const dropMaxBytes = dropMaterializationLimit(Math.max(me?.max_file_mb ?? 0, me?.max_video_mb ?? 0));
   const inputId = inThread ? "ago-thread-msg" : "ago-msg";
   const selectedAgents = addrSel
     .map(id => agents.find(a => a.id === id))
@@ -152,13 +156,13 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
     const incoming = Array.from(list);
     const nonEmpty = incoming.filter((file) => file.size > 0);
     const allowed = nonEmpty.filter(
-      (file) => serverMaxBytes === undefined || file.size <= serverMaxBytes,
+      (file) => maxBytesFor(file) === undefined || file.size <= maxBytesFor(file)!,
     );
     if (nonEmpty.length < incoming.length) {
       toast("Empty files cannot be uploaded", { variant: "warn" });
     }
     if (allowed.length < nonEmpty.length) {
-      toast(`File too large (max ${me!.max_file_mb} MB)`, { variant: "warn" });
+      toast(`File too large (videos max ${me?.max_video_mb ?? me?.max_file_mb} MB; other files max ${me?.max_file_mb} MB)`, { variant: "warn" });
     }
     const result = useAttachmentDrafts.getState().stage(
       draftKey,

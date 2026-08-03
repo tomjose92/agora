@@ -464,13 +464,18 @@ export function Composer({
   const pickPhotos = async () => {
     try {
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
+        mediaTypes: ["images", "videos"],
         allowsMultipleSelection: true,
         selectionLimit: MAX_FILES,
         quality: 0.9,
       });
       if (res.canceled) return;
-      addFiles(await Promise.all(res.assets.map(toWebSafeImage)));
+      addFiles(await Promise.all(res.assets.map((asset) => asset.type === "video" ? {
+        uri: asset.uri,
+        name: asset.fileName ?? `video-${Date.now()}.mp4`,
+        type: asset.mimeType ?? "video/mp4",
+        size: asset.fileSize,
+      } : toWebSafeImage(asset))));
     } catch (e) {
       toastErr("Photo pick failed", e);
     }
