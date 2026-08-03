@@ -31,7 +31,7 @@ email/invite-link admission, and Google/Apple sign-in. The `admin_key` in
 | Path | What it is |
 | --- | --- |
 | `crates/agora-core` | The embeddable heart: SQLite store, message hub, HTTP+WS API (axum), outbound connection manager. |
-| `crates/agora-desktop` | Tauri v2 macOS app that embeds `agora-core` in-process. |
+| `crates/agora-desktop` | Tauri v2 macOS/Linux app that embeds `agora-core` in-process. |
 | `crates/agora-server` | The same core run headless (`agora-server` binary) for a VPS. |
 | `web/` + `packages/core` | The web UI (React + TypeScript, incl. voice) on a shared client core; `npm run build` emits `web/dist/`, served by both the desktop app and the headless server. |
 | `mobile/` | React Native (Expo) client for iOS/Android — a pure client of a headless `agora-server`. See [`mobile/README.md`](mobile/README.md). |
@@ -55,7 +55,7 @@ Requires Rust (stable) and Node (for the Tauri CLI). Build and install:
 
 ```bash
 cd crates/agora-desktop
-npx @tauri-apps/cli@latest build --bundles app
+npx @tauri-apps/cli@2 build --bundles app
 ditto ../../target/release/bundle/macos/Agora.app /Applications/Agora.app
 open /Applications/Agora.app
 ```
@@ -75,6 +75,28 @@ The app keeps running when you close the window (agents keep processing and
 replies keep landing); Cmd-Q quits for real. Closed-window messages surface as
 desktop notifications — see [Notifications](docs/DEPLOYMENT.md#notifications) for the
 signing requirement.
+
+## Quick start (Linux desktop app)
+
+Agora supports Ubuntu 22.04+ and Debian 12+ on x86-64. Install the Tauri
+[Linux prerequisites](https://v2.tauri.app/start/prerequisites/), then build:
+
+```bash
+cd crates/agora-desktop
+npx @tauri-apps/cli@2 build --bundles deb,appimage
+sudo apt install ../../target/release/bundle/deb/*.deb
+```
+
+Alternatively, make the generated AppImage executable and run it directly.
+The Linux app has the same embedded and remote modes as macOS. Closing its
+window leaves the embedded server running in the system tray; use **Quit
+Agora** from the tray to stop it. Application data lives under
+`~/.local/share/app.agora.desktop/` on a standard Linux installation.
+
+WSL2 with WSLg can run the Linux build for development and internal use. WSL1
+and headless WSL are not supported; notifications and desktop integration in
+WSLg are best effort. A future Windows release will be a native installer,
+not the Linux package running through WSL.
 
 ## Quick start (headless server)
 
