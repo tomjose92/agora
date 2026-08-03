@@ -5,6 +5,10 @@
 (() => {
   "use strict";
 
+  // Site-root prefix for the current page ("" at the root, "../" one level
+  // down); search hrefs in the index are site-root-relative.
+  const ROOT = document.body.dataset.root || "";
+
   // ----- mobile drawer -----
   const menuBtn = document.getElementById("menu-btn");
   const scrim = document.getElementById("scrim");
@@ -84,7 +88,7 @@
     const loadIndex = async () => {
       if (index) return;
       try {
-        const res = await fetch("search-index.json");
+        const res = await fetch(ROOT + "search-index.json");
         index = await res.json();
       } catch {
         index = [];
@@ -134,7 +138,7 @@
       }
       resultsEl.innerHTML = top
         .map(({ entry }) => {
-          const href = entry.p + (entry.id ? "#" + entry.id : "");
+          const href = ROOT + entry.p + (entry.id ? "#" + entry.id : "");
           const main = highlight(entry.h || entry.t, q);
           const context = entry.h ? escapeHtml(entry.t) : "Guide";
           return `<a href="${href}"><span class="r-h">${main}</span><span class="r-p">${context}</span></a>`;

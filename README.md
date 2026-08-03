@@ -41,9 +41,13 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together.
 
 ## Documentation
 
-Rendered guides are hosted at
-[tomjose92.github.io/agora](https://tomjose92.github.io/agora/),
-and every running Agora server serves the same pages at `/docs/`.
+The **user guide** — getting started, rooms and invites, connecting agents,
+self-hosting, configuration — is hosted at
+[tomjose92.github.io/agora](https://tomjose92.github.io/agora/), and every
+running Agora server serves the same pages at `/docs/`. Its sources live in
+[docs/site/](docs/site/).
+
+For contributors and deep dives, the repo has:
 
 | Topic | Where |
 | --- | --- |

@@ -1,26 +1,24 @@
 #!/usr/bin/env node
-// Renders docs/*.md into a small static docs site (landing page + guide
-// pages + shared chrome), unified with the coding-agent guides that live at
-// web/public/docs/coding-agents/.
+// Renders the user-facing docs site from docs/site/*.md, unified with the
+// coding-agent guides that live at web/public/docs/coding-agents/.
+//
+// This is the *product* documentation (setup and everyday use); the repo's
+// contributor docs (docs/ARCHITECTURE.md, PROTOCOL.md, AUTH.md,
+// DEPLOYMENT.md) stay on GitHub and are not part of the site.
 //
 // Used in two places, producing identical output:
 //   - the web build (web/package.json) emits into web/dist/docs, so the
 //     headless server, the Docker image, and the desktop bundle all serve
 //     the docs at /docs/ (the coding-agent guides arrive there via Vite's
 //     public-dir copy);
-//   - the GitHub Pages workflow emits into _site/docs (and copies the
+//   - the GitHub Pages workflow emits into _site (and copies the
 //     coding-agent guides in), published at
-//     https://tomjose92.github.io/agora/docs/.
+//     https://tomjose92.github.io/agora/.
 //
-// Layout follows the Pantheo docs (topbar + search, grouped sidebar, prose
-// column, "On this page" rail, prev/next pager); design tokens mirror
-// web/public/docs/coding-agents/guide.css so both doc sets read as one site.
-//
-// The two hosts differ in shape: on a server the app owns /, so the docs
-// live under /docs/; on GitHub Pages the docs landing IS the site root and
-// hosts Storybook. The --flavor flag selects which links to emit; everything
-// else — including support.html and privacy.html, rendered from markdown
-// through the same chrome — is identical.
+// Guide pages get pretty URLs (getting-started/, self-hosting/, ...);
+// support.html and privacy.html stay flat because the App Store listing and
+// the mobile app link them directly. The two hosts differ only in the
+// Storybook/footer links, selected by --flavor.
 //
 // Usage: node scripts/build-docs.mjs --out <dir> [--flavor server|pages]
 
@@ -30,7 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { marked } from "marked";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const docsDir = path.join(repoRoot, "docs");
+const siteDir = path.join(repoRoot, "docs", "site");
 const assetsDir = path.join(repoRoot, "scripts", "docs-site");
 const REPO_URL = "https://github.com/tomjose92/agora";
 const PAGES_URL = "https://tomjose92.github.io/agora/";
@@ -53,28 +51,22 @@ if (flavor !== "server" && flavor !== "pages") {
 }
 const isPages = flavor === "pages";
 
-// Standalone site pages: rendered with the full chrome but kept out of the
-// Guides nav group, the pager, and the landing cards. Their output names
-// (support.html, privacy.html) are load-bearing — the mobile app and the
-// App Store listing link them directly.
-const SITE_PAGES = ["support.md", "privacy.md"];
+// ---------------------------------------------------------------------------
+// Site manifest: nav groups and reading order both derive from this.
+// ---------------------------------------------------------------------------
 
-// Guides in reading order; any new doc lands after these, alphabetically.
-const ORDER = ["ARCHITECTURE.md", "PROTOCOL.md", "DEPLOYMENT.md", "AUTH.md"];
-const sources = fs
-  .readdirSync(docsDir)
-  .filter((f) => f.endsWith(".md") && !SITE_PAGES.includes(f))
-  .sort((a, b) => {
-    const ia = ORDER.indexOf(a);
-    const ib = ORDER.indexOf(b);
-    if (ia !== -1 && ib !== -1) return ia - ib;
-    if (ia !== -1) return -1;
-    if (ib !== -1) return 1;
-    return a.localeCompare(b);
-  });
-const docSet = new Set([...sources, ...SITE_PAGES]);
+// Guide pages: <slug>.md in docs/site -> <slug>/index.html, linked as <slug>/.
+const GUIDE_GROUPS = [
+  { label: "Getting started", slugs: ["getting-started"] },
+  { label: "Using Agora", slugs: ["groups-and-channels", "people", "agents"] },
+  { label: "Self-hosting", slugs: ["self-hosting", "configuration"] },
+];
+// Flat pages: rendered with the same chrome, emitted at the site root under
+// their load-bearing URLs; kept out of the guide nav group and the pager.
+const FLAT_PAGES = ["support", "privacy"];
 
-const htmlName = (mdName) => mdName.replace(/\.md$/, ".html");
+const guideSlugs = GUIDE_GROUPS.flatMap((g) => g.slugs);
+
 const escapeHtml = (value) =>
   String(value).replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -84,23 +76,35 @@ const escapeHtml = (value) =>
 // Markdown processing
 // ---------------------------------------------------------------------------
 
-// Rewrite relative markdown links before rendering: sibling guides point at
-// their rendered .html; anything reaching outside docs/ points at GitHub
-// (those files aren't part of the published site).
+// Relative links in the sources are written as if from the site root
+// (agents.md, support.html, coding-agents/index.html). Rewrite .md targets to
+// their published URLs and mark every site-relative link with a __ROOT__
+// placeholder, substituted per page depth at emit time. Links reaching
+// outside docs/site point at GitHub.
 function rewriteLinks(md) {
   return md.replace(
     /\]\((?!(?:[a-z][a-z0-9+.-]*:)|\/\/|#)([^)\s]+?)(#[^)\s]*)?\)/g,
-    (match, target, anchor = "") => {
+    (_match, target, anchor = "") => {
       const clean = target.replace(/^\.\//, "");
-      if (docSet.has(clean)) return `](${htmlName(clean)}${anchor})`;
-      if (clean === "../README.md") return `](${REPO_URL}#readme)`;
-      if (clean.startsWith("../")) return `](${REPO_URL}/blob/main/${clean.slice(3)}${anchor})`;
-      return match;
+      const slug = clean.replace(/\.md$/, "");
+      if (clean.endsWith(".md") && guideSlugs.includes(slug)) {
+        return `](__ROOT__${slug}/${anchor})`;
+      }
+      if (clean.endsWith(".md") && FLAT_PAGES.includes(slug)) {
+        return `](__ROOT__${slug}.html${anchor})`;
+      }
+      if (clean.startsWith("../../")) {
+        return `](${REPO_URL}/blob/main/${clean.slice(6)}${anchor})`;
+      }
+      if (clean.startsWith("../")) {
+        return `](${REPO_URL}/blob/main/docs/${clean.slice(3)}${anchor})`;
+      }
+      return `](__ROOT__${clean}${anchor})`;
     },
   );
 }
 
-// GitHub-compatible heading slugs so existing #anchors keep working.
+// GitHub-compatible heading slugs so #anchors are predictable.
 function slugify(headingHtml) {
   return headingHtml
     .replace(/<[^>]+>/g, "")
@@ -165,15 +169,12 @@ function firstParagraph(md) {
 
 marked.setOptions({ gfm: true });
 
-function loadDoc(name) {
-  const raw = fs.readFileSync(path.join(docsDir, name), "utf8");
-  // Drop the "back to README" comment; the chrome provides navigation.
-  const md = raw.replace(/^<!--[\s\S]*?-->\s*/, "");
-  const title = (md.match(/^# (.+)$/m)?.[1] ?? htmlName(name)).trim();
+function loadDoc(slug) {
+  const md = fs.readFileSync(path.join(siteDir, `${slug}.md`), "utf8");
+  const title = (md.match(/^# (.+)$/m)?.[1] ?? slug).trim();
   const rendered = addHeadingAnchors(marked.parse(rewriteLinks(md)));
   return {
-    name,
-    file: htmlName(name),
+    slug,
     title,
     intro: firstParagraph(md),
     body: wrapBlocks(rendered.html),
@@ -181,11 +182,11 @@ function loadDoc(name) {
   };
 }
 
-const docs = sources.map(loadDoc);
-const sitePages = SITE_PAGES.map(loadDoc);
+const guideDocs = new Map(guideSlugs.map((slug) => [slug, loadDoc(slug)]));
+const flatDocs = FLAT_PAGES.map(loadDoc);
 
 // ---------------------------------------------------------------------------
-// Site model
+// Chrome (all hrefs site-root-relative; prefixed with root per page)
 // ---------------------------------------------------------------------------
 
 const agentEntries = Object.entries(guides).map(([key, guide]) => ({
@@ -196,14 +197,19 @@ const agentEntries = Object.entries(guides).map(([key, guide]) => ({
   logo: `coding-agents/${guide.logo}`,
 }));
 
+const guideItems = (label) =>
+  GUIDE_GROUPS.find((g) => g.label === label).slugs.map((slug) => ({
+    title: guideDocs.get(slug).title,
+    href: `${slug}/`,
+    key: slug,
+  }));
+
 const NAV_GROUPS = [
   {
-    label: "Guides",
-    items: [
-      { title: "Overview", href: "index.html", key: "index" },
-      ...docs.map((d) => ({ title: d.title, href: d.file, key: d.file })),
-    ],
+    label: "Getting started",
+    items: [{ title: "Overview", href: "index.html", key: "index" }, ...guideItems("Getting started")],
   },
+  { label: "Using Agora", items: guideItems("Using Agora") },
   {
     label: "Coding agents",
     items: [
@@ -211,36 +217,38 @@ const NAV_GROUPS = [
       ...agentEntries.map(({ title, href }) => ({ title, href })),
     ],
   },
+  { label: "Self-hosting", items: guideItems("Self-hosting") },
   {
     label: "Project",
     items: [
-      { title: "Support", href: "support.html", key: "support.html" },
-      { title: "Privacy policy", href: "privacy.html", key: "privacy.html" },
+      { title: "Support", href: "support.html", key: "support" },
+      { title: "Privacy policy", href: "privacy.html", key: "privacy" },
       // Storybook is deployed with the Pages site, not bundled into web/dist.
       { title: "Storybook", href: isPages ? "storybook/" : `${PAGES_URL}storybook/` },
       { title: "GitHub", href: REPO_URL },
-      { title: "README", href: `${REPO_URL}#readme` },
     ],
   },
 ];
 
-function navHtml(currentKey) {
+const href = (root, target) => (/^[a-z][a-z0-9+.-]*:/.test(target) ? target : root + target);
+
+function navHtml(currentKey, root) {
   return NAV_GROUPS.map(
     (group) =>
       `<div class="nav-group">${group.label}</div>\n` +
       group.items
         .map(
           (item) =>
-            `<a class="nav-item${item.key === currentKey ? " active" : ""}" href="${item.href}">${escapeHtml(item.title)}</a>`,
+            `<a class="nav-item${item.key === currentKey ? " active" : ""}" href="${href(root, item.href)}">${escapeHtml(item.title)}</a>`,
         )
         .join("\n"),
   ).join("\n");
 }
 
-const topbar = `
+const topbar = (root) => `
 <header class="topbar">
   <button class="menu-btn" id="menu-btn" aria-label="Toggle navigation">&#9776;</button>
-  <a class="brand" href="index.html"><span class="logo">A</span><span>Agora</span><span class="brand-sub">Docs</span></a>
+  <a class="brand" href="${root}index.html"><span class="logo">A</span><span>Agora</span><span class="brand-sub">Docs</span></a>
   <div class="topbar-spacer"></div>
   <div class="search">
     <input id="search-input" type="search" placeholder="Search docs" autocomplete="off" spellcheck="false" />
@@ -250,23 +258,23 @@ const topbar = `
   <a class="topbar-link" href="${REPO_URL}">GitHub</a>
 </header>`;
 
-function head(title, description) {
+function head(title, description, root) {
   return `<head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(title)} — Agora docs</title>
   <meta name="description" content="${escapeHtml(description)}" />
-  <link rel="icon" href="icon.png" />
-  <link rel="stylesheet" href="docs.css" />
+  <link rel="icon" href="${root}icon.png" />
+  <link rel="stylesheet" href="${root}docs.css" />
 </head>`;
 }
 
-// pager is {prev, next} for guides, or null for standalone site pages.
-function contentPage(doc, pager) {
+// pager is {prev, next} ({title, href} site-root-relative) or null.
+function contentPage(doc, { pager, root, currentKey }) {
   const pagerHtml = pager
     ? `    <nav class="pager">
-      <a href="${pager.prev.file}"><span class="label">&larr; Previous</span><span class="title">${escapeHtml(pager.prev.title)}</span></a>
-      <a class="next" href="${pager.next.file}"><span class="label">Next &rarr;</span><span class="title">${escapeHtml(pager.next.title)}</span></a>
+      <a href="${href(root, pager.prev.href)}"><span class="label">&larr; Previous</span><span class="title">${escapeHtml(pager.prev.title)}</span></a>
+      <a class="next" href="${href(root, pager.next.href)}"><span class="label">Next &rarr;</span><span class="title">${escapeHtml(pager.next.title)}</span></a>
     </nav>
 `
     : "";
@@ -278,21 +286,20 @@ function contentPage(doc, pager) {
     .join("\n");
   return `<!doctype html>
 <html lang="en">
-${head(doc.title, doc.intro.slice(0, 155))}
-<body>
+${head(doc.title, doc.intro.slice(0, 155), root)}
+<body data-root="${root}">
 <div class="scrim" id="scrim"></div>
-${topbar}
+${topbar(root)}
 <div class="layout">
   <aside class="sidebar" id="sidebar"><nav>
-${navHtml(doc.file)}
+${navHtml(currentKey, root)}
   </nav></aside>
   <main class="main">
-    <nav class="crumbs"><a href="index.html">Docs</a><span class="sep">/</span><span>${escapeHtml(doc.title)}</span></nav>
+    <nav class="crumbs"><a href="${root}index.html">Docs</a><span class="sep">/</span><span>${escapeHtml(doc.title)}</span></nav>
     <article class="prose">
-${doc.body}
+${doc.body.replaceAll("__ROOT__", root)}
     </article>
-${pagerHtml}    <footer class="page-footer">Also readable on <a href="${REPO_URL}/blob/main/docs/${doc.name}">GitHub</a>.</footer>
-  </main>
+${pagerHtml}  </main>
   <aside class="toc-rail">
     <div class="toc-title">On this page</div>
     <nav class="toc">
@@ -300,58 +307,58 @@ ${tocHtml}
     </nav>
   </aside>
 </div>
-<script src="docs.js" defer></script>
+<script src="${root}docs.js" defer></script>
 </body>
 </html>
 `;
 }
 
 function landingPage() {
-  const guideCards = docs
-    .map(
-      (d) =>
-        `<a class="card" href="${d.file}"><h3>${escapeHtml(d.title)}</h3><p>${escapeHtml(d.intro)}</p></a>`,
-    )
-    .join("\n");
+  const sections = GUIDE_GROUPS.map((group) => {
+    const cards = group.slugs
+      .map((slug) => {
+        const d = guideDocs.get(slug);
+        return `<a class="card" href="${slug}/"><h3>${escapeHtml(d.title)}</h3><p>${escapeHtml(d.intro)}</p></a>`;
+      })
+      .join("\n");
+    return `  <section>
+    <div class="section-head"><h2>${escapeHtml(group.label)}</h2></div>
+    <div class="cards">
+${cards}
+    </div>
+  </section>`;
+  });
   const agentCards = agentEntries
     .map(
       (a) =>
         `<a class="card agent" href="${a.href}"><img src="${a.logo}" alt="" /><span><h3>${escapeHtml(a.title)}</h3><p>${escapeHtml(a.description)}</p></span></a>`,
     )
     .join("\n");
-  return `<!doctype html>
-<html lang="en">
-${head("Documentation", "Documentation for Agora, the self-hosted chat app where people and AI agents share rooms.")}
-<body class="landing">
-<div class="scrim" id="scrim"></div>
-${topbar}
-<main class="landing-main">
-  <header class="hero">
-    <span class="kicker">Agora documentation</span>
-    <h1>People and AI agents, sharing rooms</h1>
-    <p>Agora is a self-hosted chat app: groups, channels, threads, and files,
-    where the other members are AI agents. These guides cover the system
-    design, the agent protocol, deployment, and accounts — plus step-by-step
-    setup for the coding-agent CLIs.</p>
-  </header>
-  <section>
-    <div class="section-head"><h2>Guides</h2></div>
-    <div class="cards">
-${guideCards}
-    </div>
-  </section>
-  <section>
+  sections.splice(2, 0, `  <section>
     <div class="section-head"><h2>Coding agents</h2><a href="coding-agents/index.html">Overview &rarr;</a></div>
     <div class="cards">
 ${agentCards}
     </div>
-  </section>
+  </section>`);
+  return `<!doctype html>
+<html lang="en">
+${head("Documentation", "How to set up and use Agora, the self-hosted chat app where people and AI agents share rooms.", "")}
+<body class="landing" data-root="">
+<div class="scrim" id="scrim"></div>
+${topbar("")}
+<main class="landing-main">
+  <header class="hero">
+    <span class="kicker">Agora documentation</span>
+    <h1>People and AI agents, sharing rooms</h1>
+    <p>Everything you need to set up and use Agora: install the apps, create
+    rooms and invite people, connect AI agents, and run your own server.</p>
+  </header>
+${sections.join("\n")}
   <footer class="landing-footer">
     <a href="support.html">Support</a> &middot;
     <a href="privacy.html">Privacy policy</a> &middot;
     <a href="${isPages ? "storybook/" : `${PAGES_URL}storybook/`}">Storybook</a> &middot;
-    <a href="${REPO_URL}">GitHub</a> &middot;
-    <a href="${REPO_URL}#readme">README</a>${
+    <a href="${REPO_URL}">GitHub</a>${
       isPages
         ? ""
         : ` &middot;
@@ -369,8 +376,8 @@ ${agentCards}
 // Search index
 // ---------------------------------------------------------------------------
 
-// {t: page title, p: page href, h: heading text ("" for the page itself),
-//  id: anchor id ("" for the page itself)}
+// {t: page title, p: site-root-relative href, h: heading text ("" for the
+//  page itself), id: anchor id ("" for the page itself)}
 const AGENT_SECTIONS = [
   ["Setup", "setup"],
   ["Commands in Agora", "commands"],
@@ -379,9 +386,16 @@ const AGENT_SECTIONS = [
   ["Troubleshooting", "troubleshooting"],
 ];
 const searchIndex = [
-  ...[...docs, ...sitePages].flatMap((d) => [
-    { t: d.title, p: d.file, h: "", id: "" },
-    ...d.toc.map((h) => ({ t: d.title, p: d.file, h: h.text, id: h.id })),
+  ...guideSlugs.flatMap((slug) => {
+    const d = guideDocs.get(slug);
+    return [
+      { t: d.title, p: `${slug}/`, h: "", id: "" },
+      ...d.toc.map((h) => ({ t: d.title, p: `${slug}/`, h: h.text, id: h.id })),
+    ];
+  }),
+  ...flatDocs.flatMap((d) => [
+    { t: d.title, p: `${d.slug}.html`, h: "", id: "" },
+    ...d.toc.map((h) => ({ t: d.title, p: `${d.slug}.html`, h: h.text, id: h.id })),
   ]),
   { t: "Coding agents", p: "coding-agents/index.html", h: "", id: "" },
   ...agentEntries.flatMap((a) => [
@@ -395,15 +409,28 @@ const searchIndex = [
 // ---------------------------------------------------------------------------
 
 fs.mkdirSync(outDir, { recursive: true });
-docs.forEach((doc, i) => {
-  const prev = i === 0 ? { title: "Overview", file: "index.html" } : docs[i - 1];
+guideSlugs.forEach((slug, i) => {
+  const doc = guideDocs.get(slug);
+  const prev =
+    i === 0
+      ? { title: "Overview", href: "index.html" }
+      : { title: guideDocs.get(guideSlugs[i - 1]).title, href: `${guideSlugs[i - 1]}/` };
   const next =
-    i === docs.length - 1
-      ? { title: "Coding agents", file: "coding-agents/index.html" }
-      : docs[i + 1];
-  fs.writeFileSync(path.join(outDir, doc.file), contentPage(doc, { prev, next }));
+    i === guideSlugs.length - 1
+      ? { title: "Coding agents", href: "coding-agents/index.html" }
+      : { title: guideDocs.get(guideSlugs[i + 1]).title, href: `${guideSlugs[i + 1]}/` };
+  fs.mkdirSync(path.join(outDir, slug), { recursive: true });
+  fs.writeFileSync(
+    path.join(outDir, slug, "index.html"),
+    contentPage(doc, { pager: { prev, next }, root: "../", currentKey: slug }),
+  );
 });
-sitePages.forEach((doc) => fs.writeFileSync(path.join(outDir, doc.file), contentPage(doc, null)));
+flatDocs.forEach((doc) =>
+  fs.writeFileSync(
+    path.join(outDir, `${doc.slug}.html`),
+    contentPage(doc, { pager: null, root: "", currentKey: doc.slug }),
+  ),
+);
 fs.writeFileSync(path.join(outDir, "index.html"), landingPage());
 fs.writeFileSync(path.join(outDir, "search-index.json"), JSON.stringify(searchIndex));
 for (const asset of ["docs.css", "docs.js"]) {
@@ -412,4 +439,6 @@ for (const asset of ["docs.css", "docs.js"]) {
 // Favicon + the agent guides' brand mark (they reference ../icon.png).
 fs.copyFileSync(path.join(repoRoot, "web/public/icon.png"), path.join(outDir, "icon.png"));
 
-console.log(`docs: rendered ${docs.length + sitePages.length + 1} pages into ${outDir}`);
+console.log(
+  `docs: rendered ${guideSlugs.length + flatDocs.length + 1} pages into ${outDir}`,
+);

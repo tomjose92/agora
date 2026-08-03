@@ -16,8 +16,9 @@ Pick the recipe that matches your setup:
 | A container on any Docker host | [Run the server with Docker](#run-the-server-with-docker) |
 | A managed deploy with TLS and a public URL | [Deploying on Railway (or any Docker PaaS)](#deploying-on-railway-or-any-docker-paas) |
 
-Every running server also serves these guides at `/docs/`, and they are
-hosted at <https://tomjose92.github.io/agora/>.
+The user-facing version of this material lives in the hosted docs at
+<https://tomjose92.github.io/agora/> (also served by every running server at
+`/docs/`); this file keeps the full operator detail.
 
 ## Run the server from source
 

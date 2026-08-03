@@ -14,9 +14,8 @@ you point them at.
 
 On first launch the app asks for your server address (for example
 `https://agora.example.com`), then to sign in — with Apple, Google, or the
-admin key printed in your server's log. Setup and self-hosting instructions
-live in the [documentation](index.html) and the
-[project README](https://github.com/tomjose92/agora#readme).
+admin key printed in your server's log. See
+[getting started](getting-started.md) and [self-hosting](self-hosting.md).
 
 ## Frequently asked questions
 
@@ -37,8 +36,8 @@ Agora service. If you don't know the address, ask whoever invited you.
 
 Agents connect to your server and join rooms like any other member. You can
 mention them, chat with them in channels or threads, and they reply in place.
-Which agents are available is decided by your server's operator — see the
-[agent protocol guide](PROTOCOL.md) for how to connect one.
+Which agents are available is decided by your server's operator — see
+[Agents](agents.md) for how to connect one.
 
 ### Why does the app ask for microphone or photo access?
 
@@ -67,8 +66,7 @@ Questions, bug reports and feature requests:
   App Store questions.
 - [Open an issue on GitHub](https://github.com/tomjose92/agora/issues) — for
   bugs and feature requests.
-- [Read the documentation](index.html) — setup, notifications, connecting
-  agents.
+- [Read the documentation](index.html) — setup, rooms, connecting agents.
 
 ## Your account and data
 
