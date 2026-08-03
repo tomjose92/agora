@@ -388,6 +388,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/agents/{agent_id}", delete(forget_agent))
         .route("/api/agents/{agent_id}/avatar", get(agent_avatar))
         .route("/api/files/{file_id}", get(get_file))
+        .route("/agent/files/{file_id}", get(get_agent_file))
         .route("/api/connections", get(list_connections).post(add_connection))
         .route(
             "/api/connections/{name}",
@@ -1720,7 +1721,43 @@ async fn get_file(
         .file(&file_id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown file"))?;
     require_channel_member(&state, &user, meta["channel_id"].as_str().unwrap_or_default())?;
-    let path = state.hub.store.file_path(&file_id);
+    stream_file(&state, &file_id, &meta, &headers).await
+}
+
+async fn get_agent_file(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let token = bearer(&headers)
+        .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Pairing token required"))?;
+    if state.config.valid_pairing_token(&token).is_none() {
+        return Err(err(StatusCode::UNAUTHORIZED, "Invalid pairing token"));
+    }
+    let agent_id = q.get("agent_id").map(String::as_str).unwrap_or_default();
+    if agent_id.is_empty() || !state.hub.pairing_token_owns_agent(&token, agent_id) {
+        return Err(err(StatusCode::FORBIDDEN, "Pairing token does not own this agent"));
+    }
+    let meta = state
+        .hub
+        .store
+        .file(&file_id)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown file"))?;
+    let channel_id = meta["channel_id"].as_str().unwrap_or_default();
+    if !state.hub.store.agent_in_channel(agent_id, channel_id) {
+        return Err(err(StatusCode::FORBIDDEN, "Agent is not a member of this channel"));
+    }
+    stream_file(&state, &file_id, &meta, &headers).await
+}
+
+async fn stream_file(
+    state: &AppState,
+    file_id: &str,
+    meta: &Value,
+    headers: &HeaderMap,
+) -> Result<Response, ApiError> {
+    let path = state.hub.store.file_path(file_id);
     let mut file = tokio::fs::File::open(&path).await
         .map_err(|_| err(StatusCode::NOT_FOUND, "File content missing"))?;
     let size = file.metadata().await
@@ -3712,6 +3749,112 @@ mod tests {
             .await.unwrap();
         assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(response.headers()["content-range"], "bytes */10");
+    }
+
+    #[tokio::test]
+    async fn agent_file_download_is_bound_to_the_exact_live_pairing_token() {
+        let (state, _dir) = test_state();
+        state.config.update(|config| {
+            config.pairing_tokens.push(PairingToken {
+                token: "token-a".into(), name: "duplicate".into(), kind: None, created_at: now(),
+            });
+            config.pairing_tokens.push(PairingToken {
+                token: "token-b".into(), name: "duplicate".into(), kind: None, created_at: now(),
+            });
+        });
+        let group = state.hub.store.create_group("Media", "", None);
+        let group_id = group["id"].as_str().unwrap();
+        let channel = state.hub.store.create_channel(group_id, "files", "");
+        let channel_id = channel["id"].as_str().unwrap();
+        state.hub.store.add_member(group_id, "agent", "bot-a", "member", None);
+        let message = state.hub.store.add_message(
+            channel_id, "clip", "user", "ana", None, None,
+            &[NewAttachment {
+                filename: "clip.bin".into(), mime: "application/octet-stream".into(),
+                data: b"download me".to_vec(),
+            }],
+        );
+        let file_id = message["attachments"][0]["id"].as_str().unwrap().to_string();
+        let (tx, _rx) = unbounded_channel();
+        let conn_a = state.hub.next_conn_id();
+        state.hub.register_pairing_conn(conn_a, "token-a");
+        state.hub.register_agent(AgentHandle {
+            agent_id: "bot-a".into(), agent_name: "Bot A".into(), requires_mention: false,
+            wants_context_feed: false, has_avatar: false, avatar_v: 0,
+            source: "pairing:duplicate".into(), conn_id: conn_a, tx,
+        });
+        let conn_b = state.hub.next_conn_id();
+        state.hub.register_pairing_conn(conn_b, "token-b");
+
+        let query = Query(HashMap::from([("agent_id".into(), "bot-a".into())]));
+        let missing_auth = get_agent_file(
+            State(state.clone()), Path(file_id.clone()), query.clone(), HeaderMap::new(),
+        ).await.unwrap_err();
+        assert_eq!(missing_auth.0, StatusCode::UNAUTHORIZED);
+        let query_token = Query(HashMap::from([
+            ("agent_id".into(), "bot-a".into()),
+            ("token".into(), "token-a".into()),
+        ]));
+        let query_auth = get_agent_file(
+            State(state.clone()), Path(file_id.clone()), query_token, HeaderMap::new(),
+        ).await.unwrap_err();
+        assert_eq!(query_auth.0, StatusCode::UNAUTHORIZED);
+
+        state.hub.store.add_member(group_id, "agent", "outbound", "member", None);
+        let (outbound_tx, _outbound_rx) = unbounded_channel();
+        state.hub.register_agent(AgentHandle {
+            agent_id: "outbound".into(), agent_name: "Outbound".into(),
+            requires_mention: false, wants_context_feed: false, has_avatar: false,
+            avatar_v: 0, source: "remote".into(), conn_id: state.hub.next_conn_id(),
+            tx: outbound_tx,
+        });
+        let mut owner_headers = HeaderMap::new();
+        owner_headers.insert("authorization", "Bearer token-a".parse().unwrap());
+        let outbound_denied = get_agent_file(
+            State(state.clone()), Path(file_id.clone()),
+            Query(HashMap::from([("agent_id".into(), "outbound".into())])), owner_headers,
+        ).await.unwrap_err();
+        assert_eq!(outbound_denied.0, StatusCode::FORBIDDEN);
+
+        let gone_conn = state.hub.next_conn_id();
+        state.hub.register_pairing_conn(gone_conn, "token-a");
+        let (gone_tx, _gone_rx) = unbounded_channel();
+        state.hub.register_agent(AgentHandle {
+            agent_id: "gone".into(), agent_name: "Gone".into(), requires_mention: false,
+            wants_context_feed: false, has_avatar: false, avatar_v: 0,
+            source: "pairing:duplicate".into(), conn_id: gone_conn, tx: gone_tx,
+        });
+        state.hub.unregister_connection(gone_conn);
+        let mut owner_headers = HeaderMap::new();
+        owner_headers.insert("authorization", "Bearer token-a".parse().unwrap());
+        let gone_denied = get_agent_file(
+            State(state.clone()), Path(file_id.clone()),
+            Query(HashMap::from([("agent_id".into(), "gone".into())])), owner_headers,
+        ).await.unwrap_err();
+        assert_eq!(gone_denied.0, StatusCode::FORBIDDEN);
+
+        let mut wrong_headers = HeaderMap::new();
+        wrong_headers.insert("authorization", "Bearer token-b".parse().unwrap());
+        let error = get_agent_file(
+            State(state.clone()), Path(file_id.clone()), query.clone(), wrong_headers,
+        ).await.unwrap_err();
+        assert_eq!(error.0, StatusCode::FORBIDDEN);
+
+        let mut owner_headers = HeaderMap::new();
+        owner_headers.insert("authorization", "Bearer token-a".parse().unwrap());
+        let response = get_agent_file(
+            State(state.clone()), Path(file_id.clone()), query.clone(), owner_headers,
+        )
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(to_bytes(response.into_body(), 64).await.unwrap(), "download me");
+
+        state.hub.store.remove_member(group_id, "agent", "bot-a", None);
+        let mut owner_headers = HeaderMap::new();
+        owner_headers.insert("authorization", "Bearer token-a".parse().unwrap());
+        let denied = get_agent_file(State(state), Path(file_id), query, owner_headers)
+            .await.unwrap_err();
+        assert_eq!(denied.0, StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

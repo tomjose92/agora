@@ -37,7 +37,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 try:
     import websockets
@@ -52,6 +53,9 @@ TAIL_BYTES = 256 * 1024  # how much of a rollout .jsonl to scan for the last pro
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
 MAX_ATTACHMENTS = 5
+MAX_INBOUND_ATTACHMENT_BYTES = 512 * 1024 * 1024
+ATTACHMENT_FETCH_TIMEOUT = 30
+MIN_DOWNLOAD_RATE_BYTES_PER_SECOND = 1024 * 1024
 ATTACH_SENTINEL = "<<<AGORA_ATTACH>>>"
 ATTACH_PROMPT_SUFFIX = (
     "\n\n(Attachment note from the relay: to send a generated image, end your reply "
@@ -402,12 +406,59 @@ def _unique_path(dest: Path, name: str) -> Path:
         i += 1
 
 
-def materialize_attachments(attachments: list, dest_dir: Path) -> tuple[list[Path], list[Path], list[str]]:
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class AttachmentSizeMismatch(ValueError):
+    pass
+
+
+_NO_REDIRECT_OPENER = build_opener(_NoRedirectHandler())
+
+
+def _download_attachment(http_base: str, token: str, agent_id: str, att: dict, path: Path) -> int:
+    expected = int(att.get("size"))
+    if expected < 0 or expected > MAX_INBOUND_ATTACHMENT_BYTES:
+        raise ValueError("advertised attachment size is outside the safety limit")
+    file_id = quote(str(att["id"]), safe="")
+    url = f"{http_base}/agent/files/{file_id}?{urlencode({'agent_id': agent_id})}"
+    request = Request(url, headers={"Authorization": f"Bearer {token}"})
+    written = 0
+    deadline = (
+        time.monotonic()
+        + ATTACHMENT_FETCH_TIMEOUT
+        + expected / MIN_DOWNLOAD_RATE_BYTES_PER_SECOND
+    )
+    try:
+        with _NO_REDIRECT_OPENER.open(request, timeout=ATTACHMENT_FETCH_TIMEOUT) as response, path.open("wb") as output:
+            read = getattr(response, "read1", response.read)
+            while True:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("attachment download exceeded total-transfer deadline")
+                chunk = read(64 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > expected or written > MAX_INBOUND_ATTACHMENT_BYTES:
+                    raise AttachmentSizeMismatch("download exceeded advertised attachment size")
+                output.write(chunk)
+        if written != expected:
+            raise AttachmentSizeMismatch(f"downloaded {written} bytes; expected {expected}")
+        return written
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def materialize_attachments(attachments: list, dest_dir: Path, http_base: str = "",
+                            token: str = "", agent_id: str = "") -> tuple[list[Path], list[Path], list[str]]:
     """Write inlined attachment bytes into ``dest_dir`` for Cursor to read.
 
     The hub inlines files up to a size cap as base64 (``data_b64``); larger
-    ones arrive as name-only refs with no bytes. Returns ``(saved, images,
-    notes)``: the saved paths, the subset that are images (attached to the run
+    ones carry an id that this bridge fetches over authenticated HTTP. Returns
+    ``(saved, images, notes)``: the saved paths, the subset that are images (attached to the run
     as local paths in the prompt), and human/agent-readable
     note lines describing every attachment to append to the prompt.
     """
@@ -422,6 +473,21 @@ def materialize_attachments(attachments: list, dest_dir: Path) -> tuple[list[Pat
         b64 = att.get("data_b64")
         if not b64:
             size = att.get("size")
+            if att.get("id") and http_base and token and agent_id:
+                path = _unique_path(dest_dir, _safe_filename(filename))
+                try:
+                    written = _download_attachment(http_base, token, agent_id, att, path)
+                except AttachmentSizeMismatch as e:
+                    notes.append(f"- {filename} ({mime}, {size} bytes) — downloaded size mismatch ({e})")
+                    continue
+                except Exception as e:
+                    notes.append(f"- {filename} ({mime}, {size} bytes) — could not be downloaded ({e})")
+                    continue
+                saved.append(path)
+                if mime.startswith("image/"):
+                    images.append(path)
+                notes.append(f"- {path} ({mime}, {written} bytes)")
+                continue
             notes.append(
                 f"- {filename} ({mime}, {size} bytes) — too large to inline; not available locally"
             )
@@ -449,7 +515,9 @@ def materialize_attachments(attachments: list, dest_dir: Path) -> tuple[list[Pat
 
 class Bridge:
     def __init__(self, args: argparse.Namespace) -> None:
+        self.token = args.token
         self.url = self._normalize_url(args.url, args.token)
+        self.http_base = self._http_base(self.url)
         self.agent_id = args.agent_id
         self.agent_name = args.agent_name
         self.avatar = load_agent_avatar(args.agent_avatar, Path(args.env_file))
@@ -497,6 +565,13 @@ class Bridge:
             url += "/agent/ws"
         sep = "&" if "?" in url else "?"
         return f"{url}{sep}token={token}"
+
+    @staticmethod
+    def _http_base(ws_url: str) -> str:
+        parsed = urlsplit(ws_url)
+        scheme = "https" if parsed.scheme == "wss" else "http"
+        path = parsed.path.rsplit("/agent/ws", 1)[0].rstrip("/")
+        return urlunsplit((scheme, parsed.netloc, path, "", ""))
 
     # ------------------------------------------------------------- state
 
@@ -1239,7 +1314,9 @@ class Bridge:
         if not attachments:
             return text, [], None
         tmpdir = tempfile.mkdtemp(prefix="agora-att-")
-        saved, _images, notes = materialize_attachments(attachments, Path(tmpdir))
+        saved, _images, notes = materialize_attachments(
+            attachments, Path(tmpdir), self.http_base, self.token, self.agent_id
+        )
         prompt = text
         if notes:
             block = "The Agora message included these attachments:\n" + "\n".join(notes)
@@ -1255,7 +1332,7 @@ class Bridge:
     async def run_agent(self, key: str, frame: dict, binding: dict, text: str) -> str:
         if not self.agent_bin:
             raise RuntimeError(CURSOR_NOT_FOUND)
-        prompt, extra_args, tmpdir = self._stage_attachments(frame, text)
+        prompt, extra_args, tmpdir = await asyncio.to_thread(self._stage_attachments, frame, text)
         mode = binding.get("mode") or self.default_mode
         model = normalize_model(binding.get("model")) or self.default_model
         prompt += self._prompt_suffixes(binding)

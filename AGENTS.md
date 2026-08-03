@@ -255,6 +255,8 @@ endpoint must not break:
   `Query<HashMap<String,String>>` + `HeaderMap` and start with a
   `require_*` call; the token arrives as `Authorization: Bearer` or
   `?token=`.
+  `/agent/files/{file_id}` is deliberately narrower: pairing credentials are
+  accepted through `Authorization: Bearer` only, never the query string.
 - **The store's JSON shapes are the API contract** for web + mobile; add
   fields freely, rename/remove only with all three clients updated.
 - **Sessions**: disabling a user must `bump_session_version`; deleting an
