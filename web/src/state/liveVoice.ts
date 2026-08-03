@@ -36,7 +36,9 @@ const LABELS: Record<LiveUiState, string> = {
 };
 
 export function liveLabel(state: LiveUiState, speakOn: boolean, muted = false): string {
-  if (muted && state === "listening") return "Muted — tap Unmute to talk";
+  if (muted && state === "listening") {
+    return speakOn ? "Muted — tap Unmute to talk" : "Muted — replies appear in chat";
+  }
   if (muted && state === "speaking") return "Speaking… · Mic muted";
   // With 🔊 off the session still listens and posts turns, but replies stay
   // text-only — say so instead of implying audio is coming.

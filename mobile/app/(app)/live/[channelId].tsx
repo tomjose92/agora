@@ -95,6 +95,7 @@ export default function LiveScreen() {
   const [muted, setMuted] = useState(false);
   const [muteBusy, setMuteBusy] = useState(false);
   const mutedRef = useRef(false);
+  const muteBusyRef = useRef(false);
 
   const recorder = useAudioRecorder({
     ...RecordingPresets.HIGH_QUALITY,
@@ -124,12 +125,34 @@ export default function LiveScreen() {
         playsInSilentMode: true,
         shouldPlayInBackground: true,
       });
+      if (ended.current || mutedRef.current) {
+        try { await recorder.stop(); } catch { /* not recording */ }
+        await setAudioModeAsync({
+          allowsRecording: false,
+          allowsBackgroundRecording: false,
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+        }).catch(() => {});
+        if (!ended.current) setStatus("listening");
+        return;
+      }
       await recorder.prepareToRecordAsync();
+      if (ended.current || mutedRef.current) {
+        try { await recorder.stop(); } catch { /* not recording */ }
+        await setAudioModeAsync({
+          allowsRecording: false,
+          allowsBackgroundRecording: false,
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+        }).catch(() => {});
+        if (!ended.current) setStatus("listening");
+        return;
+      }
       recorder.record();
       vad.current = initialVadState();
       setStatus("listening");
     } catch {
-      setStatus("error");
+      if (!ended.current) setStatus(mutedRef.current ? "listening" : "error");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -203,33 +226,38 @@ export default function LiveScreen() {
   /* Mute is also an explicit end-of-turn control: if speech is in progress,
      stop and send it immediately so background noise cannot keep VAD open. */
   const toggleMute = useCallback(async () => {
-    if (muteBusy) return;
-    if (mutedRef.current) {
-      mutedRef.current = false;
-      setMuted(false);
-      if (statusRef.current === "listening" || statusRef.current === "recording") {
-        await startMic();
-      }
-      return;
-    }
-
+    if (muteBusyRef.current) return;
+    muteBusyRef.current = true;
     setMuteBusy(true);
-    mutedRef.current = true;
-    setMuted(true);
-    const previousStatus = statusRef.current;
-    const wasRecording = previousStatus === "recording";
-    const sendable = wasRecording && vadCanSend(vad.current);
-    if (previousStatus === "listening" || wasRecording) setStatus("listening");
-    const uri = await stopMic();
-    await setAudioModeAsync({
-      allowsRecording: false,
-      allowsBackgroundRecording: false,
-      playsInSilentMode: true,
-      shouldPlayInBackground: true,
-    }).catch(() => {});
-    setMuteBusy(false);
-    if (!ended.current && sendable && uri) await sendUtterance(uri);
-  }, [muteBusy, sendUtterance, startMic, stopMic]);
+    try {
+      if (mutedRef.current) {
+        mutedRef.current = false;
+        setMuted(false);
+        if (statusRef.current === "listening" || statusRef.current === "recording") {
+          await startMic();
+        }
+        return;
+      }
+
+      mutedRef.current = true;
+      setMuted(true);
+      const previousStatus = statusRef.current;
+      const wasRecording = previousStatus === "recording";
+      const sendable = wasRecording && vadCanSend(vad.current);
+      if (previousStatus === "listening" || wasRecording) setStatus("listening");
+      const uri = await stopMic();
+      await setAudioModeAsync({
+        allowsRecording: false,
+        allowsBackgroundRecording: false,
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+      }).catch(() => {});
+      if (!ended.current && sendable && uri) await sendUtterance(uri);
+    } finally {
+      muteBusyRef.current = false;
+      if (!ended.current) setMuteBusy(false);
+    }
+  }, [sendUtterance, startMic, stopMic]);
 
   /* -------------------------------------------------- VAD loop
      Runs on every metering poll (~120ms). Only the listening/recording
@@ -349,9 +377,9 @@ export default function LiveScreen() {
         </View>
         <View style={[styles.controls, { marginBottom: insets.bottom + 22 }]}>
           <Pressable
-            accessibilityRole="button"
+            accessibilityRole="switch"
             accessibilityLabel={muted ? "Unmute microphone" : "Mute microphone and finish this turn"}
-            accessibilityState={{ selected: muted, disabled: muteDisabled }}
+            accessibilityState={{ checked: muted, disabled: muteDisabled }}
             disabled={muteDisabled}
             style={[styles.muteBtn, muted && styles.muteBtnActive, muteDisabled && styles.disabledBtn]}
             onPress={() => void toggleMute()}
