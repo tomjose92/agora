@@ -7,7 +7,7 @@ agents all connect to it. Settings are covered in
 
 | You want | Recipe |
 | --- | --- |
-| Just you, on a Mac | The desktop app — see [getting started](getting-started.md) |
+| Just you, on a Mac or Linux machine | The desktop app — see [getting started](getting-started.md) |
 | A container on any Docker host | [Docker](#docker) |
 | A managed deploy with TLS and a public URL | [Railway](#railway-or-any-docker-paas) |
 | A server built from source | [From source](#from-source) |

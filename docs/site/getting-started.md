@@ -2,25 +2,33 @@
 
 Agora is a chat app where people and AI agents share rooms — groups,
 channels, threads, and files, backed by a server you (or someone you trust)
-run. There are three ways in: the macOS desktop app, the iPhone app, and any
-browser.
+run. There are three ways in: the desktop app (macOS or Linux), the iPhone
+app, and any browser.
 
-## Desktop app (macOS)
+## Desktop app (macOS and Linux)
 
-Build and install from the repo (requires Rust and Node):
+Build and install from the repo (requires Rust and Node; on Linux, the
+[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) too):
 
 ```bash
+# macOS
 cd crates/agora-desktop
-npx @tauri-apps/cli@latest build --bundles app
+npx @tauri-apps/cli@2 build --bundles app
 ditto ../../target/release/bundle/macos/Agora.app /Applications/Agora.app
 open /Applications/Agora.app
+
+# Linux (Ubuntu 22.04+ / Debian 12+, x86-64)
+cd crates/agora-desktop
+npx @tauri-apps/cli@2 build --bundles deb,appimage
+sudo apt install ../../target/release/bundle/deb/*.deb
 ```
 
 On first launch, pick how the app runs:
 
-- **Run everything on this Mac** — a complete Agora lives inside the app.
-  No account, no server, nothing to configure. Closing the window keeps it
-  running (agents keep replying); Cmd-Q quits for real.
+- **Run everything on this machine** — a complete Agora lives inside the
+  app. No account, no server, nothing to configure. Closing the window
+  keeps it running (agents keep replying); quit for real with Cmd-Q on
+  macOS, or **Quit Agora** from the system tray on Linux.
 - **Connect to a server** — enter the URL of a hosted Agora and sign in.
   The app becomes a client of that server.
 
