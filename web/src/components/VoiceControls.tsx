@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../lib/icons";
 import { useVoiceRec, voiceCancel, voiceRecKey, voiceToggle } from "../state/voiceRec";
-import { liveLabel, liveScopeActive, liveToggle, useLiveVoice } from "../state/liveVoice";
+import { liveLabel, liveMuteToggle, liveScopeActive, liveToggle, useLiveVoice } from "../state/liveVoice";
 import { useSpeak } from "../state/speak";
 
 function RecTimer({ startedAt }: { startedAt: number }) {
@@ -79,13 +79,19 @@ export function LiveButton({ channelId, threadId }: { channelId: string; threadI
 }
 
 export function LiveStrip({ channelId, threadId }: { channelId: string; threadId: number | null }) {
-  const { state } = useLiveVoice();
+  const { state, muted } = useLiveVoice();
   const speakOn = useSpeak(s => s.on);
   if (!liveScopeActive(channelId, threadId)) return null;
   return (
-    <div className={`ago-live-strip st-${state}`} id="ago-live-strip">
+    <div className={`ago-live-strip st-${state}${muted ? " muted" : ""}`} id="ago-live-strip">
       <span className="ago-live-dot"></span>
-      <span className="ago-live-label">{liveLabel(state, speakOn)}</span>
+      <span className="ago-live-label">{liveLabel(state, speakOn, muted)}</span>
+      <button className={`btn sm ago-live-mute${muted ? " active" : ""}`}
+        aria-pressed={muted}
+        title={muted ? "Unmute microphone" : "Mute microphone and finish this turn"}
+        onClick={liveMuteToggle}>
+        <Icon name={muted ? "mic" : "mic-off"} /> {muted ? "Unmute" : "Mute"}
+      </button>
       <button className="btn sm" onClick={() => void liveToggle(channelId, threadId)}>End</button>
     </div>
   );

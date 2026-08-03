@@ -27,6 +27,12 @@ export function initialVadState(): VadState {
   return { speaking: false, utterStart: 0, lastVoice: 0 };
 }
 
+/** Whether speech captured so far is long enough to send when the user
+    explicitly endpoints it with the mute button. */
+export function vadCanSend(state: VadState, config: typeof VAD = VAD): boolean {
+  return state.speaking && state.lastVoice - state.utterStart >= config.MIN_UTTER_MS;
+}
+
 /** Feed one metering sample; mutates `state` and says what the caller should
     do (start capturing / stop and maybe send / nothing). */
 export function vadStep(
@@ -47,7 +53,7 @@ export function vadStep(
   if (nowMs - state.lastVoice < config.SILENCE_MS) {
     return { kind: "none", speaking: true };
   }
-  const sendable = state.lastVoice - state.utterStart >= config.MIN_UTTER_MS;
+  const sendable = vadCanSend(state, config);
   state.speaking = false;
   return { kind: "end", sendable };
 }

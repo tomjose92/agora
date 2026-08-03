@@ -55,7 +55,7 @@ export function resetStoryState(): void {
   useSourcesView.getState().close();
   useAgentProfile.getState().close();
   useVoiceRec.setState({ recordingKey: null, startedAt: 0, busyKey: null });
-  useLiveVoice.setState({ scope: null, state: "listening" });
+  useLiveVoice.setState({ scope: null, state: "listening", muted: false });
   useSpeak.setState({ on: false });
   useToasts.setState({ toasts: [] });
 }
