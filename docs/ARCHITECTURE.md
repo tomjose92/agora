@@ -29,7 +29,7 @@ One Rust core, three clients (see the repo layout table in the
 
 - **`crates/agora-core`** — the embeddable heart: SQLite store, message hub,
   HTTP+WS API (axum), auth, and the outbound connection manager.
-- **`crates/agora-desktop`** — Tauri v2 macOS shell. Two modes (below).
+- **`crates/agora-desktop`** — Tauri v2 macOS/Linux shell. Two modes (below).
 - **`crates/agora-server`** — the same core, headless, for a VPS / Railway.
 - **`web/` + `packages/core`** — the web UI: React (Vite + TS) on a shared
   client core (`@agora/core`: API client/types, query hooks, WS reducer,
@@ -79,8 +79,10 @@ hooks live in `@agora/core`), zustand for the session
 The desktop app fronts one of two servers, chosen under **Server → Server
 Settings…** (stored in `desktop.json` next to the data dir):
 
-- **Embedded** (default) — boots the hub in-process. This Mac *is* the Agora;
-  closing the window keeps it running (Cmd-Q stops it).
+- **Embedded** (default) — boots the hub in-process. This computer *is* the
+  Agora; closing the window keeps it running (Cmd-Q on macOS or **Quit Agora**
+  in the Linux tray stops it). A second Linux launch restores the existing
+  process instead of opening the SQLite database twice.
 - **Remote** — the app skips the local hub entirely and becomes a pure client
   for a deployed `agora-server`: enter the server URL and its admin key, the
   app validates them and loads the remote UI. The same server can serve the
@@ -92,6 +94,11 @@ runs — but native desktop notifications still fire: the shell keeps its own
 event socket to the remote server and posts banners for agent replies that
 land while the window is unfocused (see
 [Notifications](DEPLOYMENT.md#notifications)).
+
+Linux uses the same binary for Debian and AppImage packages. Only AppImage
+installs use Tauri's direct updater (`APPIMAGE` identifies that runtime);
+Debian installs remain owned by `dpkg`. If a Linux tray cannot be created,
+closing the window quits instead of leaving an unreachable background server.
 
 ## Authorization model
 

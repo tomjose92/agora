@@ -9,9 +9,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 agora-core = { path = "../agora-core" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
 # Direct-download auto-updates (GitHub Releases feed). Mac App Store builds
 # must ship without this — updates flow through the store there — so it sits
 # behind the default-on `updater` feature (MAS: --no-default-features).

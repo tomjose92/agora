@@ -7,6 +7,20 @@ between instances, network hardening, configuration, and notifications.
 
 ## Sharing the desktop app
 
+Linux releases include an x86-64 Debian package and AppImage. Install the
+Debian package with `sudo apt install ./Agora_*.deb`, or mark the AppImage
+executable and launch it directly. The AppImage bundles its media framework
+for consistent voice and audio playback; Debian resolves WebKitGTK and GTK
+through package dependencies.
+
+WSL2 with WSLg is suitable for development and internal use, but notification
+and tray integration depend on the Windows/WSLg environment. WSL1 and
+headless WSL are unsupported. Agora detects WSL and applies the WebKit
+DMA-BUF renderer workaround unless the user has already configured that
+environment variable.
+
+### macOS distribution
+
 The `.app` this repo builds is ad-hoc signed — fine for your own machine, but
 another Mac's Gatekeeper will refuse it ("damaged / unidentified developer").
 Your options, in increasing order of effort:
@@ -27,22 +41,26 @@ Your options, in increasing order of effort:
 
 ## Releases and auto-update
 
-Tagged releases are built by CI
+Versioned releases are built by CI
 ([.github/workflows/release-desktop.yml](../.github/workflows/release-desktop.yml)):
-push a `v*` tag and a macOS runner produces a universal DMG plus signed
-updater artifacts and a `latest.json` feed, published as a GitHub
-Release — merging the version bump ships it. The app checks that feed on every
-launch (silently installing updates for the next start) and on demand via
+merging a version bump builds a universal macOS DMG plus Linux Debian and
+AppImage packages. Each platform uploads to a draft release in sequence, then
+CI publishes one combined signed updater feed only after every artifact is
+ready. The macOS app and Linux AppImage check that feed on every launch
+(silently installing updates for the next start) and on demand via
 **Agora → Check for Updates…** in the app menu, which walks through native
-install/restart dialogs. Local `scripts/redeploy.sh` builds compile the
-updater out (`--no-default-features`) so a dev install is never silently
-replaced by a published release. Updater artifacts are signed with the
-project's updater key (`plugins.updater.pubkey` in `tauri.conf.json`); CI
-needs the private key in the `TAURI_SIGNING_PRIVATE_KEY` repo secret. Until
-the Apple signing secrets are configured the workflow ad-hoc signs, so
-downloads still hit Gatekeeper — options 1/2 above apply. A Mac App Store
-build must exclude the updater: `--no-default-features` on `agora-desktop`
-compiles it out.
+install/restart dialogs. Debian installs update through their package
+distributor and do not expose the direct updater. Local
+`scripts/redeploy.sh` builds compile the updater out (`--no-default-features`)
+so a dev install is never silently replaced by a published release. Updater
+artifacts are signed with the project's updater key (`plugins.updater.pubkey`
+in `tauri.conf.json`); CI needs the private key in the
+`TAURI_SIGNING_PRIVATE_KEY` repo secret. Until the Apple signing secrets are
+configured the workflow ad-hoc signs, so downloads still hit Gatekeeper —
+options 1/2 above apply. A Mac App Store build must exclude the updater:
+`--no-default-features` on `agora-desktop` compiles it out.
+If a draft release becomes stuck or contains unusable artifacts, delete that
+draft and re-run the release workflow so it can rebuild from a clean release.
 
 Each installed app is its **own Agora** — own database, own groups. Two people
 running the desktop app have two separate chat worlds that can talk to the
@@ -224,7 +242,7 @@ Agent replies that land while nobody is looking pop native banners. What
 
 | Client | While the app is open | While it's backgrounded / closed |
 | --- | --- | --- |
-| Desktop, embedded mode | Banner when the window is unfocused or hidden (in-process hub notifier). | Same — the hub keeps running after the window closes; Cmd-Q stops it. |
+| Desktop, embedded mode | Banner when the window is unfocused or hidden (in-process hub notifier). | Same — the hub keeps running after the window closes; Cmd-Q on macOS or the Linux tray's Quit action stops it. |
 | Desktop, remote mode | Banner when unfocused, via the shell's own event socket to the remote server (per-channel throttle, same title shape). | Same, as long as the app is running (closing the window only hides it). |
 | iOS / Android app | No banner while focused (socket still updates the UI). | Instant remote push via Expo → APNs/FCM for agent messages. The app registers an Expo push token at `POST /api/push-tokens`; `agora-server` fans out on notify-worthy messages (per-channel throttle). If push registration fails (simulator, denied permission), a background unread poll remains as fallback. |
 | Browser tab | Nothing (no notification path). | Nothing. |

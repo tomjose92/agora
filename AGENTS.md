@@ -15,7 +15,7 @@ One Rust core, three clients:
 | Path | What it is |
 | --- | --- |
 | `crates/agora-core` | The embeddable heart: SQLite store, message hub, HTTP+WS API (axum), auth, outbound connections. |
-| `crates/agora-desktop` | Tauri v2 macOS shell. **Embedded mode** runs `agora-core` in-process and serves the *bundled* web UI build; **remote mode** is a thin webview onto a hosted `agora-server`. |
+| `crates/agora-desktop` | Tauri v2 macOS/Linux shell. **Embedded mode** runs `agora-core` in-process and serves the *bundled* web UI build; **remote mode** is a thin webview onto a hosted `agora-server`. |
 | `crates/agora-server` | The same core, headless, for a VPS / Railway. |
 | `packages/core` | `@agora/core` — shared TypeScript client core: API client + types, TanStack Query hooks, the WS event reducer, zustand stores, mdlite/format/unread/emoji helpers. Consumed by `web/` and `mobile/`. |
 | `web/` | The web UI: React (Vite + TS), incl. voice notes, speak-aloud, and live voice. `npm run build` emits `web/dist/` (gitignored — never committed), which the server serves (`--ui-dir`), the Docker image bakes in, and the desktop bundle copies. `web/public/` carries the root assets incl. `connect.html` (the desktop server picker) and the vendored `mermaid.min.js`. |
@@ -108,7 +108,7 @@ EXPO_PUBLIC_STORYBOOK_ENABLED=true npx expo run:ios
 EXPO_PUBLIC_STORYBOOK_ENABLED=true npx expo run:android
 
 # desktop dev build
-cd crates/agora-desktop && npx @tauri-apps/cli@latest dev
+cd crates/agora-desktop && npx @tauri-apps/cli@2 dev
 
 # web UI + shared core (root npm workspaces: packages/core + web)
 npm ci
@@ -133,7 +133,7 @@ Releases are **triggered by version bumps merged to `main`** — the bump in
 a PR *is* the publish intent. CI never bumps versions itself, and merges
 that change app code *without* a bump deliberately publish nothing.
 
-**Desktop** — version lives in **two files that must stay in sync**:
+**Desktop (macOS and Linux)** — version lives in **two files that must stay in sync**:
 
 - `Cargo.toml` → `[workspace.package] version`
 - `crates/agora-desktop/tauri.conf.json` → `version`
@@ -141,7 +141,8 @@ that change app code *without* a bump deliberately publish nothing.
 Bump both (semver patch unless told otherwise), run `cargo check` so
 `Cargo.lock` follows, and commit all three. When the bump lands on `main`,
 [.github/workflows/release-desktop.yml](.github/workflows/release-desktop.yml)
-builds, signs and notarizes the macOS app and **publishes** a GitHub
+builds, signs and notarizes the macOS app, builds Linux Debian/AppImage
+packages, and **publishes** a GitHub
 release named `vX.Y.Z` (publishing creates the tag; the in-app updater
 only sees published releases, so users start updating as soon as the
 workflow finishes). Re-runs are idempotent: if the release already

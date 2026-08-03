@@ -15,11 +15,18 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "linux")]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::menu::{Menu, SubmenuBuilder};
 use tauri::path::BaseDirectory;
+#[cfg(target_os = "linux")]
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 #[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
@@ -45,6 +52,21 @@ static EMBEDDED: tokio::sync::OnceCell<Embedded> = tokio::sync::OnceCell::const_
 /// aborted) on every mode/settings change so at most one socket is live.
 static REMOTE_NOTIFIER: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
 
+/// The destination used to create or navigate the main window most recently.
+/// Linux relaunch/tray recovery can rebuild a window that disappeared during
+/// startup or was destroyed by the desktop environment.
+static LAST_MAIN_URL: Mutex<Option<Url>> = Mutex::new(None);
+
+/// Linux has no dock-reopen event. Only hide on close after the tray was
+/// created successfully; otherwise closing must terminate the process so it
+/// cannot become an unreachable background server.
+#[cfg(target_os = "linux")]
+static LINUX_TRAY_READY: AtomicBool = AtomicBool::new(false);
+
+/// Explain the background lifecycle once, without notifying on every close.
+#[cfg(target_os = "linux")]
+static LINUX_TRAY_CLOSE_NOTIFIED: AtomicBool = AtomicBool::new(false);
+
 struct Embedded {
     addr: std::net::SocketAddr,
     token: String,
@@ -65,14 +87,23 @@ impl Embedded {
 }
 
 fn main() {
+    // Load-bearing: GTK/WebKit initialization begins with the Tauri builder,
+    // so the WSL renderer override must be configured before anything else.
+    configure_wsl_webview();
+
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     let builder = tauri::Builder::default();
+    // Linux lacks macOS LaunchServices/Reopen. A second launch must focus the
+    // hidden window instead of opening the database in another process.
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        show_main(app)
+    }));
     #[cfg(feature = "updater")]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -101,7 +132,15 @@ fn main() {
             // it lives in the app menu, right under "About Agora". Elsewhere
             // there is no app menu, so it rides in the Server submenu.
             #[cfg(all(feature = "updater", not(target_os = "macos")))]
-            let server = server.separator().text("check-updates", "Check for Updates…");
+            let updates_available = direct_updates_available();
+            #[cfg(all(feature = "updater", not(target_os = "macos")))]
+            let server = if updates_available {
+                server
+                    .separator()
+                    .text("check-updates", "Check for Updates…")
+            } else {
+                server
+            };
             menu.append(&server.build()?)?;
             #[cfg(all(feature = "updater", target_os = "macos"))]
             if let Some(tauri::menu::MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
@@ -139,6 +178,19 @@ fn main() {
                 // Close = hide: agents keep processing and replies keep
                 // landing (and notifying) while the window is away.
                 WindowEvent::CloseRequested { api, .. } => {
+                    #[cfg(target_os = "linux")]
+                    if !LINUX_TRAY_READY.load(Ordering::Relaxed) {
+                        window.app_handle().exit(0);
+                        return;
+                    }
+                    #[cfg(target_os = "linux")]
+                    if !LINUX_TRAY_CLOSE_NOTIFIED.swap(true, Ordering::Relaxed) {
+                        deliver_notification(
+                            window.app_handle(),
+                            "Agora is still running",
+                            "Reopen it from the tray or launch Agora again. Use Quit Agora from the tray menu to stop it.",
+                        );
+                    }
                     api.prevent_close();
                     let _ = window.hide();
                     remote_notify::UI_FOCUSED.store(false, Ordering::Relaxed);
@@ -155,6 +207,8 @@ fn main() {
             // First launch pops the system "allow notifications?" prompt.
             #[cfg(target_os = "macos")]
             notify::request_authorization();
+            #[cfg(target_os = "linux")]
+            setup_linux_tray(app);
             let handle = app.handle().clone();
             let data_dir = app.path().app_data_dir()?;
             let desktop = settings::load(&data_dir);
@@ -162,14 +216,16 @@ fn main() {
             // Background update check; quiet unless something was installed.
             #[cfg(feature = "updater")]
             {
-                let update_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let notify_handle = update_handle.clone();
-                    updater::check_on_startup(update_handle, move |title, body| {
-                        deliver_notification(&notify_handle, title, body);
-                    })
-                    .await;
-                });
+                if direct_updates_available() {
+                    let update_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let notify_handle = update_handle.clone();
+                        updater::check_on_startup(update_handle, move |title, body| {
+                            deliver_notification(&notify_handle, title, body);
+                        })
+                        .await;
+                    });
+                }
             }
             tauri::async_runtime::spawn(async move {
                 match desktop.mode {
@@ -189,7 +245,7 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error while building Agora")
-        .run(|app, event| match event {
+        .run(|_app, event| match event {
             // Keep running with zero visible windows (background hub);
             // an explicit quit (Cmd-Q / dock menu) carries an exit code.
             tauri::RunEvent::ExitRequested { api, code, .. } => {
@@ -200,13 +256,122 @@ fn main() {
             // Dock icon click while hidden: bring the window back.
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
-                if let Some(window) = app.get_webview_window("main") {
+                if let Some(window) = _app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
             }
             _ => {}
         });
+}
+
+/// AppImage is the only Linux package that the direct updater may replace.
+/// Debian packages remain owned by dpkg and update through their distributor.
+#[cfg(feature = "updater")]
+fn direct_updates_available() -> bool {
+    direct_updates_available_for(
+        cfg!(target_os = "linux"),
+        std::env::var_os("APPIMAGE").is_some(),
+    )
+}
+
+#[cfg(feature = "updater")]
+fn direct_updates_available_for(is_linux: bool, is_appimage: bool) -> bool {
+    !is_linux || is_appimage
+}
+
+/// WSLg's WebKit renderer can open a blank window when DMA-BUF import is not
+/// available. Respect an explicit user choice and otherwise select the stable
+/// renderer before GTK/WebKit is initialized.
+fn configure_wsl_webview() {
+    #[cfg(target_os = "linux")]
+    if should_disable_dmabuf_renderer(
+        std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .ok()
+            .as_deref(),
+        std::env::var_os("WSL_DISTRO_NAME").is_some()
+            || std::env::var_os("WSL_INTEROP").is_some(),
+        std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some(),
+    ) {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn should_disable_dmabuf_renderer(
+    osrelease: Option<&str>,
+    wsl_environment: bool,
+    already_configured: bool,
+) -> bool {
+    !already_configured
+        && (wsl_environment
+            || osrelease.is_some_and(|release| release.to_ascii_lowercase().contains("microsoft")))
+}
+
+#[cfg(target_os = "linux")]
+fn setup_linux_tray(app: &mut tauri::App) {
+    let show = MenuItemBuilder::with_id("tray-show", "Open Agora").build(app);
+    let settings = MenuItemBuilder::with_id("tray-settings", "Server Settings…").build(app);
+    let quit = MenuItemBuilder::with_id("tray-quit", "Quit Agora").build(app);
+    let result = show
+        .and_then(|show| settings.map(|settings| (show, settings)))
+        .and_then(|(show, settings)| quit.map(|quit| (show, settings, quit)))
+        .and_then(|(show, settings, quit)| {
+            MenuBuilder::new(app)
+                .items(&[&show, &settings, &quit])
+                .build()
+        })
+        .and_then(|menu| {
+            let mut tray = TrayIconBuilder::new()
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "tray-show" => show_main(app),
+                    "tray-settings" => open_main(app, connect_page_url(true)),
+                    "tray-quit" => app.exit(0),
+                    _ => {}
+                })
+                // Current Linux backends do not reliably deliver left-click
+                // events; the tray menu is the primary recovery path.
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
+                        show_main(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            } else {
+                tracing::warn!("default window icon unavailable; tray may render without an icon");
+            }
+            tray.build(app).map(|_| ())
+        });
+    match result {
+        Ok(()) => LINUX_TRAY_READY.store(true, Ordering::Relaxed),
+        Err(e) => tracing::warn!("system tray unavailable; close will quit Agora: {e}"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn show_main(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return;
+    }
+    let last_url = LAST_MAIN_URL.lock().unwrap().clone();
+    if let Some(url) = last_url {
+        open_main(app, url);
+    } else {
+        tracing::warn!("main window cannot be restored before its initial URL is available");
+    }
 }
 
 // ------------------------------------------------------------ embedded core
@@ -225,8 +390,8 @@ async fn ensure_embedded(handle: &AppHandle) -> anyhow::Result<&'static Embedded
                 .ok()
                 .filter(|p| p.join("index.html").exists())
                 .or_else(|| {
-                    let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("../../web/dist");
+                    let dev =
+                        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist");
                     dev.join("index.html").exists().then_some(dev)
                 });
             let core = agora_core::run(data_dir, ui_dir).await?;
@@ -355,7 +520,9 @@ async fn open_current_server(app: AppHandle) -> Result<(), String> {
 /// the notifier socket that was using it. Embedded mode has no credential to
 /// drop — the local admin key *is* the server — so just open the picker.
 fn sign_out(app: &AppHandle) {
-    let Ok(data_dir) = app.path().app_data_dir() else { return };
+    let Ok(data_dir) = app.path().app_data_dir() else {
+        return;
+    };
     let mut stored = settings::load(&data_dir);
     match stored.mode {
         Mode::Remote => {
@@ -391,10 +558,12 @@ async fn probe_server(url: String) -> Result<serde_json::Value, String> {
                     .into_string()
                     .ok()
                     .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-                let google = config.as_ref()
+                let google = config
+                    .as_ref()
                     .is_some_and(|v| v["google"]["enabled"] == serde_json::Value::Bool(true));
                 // Older servers omit admin and must keep the key form visible.
-                let admin = config.as_ref()
+                let admin = config
+                    .as_ref()
                     .and_then(|v| v["admin"]["enabled"].as_bool())
                     .unwrap_or(true);
                 Ok(serde_json::json!({"google": google, "admin": admin}))
@@ -470,9 +639,9 @@ async fn validate_remote(settings: &DesktopSettings) -> Result<(), String> {
         match response {
             Ok(_) => Ok(()),
             Err(ureq::Error::Status(401, _)) => Err("The server rejected that admin key".into()),
-            Err(ureq::Error::Status(code, _)) => {
-                Err(format!("Server responded with HTTP {code} — is that an Agora server?"))
-            }
+            Err(ureq::Error::Status(code, _)) => Err(format!(
+                "Server responded with HTTP {code} — is that an Agora server?"
+            )),
             Err(e) => Err(format!("Could not reach the server: {e}")),
         }
     })
@@ -489,7 +658,12 @@ fn deliver_notification(handle: &AppHandle, title: &str, body: &str) {
     notify::notify(title, body);
     #[cfg(not(target_os = "macos"))]
     {
-        let result = handle.notification().builder().title(title).body(body).show();
+        let result = handle
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show();
         if let Err(e) = result {
             tracing::warn!("notification failed: {e}");
         }
@@ -508,19 +682,27 @@ fn sync_remote_notifier(handle: &AppHandle, settings: &DesktopSettings) {
         return;
     }
     let (url, token) = (
-        settings.url.clone().unwrap_or_default().trim_end_matches('/').to_string(),
+        settings
+            .url
+            .clone()
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string(),
         settings.token.clone().unwrap_or_default(),
     );
     let handle = handle.clone();
     let deliver: remote_notify::Deliver =
         Arc::new(move |title, body| deliver_notification(&handle, title, body));
-    *guard = Some(tauri::async_runtime::spawn(remote_notify::run(deliver, url, token)));
+    *guard = Some(tauri::async_runtime::spawn(remote_notify::run(
+        deliver, url, token,
+    )));
 }
 
 // ------------------------------------------------------------------- window
 
 /// Navigate the main window (creating it if needed) to the given URL.
 fn open_main(handle: &AppHandle, url: Url) {
+    *LAST_MAIN_URL.lock().unwrap() = Some(url.clone());
     if let Some(window) = handle.get_webview_window("main") {
         let _ = window.navigate(url);
         let _ = window.show();
@@ -552,6 +734,45 @@ fn connect_page_url(edit: bool) -> Url {
     } else {
         "tauri://localhost/connect.html"
     };
-    let full = if edit { format!("{base}?edit=1") } else { base.to_string() };
+    let full = if edit {
+        format!("{base}?edit=1")
+    } else {
+        base.to_string()
+    };
     full.parse().expect("valid app url")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wsl_renderer_workaround_is_narrow_and_respects_override() {
+        assert!(should_disable_dmabuf_renderer(
+            Some("5.15.153.1-microsoft-standard-WSL2"),
+            false,
+            false
+        ));
+        assert!(!should_disable_dmabuf_renderer(
+            Some("6.8.0-generic"),
+            false,
+            false
+        ));
+        assert!(!should_disable_dmabuf_renderer(
+            Some("5.15.153.1-Microsoft-standard-WSL2"),
+            false,
+            true
+        ));
+        assert!(!should_disable_dmabuf_renderer(None, false, false));
+        assert!(should_disable_dmabuf_renderer(None, true, false));
+        assert!(!should_disable_dmabuf_renderer(None, true, true));
+    }
+
+    #[cfg(feature = "updater")]
+    #[test]
+    fn direct_updates_are_appimage_only_on_linux() {
+        assert!(direct_updates_available_for(false, false));
+        assert!(direct_updates_available_for(true, true));
+        assert!(!direct_updates_available_for(true, false));
+    }
 }
