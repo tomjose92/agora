@@ -37,10 +37,10 @@ export const Speaking: Story = { args: { status: "speaking" } };
 /** Muted while idle: mic off, red-outlined Unmute control. */
 export const Muted: Story = { args: { muted: true } };
 
-/** Muting right as a turn uploads: the reply is still awaited mic-off. */
+/** Muting right as a turn uploads: only the Unmute control marks the mute. */
 export const MutedWhileThinking: Story = { args: { muted: true, status: "thinking" } };
 
-/** Muting mid-reply keeps playback going and annotates the status line. */
+/** Muting mid-reply keeps playback going; the status line stays plain. */
 export const MutedWhileSpeaking: Story = { args: { muted: true, status: "speaking" } };
 
 /** A mute/unmute transition in flight — the control locks against re-taps. */

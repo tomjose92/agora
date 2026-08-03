@@ -81,12 +81,10 @@ export function LiveVoiceView({
             { transform: [{ scale }] },
           ]}
         />
+        {/* The Mute control already shows muted-ness; the status line only
+            changes when muted actually alters what talking does (idle). */}
         <Text style={styles.status}>
-          {muted
-            ? status === "listening"
-              ? "Muted — tap Unmute to talk"
-              : status === "speaking" ? "Speaking… · Mic muted" : `${LABELS[status]} · Mic muted`
-            : LABELS[status]}
+          {muted && status === "listening" ? "Muted — tap Unmute to talk" : LABELS[status]}
         </Text>
         {status === "error" ? (
           <Text style={styles.errorHint}>
