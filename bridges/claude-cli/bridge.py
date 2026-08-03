@@ -68,6 +68,13 @@ BLANK_RESULT_IDLE_GRACE = 45.0
 TAIL_BYTES = 256 * 1024  # how much of a session .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
+MAX_ATTACHMENTS = 5
+ATTACH_SENTINEL = "<<<AGORA_ATTACH>>>"
+ATTACH_SYSTEM_PROMPT = (
+    "To send a generated image to Agora, end your reply with one "
+    f"{ATTACH_SENTINEL} /absolute/path line per image. The relay removes those lines "
+    "and uploads the files. Only use paths for images you intentionally want to share."
+)
 
 # TL;DR support. When enabled for a run we ask Claude to end a long reply with a
 # sentinel line the bridge lifts into the post frame's `tldr` field (a short
@@ -220,6 +227,14 @@ def parse_allowed_roots(raw: str) -> list[Path]:
         except OSError:
             continue
     return roots
+
+
+def parse_positive_int(raw: str | None, default: int) -> int:
+    try:
+        value = int(raw if raw is not None else str(default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def log(msg: str) -> None:
@@ -454,6 +469,7 @@ class Bridge:
         self.permission_timeout = args.permission_timeout
         self.sessions_limit = args.sessions
         self.allowed_roots = parse_allowed_roots(args.allowed_roots)
+        self.max_attachment_bytes = args.max_file_mb * 1024 * 1024
         self.auto_worktree = args.auto_worktree
         self.state_file = Path(args.state_file)
         self.bindings: dict[str, dict] = self._load_state()
@@ -515,7 +531,8 @@ class Bridge:
     def send(self, frame: dict) -> None:
         self.outbox.put_nowait(frame)
 
-    def post(self, key_frame: dict, text: str, tldr: str | None = None) -> None:
+    def post(self, key_frame: dict, text: str, tldr: str | None = None,
+             attachments: list[dict] | None = None) -> None:
         base = {
             "type": "post",
             "agent_id": self.agent_id,
@@ -523,7 +540,7 @@ class Bridge:
             "thread_id": key_frame.get("thread_id"),
         }
         first = True
-        while text:
+        while text or (first and attachments):
             chunk, text = text[:MAX_POST_CHARS], text[MAX_POST_CHARS:]
             frame = {**base, "request_id": f"post-{time.time_ns()}", "text": chunk}
             # A tldr summarizes the whole reply, so it rides only the first
@@ -531,6 +548,8 @@ class Bridge:
             # chunk's text — trivially true for a one-sentence summary).
             if first and tldr:
                 frame["tldr"] = tldr
+            if first and attachments:
+                frame["attachments"] = attachments
             self.send(frame)
             first = False
 
@@ -1106,9 +1125,15 @@ class Bridge:
             if not text.lstrip().startswith("/"):
                 text = self._flush_context(key, text)
             reply = await self.run_claude(key, frame, binding, text)
+            reply, attachments, notices = self._split_outbound_attachments(
+                reply, binding["cwd"], self.allowed_roots, self.max_attachment_bytes)
             body, tldr = self._split_tldr(
                 reply, self._tldr_enabled(binding), self.tldr_min_chars)
-            self.post(frame, body or "(no reply — the run ended without any text)", tldr)
+            if notices:
+                body = (body + "\n\n" if body else "") + "\n".join(notices)
+            if not body and not attachments:
+                body = "(no reply — the run ended without any text)"
+            self.post(frame, body, tldr if body else None, attachments)
         except Exception as e:  # degrade to a chat message, never crash the loop
             log(f"claude run failed: {e!r}")
             self.post(frame, f"Claude run failed: {e}")
@@ -1152,6 +1177,39 @@ class Bridge:
             return body, None
         return body, tldr
 
+    @staticmethod
+    def _split_outbound_attachments(
+        reply: str, cwd: str, allowed_roots: list[Path], max_bytes: int,
+    ) -> tuple[str, list[dict], list[str]]:
+        lines = reply.splitlines()
+        paths, kept = [], []
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped.startswith(ATTACH_SENTINEL):
+                value = stripped[len(ATTACH_SENTINEL):].strip()
+                if value: paths.append(value)
+            else: kept.append(line)
+        paths = list(dict.fromkeys(paths))
+        notices, attachments = [], []
+        if len(paths) > MAX_ATTACHMENTS:
+            return "\n".join(kept).rstrip(), [], [f"Could not attach images: maximum {MAX_ATTACHMENTS} files per message."]
+        for value in paths:
+            path = Path(value).expanduser()
+            path = (path if path.is_absolute() else Path(cwd) / path).resolve()
+            roots = [Path(cwd).resolve(), *allowed_roots]
+            if not any(path == root or path.is_relative_to(root) for root in roots):
+                notices.append(f"Could not attach {path.name or 'image'}: path is outside allowed roots.")
+                continue
+            try: data = path.read_bytes() if path.is_file() and path.stat().st_size <= max_bytes else b""
+            except OSError: data = b""
+            mime = _image_mime(data)
+            if not data or len(data) > max_bytes or not mime:
+                notices.append(f"Could not attach {path.name or 'image'}: missing, too large, or unsupported.")
+                continue
+            attachments.append({"filename": path.name, "mime": mime,
+                                "data_b64": base64.b64encode(data).decode("ascii")})
+        return "\n".join(kept).rstrip(), attachments, notices
+
     def _stage_attachments(self, frame: dict, text: str) -> tuple[str, list[str], str | None]:
         """Drop any inbound attachments to a temp dir and build the prompt.
 
@@ -1188,6 +1246,7 @@ class Bridge:
             blocks.append(COLLAB_SYSTEM_PROMPT)
         if self._tldr_enabled(binding):
             blocks.append(TLDR_SYSTEM_PROMPT)
+        blocks.append(ATTACH_SYSTEM_PROMPT)
         if not blocks:
             return []
         return ["--append-system-prompt", "\n\n".join(blocks)]
@@ -1773,6 +1832,18 @@ class Bridge:
             send_task.cancel()
 
 
+def _image_mime(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"): return "image/png"
+    if data.startswith(b"\xff\xd8\xff"): return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")): return "image/gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP": return "image/webp"
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return {b"heic": "image/heic", b"heix": "image/heic", b"hevc": "image/heic",
+                b"heif": "image/heif", b"mif1": "image/heif", b"msf1": "image/heif",
+                b"avif": "image/avif", b"avis": "image/avif"}.get(data[8:12])
+    return None
+
+
 def load_agent_avatar(value: str, env_file: Path) -> dict | None:
     """Read an avatar locally; relative paths are anchored beside the .env."""
     if not value.strip():
@@ -1879,6 +1950,9 @@ def main() -> None:
     ap.add_argument("--allowed-roots", default=os.environ.get("CLAUDE_ALLOWED_ROOTS", ""),
                     help="colon-separated dirs /new sessions may start under; "
                          "/new is disabled when empty")
+    ap.add_argument("--max-file-mb", type=int,
+                    default=parse_positive_int(os.environ.get("AGORA_MAX_FILE_MB"), 10),
+                    help="maximum outbound image size in MB (default: 10)")
     ap.add_argument("--auto-worktree", action="store_true",
                     default=os.environ.get("CLAUDE_AUTO_WORKTREE", "").lower()
                     in ("1", "true", "yes"),
@@ -1928,6 +2002,8 @@ def main() -> None:
                          "the humans-only posture; other agents' messages are "
                          "context only")
     args = ap.parse_args()
+    if args.max_file_mb <= 0:
+        ap.error("--max-file-mb must be positive")
     if args.token:
         log("warning: --token on the command line is visible to other local users "
             "(ps/proc). Prefer AGORA_PAIRING_TOKEN or --token-file.")

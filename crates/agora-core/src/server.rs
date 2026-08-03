@@ -33,6 +33,7 @@ use crate::config::{Config, Connection, PairingToken};
 use crate::connections::ConnectionManager;
 use crate::hub::{AgentHandle, Hub};
 use crate::store::{new_token, now, NewAttachment};
+use crate::attachments::{agent_wire_limit, attachment_mime, safe_filename, sniff_video_mime};
 
 const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
@@ -492,77 +493,9 @@ fn group_payload(state: &AppState, group: &Value, user: &AuthedUser) -> Value {
     out
 }
 
-/// Basename only, control chars stripped, bounded length.
-fn safe_filename(name: &str) -> String {
-    let base = name.replace('\\', "/");
-    let base = base.rsplit('/').next().unwrap_or("").trim();
-    let cleaned: String = base
-        .chars()
-        .filter(|c| !c.is_control() && !"<>:\"|?*".contains(*c))
-        .take(120)
-        .collect();
-    if cleaned.is_empty() {
-        "file".to_string()
-    } else {
-        cleaned
-    }
-}
-
-/// Image MIME from magic bytes, or None for anything that isn't a recognized
-/// image. Client-declared content types are unreliable (especially from mobile
-/// pickers), and the stored mime drives both inline rendering in the UI and
-/// the vision path on the agent side — so trust the bytes for images and fall
-/// back to the client's declaration for everything else.
-fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
-    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return Some("image/png");
-    }
-    if data.starts_with(b"\xff\xd8\xff") {
-        return Some("image/jpeg");
-    }
-    if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-        return Some("image/gif");
-    }
-    if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
-        return Some("image/webp");
-    }
-    // ISO-BMFF image brands: HEIC (iPhone default), HEIF, AVIF.
-    if data.len() >= 12 && &data[4..8] == b"ftyp" {
-        return match &data[8..12] {
-            b"heic" | b"heix" | b"hevc" => Some("image/heic"),
-            b"heif" | b"mif1" | b"msf1" => Some("image/heif"),
-            b"avif" | b"avis" => Some("image/avif"),
-            _ => None,
-        };
-    }
-    None
-}
-
-/// The mime to store for an upload: magic bytes for images, the client's
-/// content-type otherwise.
-fn attachment_mime(data: &[u8], declared: &str) -> String {
-    sniff_image_mime(data)
-        .or_else(|| (!declared.to_ascii_lowercase().starts_with("audio/")).then(|| sniff_video_mime(data)).flatten())
-        .map(str::to_string)
-        .unwrap_or_else(|| declared.split(';').next().unwrap_or("").trim().to_string())
-}
-
-fn sniff_video_mime(data: &[u8]) -> Option<&'static str> {
-    if data.len() >= 12 && &data[4..8] == b"ftyp" {
-        return match &data[8..12] {
-            b"qt  " => Some("video/quicktime"),
-            b"isom" | b"iso2" | b"iso4" | b"iso5" | b"iso6" | b"mp41" | b"mp42"
-            | b"mp4v" | b"avc1" | b"M4V " | b"3gp4" | b"3gp5" | b"dash" => Some("video/mp4"),
-            _ => None,
-        };
-    }
-    let header = &data[..data.len().min(64)];
-    if header.starts_with(b"\x1a\x45\xdf\xa3") && header.windows(7).any(|w| w == b"\x42\x82\x84webm") {
-        return Some("video/webm");
-    }
-    None
-}
-
+/// The per-attachment cap for these bytes: the video cap only for verified
+/// video containers (audio declarations keep the ordinary cap — voice notes
+/// share the mp4/webm containers).
 fn attachment_max_bytes(data: &[u8], declared: &str, config: &crate::config::ConfigData) -> usize {
     let video = !declared.to_ascii_lowercase().starts_with("audio/") && sniff_video_mime(data).is_some();
     let video_mb = if config.max_video_mb == 0 { config.max_file_mb } else { config.max_video_mb };
@@ -3316,7 +3249,12 @@ async fn agent_ws(
     let Some(source) = state.config.valid_pairing_token(&token) else {
         return (StatusCode::UNAUTHORIZED, "bad pairing token").into_response();
     };
-    ws.on_upgrade(move |socket| handle_agent_socket(state, socket, source, token))
+    let per_file = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
+    let wire_limit = agent_wire_limit(per_file);
+    let upload_key = format!("agent:{source}");
+    ws.max_frame_size(wire_limit)
+        .max_message_size(wire_limit)
+        .on_upgrade(move |socket| handle_agent_socket(state, socket, source, token, upload_key))
 }
 
 fn register_pairing_socket(
@@ -3336,7 +3274,9 @@ fn register_pairing_socket(
 
 /// Dial-in bridge: the agent speaks first with `hello {agents: [...]}`,
 /// then the same frame protocol as an outbound connection.
-async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String, token: String) {
+async fn handle_agent_socket(
+    state: AppState, socket: WebSocket, source: String, token: String, upload_key: String,
+) {
     let (sink, mut stream) = socket.split();
     let (tx, rx) = unbounded_channel::<Value>();
     let conn_id = state.hub.next_conn_id();
@@ -3372,7 +3312,18 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String,
                                 registered = true;
                             }
                         } else if registered {
-                            state.hub.handle_agent_frame_from(conn_id, &frame);
+                            let has_attachments = frame["type"] == "post"
+                                && frame["attachments"].as_array().is_some_and(|a| !a.is_empty());
+                            let agent_id = frame["agent_id"].as_str().unwrap_or_default();
+                            if has_attachments && !state.upload_limiter.allow(&upload_key) {
+                                let _ = tx.send(json!({
+                                    "type": "error", "frame_type": "post", "agent_id": agent_id,
+                                    "request_id": frame["request_id"], "error": "too many uploads — slow down",
+                                    "channel_id": frame["channel_id"], "thread_id": frame["thread_id"].as_i64(),
+                                }));
+                            } else {
+                                state.hub.handle_agent_frame_from(conn_id, &frame);
+                            }
                         }
                     }
                     Some(Ok(WsMessage::Close(_))) | None => break,
@@ -3685,43 +3636,6 @@ mod tests {
         // Not a connect URL, or not a websocket/http scheme.
         assert_eq!(pantheo_http_base("wss://host/other"), None);
         assert_eq!(pantheo_http_base("ftp://host/agora/connect"), None);
-    }
-
-    #[test]
-    fn sniff_recognizes_classic_web_formats() {
-        assert_eq!(sniff_image_mime(b"\x89PNG\r\n\x1a\n\x00\x00"), Some("image/png"));
-        assert_eq!(sniff_image_mime(b"\xff\xd8\xff\xe0rest"), Some("image/jpeg"));
-        assert_eq!(sniff_image_mime(b"GIF89a......"), Some("image/gif"));
-        assert_eq!(sniff_image_mime(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("image/webp"));
-    }
-
-    #[test]
-    fn sniff_recognizes_iso_bmff_image_brands() {
-        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypheic\x00\x00"), Some("image/heic"));
-        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypmif1\x00\x00"), Some("image/heif"));
-        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypavif\x00\x00"), Some("image/avif"));
-        // Video brands are not images.
-        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypisom\x00\x00"), None);
-    }
-
-    #[test]
-    fn sniff_rejects_non_images_and_short_input() {
-        assert_eq!(sniff_image_mime(b"plain text"), None);
-        assert_eq!(sniff_image_mime(b""), None);
-        assert_eq!(sniff_image_mime(b"RIFF"), None);
-    }
-
-    #[test]
-    fn attachment_mime_trusts_bytes_over_declaration() {
-        // A HEIC upload declared as octet-stream still stores as image/heic.
-        assert_eq!(
-            attachment_mime(b"\x00\x00\x00\x18ftypheic\x00\x00", "application/octet-stream"),
-            "image/heic"
-        );
-        // A JPEG mislabeled as png corrects to jpeg.
-        assert_eq!(attachment_mime(b"\xff\xd8\xff\xe0rest", "image/png"), "image/jpeg");
-        // Non-images keep the declared type, parameters stripped.
-        assert_eq!(attachment_mime(b"%PDF-1.7", "application/pdf; name=x"), "application/pdf");
     }
 
     #[test]
@@ -4564,6 +4478,7 @@ mod tests {
             })),
             Some("daily-1"),
             None,
+            vec![],
         );
         let mid = m["id"].as_i64().unwrap();
         let q = || Query(HashMap::new());

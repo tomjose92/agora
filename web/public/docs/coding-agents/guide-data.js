@@ -12,6 +12,7 @@ export const sharedEnv = [
   ["SESSIONS_LIMIT", "Optional", "10", "Maximum recent sessions returned by /sessions."],
   ["CONTEXT_BUFFER", "Optional", "50", "Messages retained as context while another agent is addressed. Set 0 to disable."],
   ["AGORA_PEER_AGENTS", "Optional", "Empty", "Comma-separated agent IDs allowed to drive this agent through explicit mentions. Keep empty for humans-only operation."],
+  ["AGORA_MAX_FILE_MB", "Optional", "10", "Per-image outbound attachment limit in MB. Should match the server's max_file_mb."],
 ];
 
 export const guides = {

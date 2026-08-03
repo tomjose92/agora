@@ -1,7 +1,7 @@
 /* The live-voice endpointer: speech onset, silence-based utterance end, and
    noise-blip rejection — fed synthetic metering samples on a fake clock. */
 
-import { VAD, initialVadState, vadStep } from "../src/lib/vad";
+import { VAD, initialVadState, vadCanSend, vadStep } from "../src/lib/vad";
 
 const QUIET = -60;
 const LOUD = -20;
@@ -66,5 +66,21 @@ describe("vadStep", () => {
     expect(vadStep(state, VAD.THRESHOLD_DB, 0).kind).toBe("start");
     const state2 = initialVadState();
     expect(vadStep(state2, VAD.THRESHOLD_DB - 0.1, 0).kind).toBe("none");
+  });
+});
+
+describe("vadCanSend", () => {
+  it("allows mute to endpoint speech that meets the minimum duration", () => {
+    const state = initialVadState();
+    vadStep(state, LOUD, 100);
+    vadStep(state, LOUD, 100 + VAD.MIN_UTTER_MS);
+    expect(vadCanSend(state)).toBe(true);
+  });
+
+  it("drops a short noise blip when mute endpoints capture", () => {
+    const state = initialVadState();
+    vadStep(state, LOUD, 100);
+    vadStep(state, LOUD, 100 + VAD.MIN_UTTER_MS - 1);
+    expect(vadCanSend(state)).toBe(false);
   });
 });

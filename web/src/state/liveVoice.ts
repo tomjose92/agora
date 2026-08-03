@@ -35,13 +35,18 @@ const LABELS: Record<LiveUiState, string> = {
   speaking: "Speaking — talk to interrupt",
 };
 
-export function liveLabel(state: LiveUiState, speakOn: boolean): string {
+export function liveLabel(state: LiveUiState, speakOn: boolean, muted = false): string {
+  if (muted && state === "listening") {
+    return speakOn ? "Muted — tap Unmute to talk" : "Muted — replies appear in chat";
+  }
+  if (muted && state === "speaking") return "Speaking… · Mic muted";
   // With 🔊 off the session still listens and posts turns, but replies stay
   // text-only — say so instead of implying audio is coming.
   if (state === "listening" && !speakOn) {
     return "Listening — replies appear in chat (speaker off)";
   }
-  return LABELS[state] || state;
+  const label = LABELS[state] || state;
+  return muted ? `${label} · Mic muted` : label;
 }
 
 interface LiveSession {
@@ -62,6 +67,7 @@ interface LiveSession {
   queue: Blob[];
   playQueue: number[];
   audio: HTMLAudioElement | null;
+  muted: boolean;
 }
 
 let session: LiveSession | null = null;
@@ -70,11 +76,13 @@ interface LiveVoiceState {
   /** Scope of the running session, null when off. */
   scope: { channelId: string; threadId: number | null } | null;
   state: LiveUiState;
+  muted: boolean;
 }
 
 export const useLiveVoice = create<LiveVoiceState>(() => ({
   scope: null,
   state: "listening",
+  muted: false,
 }));
 
 export function liveScopeActive(channelId: string | undefined, threadId: number | null): boolean {
@@ -103,6 +111,12 @@ function rms(live: LiveSession): number {
 function tick(): void {
   const live = session;
   if (!live) return;
+  if (live.muted) {
+    if (!live.audio && !live.recorder) {
+      setState(live, live.turnBusy ? "thinking" : "listening");
+    }
+    return;
+  }
   const now = Date.now();
   const voiced = rms(live) >= THRESHOLD;
 
@@ -250,6 +264,23 @@ export function stopPlayback(live?: LiveSession | null): void {
   stopAudio(audio);
 }
 
+/** Mute keeps the live session and reply playback alive. When the user mutes
+    while speaking, treat it as an explicit end-of-turn so background noise
+    cannot hold the VAD open and delay the agent response. */
+export function liveMuteToggle(): void {
+  const live = session;
+  if (!live) return;
+  live.muted = !live.muted;
+  if (live.muted) {
+    if (live.recorder) endUtterance(live);
+    live.stream.getAudioTracks().forEach(track => { track.enabled = false; });
+  } else {
+    live.voicedMs = 0;
+    live.stream.getAudioTracks().forEach(track => { track.enabled = true; });
+  }
+  useLiveVoice.setState({ muted: live.muted });
+}
+
 export function liveStop(): void {
   const live = session;
   if (!live) return;
@@ -265,7 +296,7 @@ export function liveStop(): void {
   stopPlayback(live);
   live.stream.getTracks().forEach(t => t.stop());
   try { void live.ac.close(); } catch { /* already closed */ }
-  useLiveVoice.setState({ scope: null, state: "listening" });
+  useLiveVoice.setState({ scope: null, state: "listening", muted: false });
 }
 
 export async function liveToggle(channelId: string, threadId: number | null): Promise<void> {
@@ -302,10 +333,10 @@ export async function liveToggle(channelId: string, threadId: number | null): Pr
     recorder: null, chunks: [], utterStart: 0, lastVoice: 0,
     voicedMs: 0,
     turnBusy: false, turnTimer: null, queue: [],
-    playQueue: [], audio: null,
+    playQueue: [], audio: null, muted: false,
   };
   session.timer = setInterval(tick, TICK_MS);
-  useLiveVoice.setState({ scope: { channelId, threadId }, state: "listening" });
+  useLiveVoice.setState({ scope: { channelId, threadId }, state: "listening", muted: false });
   // Playback unlock + AudioContext resume, deliberately not awaited: the
   // unlock clip's play() promise can stay pending forever in some webviews,
   // and the strip must render immediately.

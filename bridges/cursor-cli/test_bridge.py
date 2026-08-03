@@ -3,7 +3,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -266,12 +266,85 @@ class PromptSuffixTests(unittest.TestCase):
         instance = make_bridge(peer_agents="claude-cli")
         instance.tldr_default = False
         self.assertEqual(
-            instance._prompt_suffixes({}), bridge.COLLAB_PROMPT_SUFFIX)
+            instance._prompt_suffixes({}), bridge.COLLAB_PROMPT_SUFFIX + bridge.ATTACH_PROMPT_SUFFIX)
         instance.peer_agents = frozenset()
-        self.assertEqual(instance._prompt_suffixes({}), "")
+        self.assertEqual(instance._prompt_suffixes({}), bridge.ATTACH_PROMPT_SUFFIX)
         instance.tldr_default = True
         self.assertEqual(
-            instance._prompt_suffixes({}), bridge.TLDR_PROMPT_SUFFIX)
+            instance._prompt_suffixes({}), bridge.TLDR_PROMPT_SUFFIX + bridge.ATTACH_PROMPT_SUFFIX)
+
+
+class OutboundAttachmentTests(unittest.TestCase):
+    def test_malformed_attachment_limit_env_falls_back(self):
+        with patch.dict("os.environ", {"AGORA_MAX_FILE_MB": "bad"}):
+            self.assertEqual(bridge.parse_positive_int("bad", 10), 10)
+
+    def test_empty_run_posts_original_fallback(self):
+        instance = make_bridge()
+        del instance.forward_to_agent
+        instance.bindings = {"c1": {"cwd": "/tmp", "session_id": "s1"}}
+        instance.run_agent = AsyncMock(return_value="")
+        instance.typing = Mock()
+        instance.tldr_default = False
+        instance.tldr_min_chars = 1500
+        instance.allowed_roots = []
+        instance.max_attachment_bytes = 10 * 1024 * 1024
+        asyncio.run(instance.forward_to_agent("c1", {"channel_id": "c1"}, "hello"))
+        self.assertEqual(instance.post.call_args.args[1], "(empty response)")
+
+    def test_extracts_image_and_reports_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "screen shot.png"
+            path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+            body, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                f"Here it is.\n{bridge.ATTACH_SENTINEL} {path}", tmp, [], 10 * 1024 * 1024)
+        self.assertEqual((body, notices), ("Here it is.", []))
+        self.assertEqual(attachments[0]["filename"], "screen shot.png")
+        self.assertEqual(attachments[0]["mime"], "image/png")
+        body, attachments, notices = bridge.Bridge._split_outbound_attachments(
+            f"Done\n{bridge.ATTACH_SENTINEL} /missing/nope.png", "/", [], 10 * 1024 * 1024)
+        self.assertEqual((body, attachments, len(notices)), ("Done", [], 1))
+
+    def test_attachments_ride_only_the_first_text_chunk(self):
+        instance = bridge.Bridge.__new__(bridge.Bridge)
+        instance.agent_id = "cursor-cli"
+        instance.send = Mock()
+        attachment = {"filename": "x.png", "mime": "image/png", "data_b64": "eA=="}
+        instance.post({"channel_id": "c1"}, "x" * (bridge.MAX_POST_CHARS + 1), attachments=[attachment])
+        self.assertEqual(instance.send.call_count, 2)
+        self.assertEqual(instance.send.call_args_list[0].args[0]["attachments"], [attachment])
+        self.assertNotIn("attachments", instance.send.call_args_list[1].args[0])
+
+    def test_attachment_limits_and_path_containment(self):
+        too_many = "\n".join(f"{bridge.ATTACH_SENTINEL} image-{i}.png" for i in range(6))
+        _, attachments, notices = bridge.Bridge._split_outbound_attachments(too_many, "/tmp", [], 10)
+        self.assertEqual((attachments, len(notices)), ([], 1))
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            large = Path(tmp) / "large.png"
+            large.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 16)
+            with patch.object(Path, "read_bytes", side_effect=AssertionError("oversize file read")):
+                _, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                    f"{bridge.ATTACH_SENTINEL} {large}", tmp, [], 8)
+            self.assertEqual((attachments, len(notices)), ([], 1))
+            secret = Path(outside) / "secret.png"
+            secret.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+            _, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                f"{bridge.ATTACH_SENTINEL} {secret}", tmp, [], 1024)
+            self.assertEqual((attachments, len(notices)), ([], 1))
+            link = Path(tmp) / "link.png"
+            link.symlink_to(secret)
+            _, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                f"{bridge.ATTACH_SENTINEL} {link}", tmp, [], 1024)
+            self.assertEqual((attachments, len(notices)), ([], 1))
+
+    def test_duplicate_attachment_paths_upload_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "same.png"
+            path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+            line = f"{bridge.ATTACH_SENTINEL} {path}"
+            _, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                f"{line}\n{line}", tmp, [], 1024)
+            self.assertEqual((len(attachments), notices), (1, []))
 
 
 if __name__ == "__main__":

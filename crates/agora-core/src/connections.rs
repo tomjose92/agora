@@ -14,11 +14,13 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc::unbounded_channel;
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::connect_async_with_config;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
+use crate::attachments::agent_wire_limit;
 use crate::config::Config;
 use crate::hub::{AgentHandle, Hub};
 
@@ -184,7 +186,12 @@ impl ConnectionManager {
         request
             .headers_mut()
             .insert(AUTHORIZATION, format!("Bearer {token}").parse()?);
-        let (ws, _) = connect_async(request).await?;
+        let per_file = self.config.snapshot().max_file_mb as usize * 1024 * 1024;
+        let wire_limit = agent_wire_limit(per_file);
+        let mut ws_config = WebSocketConfig::default();
+        ws_config.max_message_size = Some(wire_limit);
+        ws_config.max_frame_size = Some(wire_limit);
+        let (ws, _) = connect_async_with_config(request, Some(ws_config), false).await?;
         let (mut sink, mut stream) = ws.split();
 
         // The other side speaks first: hello with its agent roster.
@@ -294,6 +301,8 @@ impl ConnectionManager {
                                         });
                                     }
                                 } else {
+                                    // Operator-configured outbound peers are trusted and
+                                    // deliberately bypass the public dial-in upload limiter.
                                     self.hub.handle_agent_frame_from(conn_id, &frame);
                                 }
                             }

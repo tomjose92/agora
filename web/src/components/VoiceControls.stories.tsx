@@ -5,7 +5,8 @@ import { useSpeak } from "../state/speak";
 import { useVoiceRec } from "../state/voiceRec";
 import { LiveButton, LiveStrip, MicButton, SpeakButton } from "./VoiceControls";
 
-type VoiceState = "idle" | "recording" | "transcribing" | "live";
+type VoiceState = "idle" | "recording" | "transcribing" | "live"
+  | "live-muted" | "live-muted-speaker-off" | "live-thinking-muted" | "live-speaking-muted";
 
 function VoiceSurface({ state }: { state: VoiceState }) {
   return (
@@ -48,16 +49,21 @@ function VoiceSurface({ state }: { state: VoiceState }) {
 }
 
 function setup(state: VoiceState) {
+  const live = state.startsWith("live");
+  const muted = state.includes("muted");
   useVoiceRec.setState({
     recordingKey: state === "recording" ? "c:general" : null,
     startedAt: Date.now() - 12_000,
     busyKey: state === "transcribing" ? "c:general" : null,
   });
   useLiveVoice.setState({
-    scope: state === "live" ? { channelId: "general", threadId: null } : null,
-    state: state === "live" ? "thinking" : "listening",
+    scope: live ? { channelId: "general", threadId: null } : null,
+    state: state === "live" || state === "live-thinking-muted"
+      ? "thinking"
+      : state === "live-speaking-muted" ? "speaking" : "listening",
+    muted,
   });
-  useSpeak.setState({ on: state === "live" });
+  useSpeak.setState({ on: live && state !== "live-muted-speaker-off" });
 }
 
 const meta = {
@@ -94,5 +100,52 @@ export const LiveThinking: Story = {
   },
   play: async ({ canvasElement }) => {
     await expect(within(canvasElement).findByText("Thinking…")).resolves.toBeVisible();
+  },
+};
+
+export const LiveMuted: Story = {
+  args: { state: "live-muted" },
+  parameters: { setup: () => setup("live-muted") },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Muted — tap Unmute to talk")).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Unmute" })).toHaveAttribute("aria-pressed", "true");
+    const dot = canvasElement.querySelector<HTMLElement>(".ago-live-dot");
+    await expect(dot).not.toBeNull();
+    const faint = getComputedStyle(canvasElement).getPropertyValue("--faint").trim();
+    const probe = document.createElement("span");
+    probe.style.color = faint;
+    canvasElement.appendChild(probe);
+    const expectedMutedColor = getComputedStyle(probe).color;
+    probe.remove();
+    await expect(getComputedStyle(dot!).backgroundColor).toBe(expectedMutedColor);
+  },
+};
+
+export const LiveMutedSpeakerOff: Story = {
+  args: { state: "live-muted-speaker-off" },
+  parameters: { setup: () => setup("live-muted-speaker-off") },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText("Muted — replies appear in chat")).toBeVisible();
+  },
+};
+
+export const LiveThinkingMuted: Story = {
+  args: { state: "live-thinking-muted" },
+  parameters: { setup: () => setup("live-thinking-muted") },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Thinking… · Mic muted")).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Unmute" })).toHaveAttribute("aria-pressed", "true");
+  },
+};
+
+export const LiveSpeakingMuted: Story = {
+  args: { state: "live-speaking-muted" },
+  parameters: { setup: () => setup("live-speaking-muted") },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Speaking… · Mic muted")).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Unmute" })).toHaveAttribute("aria-pressed", "true");
   },
 };
