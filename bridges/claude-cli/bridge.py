@@ -55,6 +55,16 @@ CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 MAX_POST_CHARS = 8000
 MAX_TLDR_CHARS = 2000  # hub drops a longer tldr; pre-truncate so ours always lands
 PROGRESS_THROTTLE = 2.0  # seconds between progress frames
+# We send one message per run, but the CLI can inject prompts of its own into
+# the same run (task notifications when background work is reaped, hooks, …).
+# Each injected prompt ends with its own `result` frame, and one that produces
+# no reply yields a BLANK result. Nothing on the frame says which prompt it
+# answers, so a blank one is treated as "not ours" and we keep reading. This is
+# an IDLE window, refreshed by every frame that follows: our own answer can be
+# minutes of tool calls away (the incident that prompted this had it arriving
+# 57s later), so an absolute deadline would cut it off just as surely. We only
+# fall back to the blank once the stream has genuinely gone quiet this long.
+BLANK_RESULT_IDLE_GRACE = 45.0
 TAIL_BYTES = 256 * 1024  # how much of a session .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
@@ -1098,7 +1108,7 @@ class Bridge:
             reply = await self.run_claude(key, frame, binding, text)
             body, tldr = self._split_tldr(
                 reply, self._tldr_enabled(binding), self.tldr_min_chars)
-            self.post(frame, body or "(empty response)", tldr)
+            self.post(frame, body or "(no reply — the run ended without any text)", tldr)
         except Exception as e:  # degrade to a chat message, never crash the loop
             log(f"claude run failed: {e!r}")
             self.post(frame, f"Claude run failed: {e}")
@@ -1229,13 +1239,38 @@ class Bridge:
                 "message": {"role": "user", "content": [{"type": "text", "text": prompt}]},
             })
             result_text, last_progress = None, 0.0
+            # A blank result we're holding in case a real one is still coming,
+            # and the deadline after which we give up and accept it.
+            blank_result: str | None = None
+            blank_deadline: float | None = None
             # Headless-capable slash commands from the CLI's system/init frame
             # (interactive-only ones like /help are omitted — see _annotate_slash_failure).
             slash_commands: list[str] = []
             try:
                 async with asyncio.timeout(self.timeout):
                     assert proc.stdout is not None
-                    async for raw in proc.stdout:
+                    while True:
+                        if blank_deadline is None:
+                            raw = await proc.stdout.readline()
+                        else:
+                            # Only the inner read can raise TimeoutError here;
+                            # the outer asyncio.timeout cancels instead.
+                            remaining = blank_deadline - time.monotonic()
+                            if remaining <= 0:
+                                result_text = blank_result
+                                break
+                            try:
+                                raw = await asyncio.wait_for(
+                                    proc.stdout.readline(), remaining)
+                            except TimeoutError:
+                                result_text = blank_result
+                                break
+                        if not raw:
+                            break  # stream closed
+                        if blank_deadline is not None:
+                            # Still alive, so our answer is still coming: push
+                            # the idle deadline out rather than racing it.
+                            blank_deadline = time.monotonic() + BLANK_RESULT_IDLE_GRACE
                         line = raw.decode("utf-8", errors="replace").strip()
                         if not line:
                             continue
@@ -1261,18 +1296,31 @@ class Bridge:
                             self._cancel_request(event.get("request_id") or "",
                                                  "Claude withdrew the request.")
                         elif kind == "result":
-                            result_text = event.get("result") or ""
+                            text = event.get("result") or ""
                             if event.get("is_error"):
-                                result_text = f"(claude error) {result_text}"
-                            else:
-                                # Resuming with -p can fork to a new session id;
-                                # track it (successful runs only) so follow-ups
-                                # keep continuing the same conversation.
-                                new_sid = event.get("session_id")
-                                if new_sid and new_sid != binding.get("session_id"):
-                                    binding["session_id"] = new_sid
-                                    self.bindings[key] = binding
-                                    self._save_state()
+                                result_text = f"(claude error) {text}"
+                                break
+                            # Resuming with -p can fork to a new session id;
+                            # track it (successful runs only) so follow-ups
+                            # keep continuing the same conversation.
+                            new_sid = event.get("session_id")
+                            if new_sid and new_sid != binding.get("session_id"):
+                                binding["session_id"] = new_sid
+                                self.bindings[key] = binding
+                                self._save_state()
+                            if not text.strip():
+                                # Almost certainly an injected turn, not ours.
+                                # Hold it and keep reading; don't extend the
+                                # window if further blanks arrive.
+                                if blank_result is None:
+                                    log(f"blank result (subtype={event.get('subtype')} "
+                                        f"num_turns={event.get('num_turns')}) — treating as "
+                                        "an injected turn, waiting for ours")
+                                    blank_result = text
+                                blank_deadline = (
+                                    time.monotonic() + BLANK_RESULT_IDLE_GRACE)
+                                continue
+                            result_text = text
                             break  # stdin stays open, so EOF never comes — stop here
                     if proc.stdin is not None:
                         proc.stdin.close()
