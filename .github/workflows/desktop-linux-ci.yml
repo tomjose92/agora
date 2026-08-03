@@ -33,14 +33,16 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-      - name: Test desktop shell
-        run: cargo test -p agora-desktop
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci
+      - name: Build bundled web UI
+        run: npm run build
+      - name: Test desktop shell
+        run: cargo test -p agora-desktop
       - name: Build deb and AppImage packages
         working-directory: crates/agora-desktop
         run: >-

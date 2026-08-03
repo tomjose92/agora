@@ -59,6 +59,8 @@ in `tauri.conf.json`); CI needs the private key in the
 configured the workflow ad-hoc signs, so downloads still hit Gatekeeper —
 options 1/2 above apply. A Mac App Store build must exclude the updater:
 `--no-default-features` on `agora-desktop` compiles it out.
+If a draft release becomes stuck or contains unusable artifacts, delete that
+draft and re-run the release workflow so it can rebuild from a clean release.
 
 Each installed app is its **own Agora** — own database, own groups. Two people
 running the desktop app have two separate chat worlds that can talk to the

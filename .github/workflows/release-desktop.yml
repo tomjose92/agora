@@ -9,8 +9,8 @@
 #
 # Merges that touch desktop code *without* a bump build nothing on purpose:
 # the bump is the publish intent. If the version's release already exists
-# (draft or published), the run is a no-op, so re-touching tauri.conf.json
-# never double-releases.
+# and is already published, the run is a no-op. Drafts are resumed so a failed
+# build can complete without creating a second release.
 #
 # Required repository secret (Settings → Secrets and variables → Actions):
 # - TAURI_SIGNING_PRIVATE_KEY: contents of ~/.tauri/agora_updater.key
@@ -120,6 +120,7 @@ jobs:
           releaseName: "Agora v${{ needs.gate.outputs.version }}"
           releaseBody: "See the commit history for changes."
           releaseDraft: true
+          releaseCommitish: ${{ github.sha }}
           args: --target universal-apple-darwin
 
   # Serialize this after macOS: tauri-action merges the existing latest.json,
@@ -161,6 +162,7 @@ jobs:
           releaseName: "Agora v${{ needs.gate.outputs.version }}"
           releaseBody: "See the commit history for changes."
           releaseDraft: true
+          releaseCommitish: ${{ github.sha }}
           args: --bundles deb,appimage
 
   publish:

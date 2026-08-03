@@ -369,6 +369,8 @@ fn show_main(app: &AppHandle) {
     let last_url = LAST_MAIN_URL.lock().unwrap().clone();
     if let Some(url) = last_url {
         open_main(app, url);
+    } else {
+        tracing::warn!("main window cannot be restored before its initial URL is available");
     }
 }
 

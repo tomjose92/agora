@@ -92,6 +92,10 @@ The Linux app has the same embedded and remote modes as macOS. Closing its
 window leaves the embedded server running in the system tray; use **Quit
 Agora** from the tray to stop it. Application data lives under
 `~/.local/share/app.agora.desktop/` on a standard Linux installation.
+Stock GNOME needs an AppIndicator extension for the tray icon to be visible.
+Embedded mode binds to the LAN by default; its token-gated API is therefore
+reachable by other devices, and typical desktop Linux installs do not enable
+an inbound firewall automatically.
 
 WSL2 with WSLg can run the Linux build for development and internal use. WSL1
 and headless WSL are not supported; notifications and desktop integration in
