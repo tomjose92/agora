@@ -1621,7 +1621,10 @@ a.btn { text-decoration: none; }
   background: rgba(0,0,0,.2); font-size: 12.5px; color: var(--dim);
 }
 .agora-thread .ago-live-strip { margin: 0 16px 8px; }
-.ago-live-strip .btn { margin-left: auto; flex-shrink: 0; }
+.ago-live-strip .btn { flex-shrink: 0; }
+.ago-live-strip .ago-live-mute { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; }
+.ago-live-strip .ago-live-mute.active { border-color: #f87171; color: #f87171; }
+.ago-live-strip.muted .ago-live-dot { background: var(--faint); animation: none; }
 .ago-live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
 .ago-live-strip.st-listening .ago-live-dot { background: #34d399; }
 .ago-live-strip.st-recording .ago-live-dot { background: #f87171; animation: ago-rec-pulse 1.2s ease-in-out infinite; }

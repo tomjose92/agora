@@ -21,7 +21,7 @@ import {
   useAudioRecorderState,
 } from "expo-audio";
 import { useKeepAwake } from "expo-keep-awake";
-import { Headphones } from "lucide-react-native";
+import { Headphones, Mic, MicOff } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useChannelAgents } from "@agora/core";
 import { useSendVoice } from "../../../src/api/voice";
@@ -36,7 +36,7 @@ import {
   stopSpeech,
 } from "../../../src/lib/speech";
 import { colors } from "../../../src/lib/theme";
-import { initialVadState, vadStep } from "../../../src/lib/vad";
+import { initialVadState, vadCanSend, vadStep } from "../../../src/lib/vad";
 import { threadAddressKey, useAddressed } from "@agora/core";
 import { useSession } from "../../../src/state/session";
 
@@ -92,6 +92,9 @@ export default function LiveScreen() {
   const [status, setStatus] = useState<LiveStatus>("starting");
   const statusRef = useRef(status);
   statusRef.current = status;
+  const [muted, setMuted] = useState(false);
+  const [muteBusy, setMuteBusy] = useState(false);
+  const mutedRef = useRef(false);
 
   const recorder = useAudioRecorder({
     ...RecordingPresets.HIGH_QUALITY,
@@ -107,6 +110,10 @@ export default function LiveScreen() {
 
   const startMic = useCallback(async () => {
     if (ended.current) return;
+    if (mutedRef.current) {
+      setStatus("listening");
+      return;
+    }
     try {
       // Background flags keep the session alive when the phone locks mid-
       // conversation: the mic (foreground service on Android, background
@@ -193,13 +200,44 @@ export default function LiveScreen() {
     [sendVoice, startMic, threadId],
   );
 
+  /* Mute is also an explicit end-of-turn control: if speech is in progress,
+     stop and send it immediately so background noise cannot keep VAD open. */
+  const toggleMute = useCallback(async () => {
+    if (muteBusy) return;
+    if (mutedRef.current) {
+      mutedRef.current = false;
+      setMuted(false);
+      if (statusRef.current === "listening" || statusRef.current === "recording") {
+        await startMic();
+      }
+      return;
+    }
+
+    setMuteBusy(true);
+    mutedRef.current = true;
+    setMuted(true);
+    const previousStatus = statusRef.current;
+    const wasRecording = previousStatus === "recording";
+    const sendable = wasRecording && vadCanSend(vad.current);
+    if (previousStatus === "listening" || wasRecording) setStatus("listening");
+    const uri = await stopMic();
+    await setAudioModeAsync({
+      allowsRecording: false,
+      allowsBackgroundRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+    }).catch(() => {});
+    setMuteBusy(false);
+    if (!ended.current && sendable && uri) await sendUtterance(uri);
+  }, [muteBusy, sendUtterance, startMic, stopMic]);
+
   /* -------------------------------------------------- VAD loop
      Runs on every metering poll (~120ms). Only the listening/recording
      states feed the endpointer; thinking/speaking keep the mic stopped. */
 
   useEffect(() => {
     const st = statusRef.current;
-    if (ended.current || (st !== "listening" && st !== "recording")) return;
+    if (ended.current || mutedRef.current || (st !== "listening" && st !== "recording")) return;
     const action = vadStep(vad.current, recorderState.metering, Date.now());
     if (action.kind === "start") {
       setStatus("recording");
@@ -263,6 +301,7 @@ export default function LiveScreen() {
   const level = Math.max(0, Math.min(1, (db + 60) / 60));
   const active = status === "listening" || status === "recording";
   const scale = active ? 1 + level * 0.5 : 1;
+  const muteDisabled = muteBusy || status === "starting" || status === "error";
 
   return (
     <>
@@ -295,19 +334,37 @@ export default function LiveScreen() {
               { transform: [{ scale }] },
             ]}
           />
-          <Text style={styles.status}>{LABELS[status]}</Text>
+          <Text style={styles.status}>
+            {muted
+              ? status === "listening"
+                ? "Muted — tap Unmute to talk"
+                : status === "speaking" ? "Speaking… · Mic muted" : `${LABELS[status]} · Mic muted`
+              : LABELS[status]}
+          </Text>
           {status === "error" ? (
             <Text style={styles.errorHint}>
               Allow microphone access in Settings, then try again.
             </Text>
           ) : null}
         </View>
-        <Pressable
-          style={[styles.endBtn, { marginBottom: insets.bottom + 22 }]}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.endText}>End</Text>
-        </Pressable>
+        <View style={[styles.controls, { marginBottom: insets.bottom + 22 }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={muted ? "Unmute microphone" : "Mute microphone and finish this turn"}
+            accessibilityState={{ selected: muted, disabled: muteDisabled }}
+            disabled={muteDisabled}
+            style={[styles.muteBtn, muted && styles.muteBtnActive, muteDisabled && styles.disabledBtn]}
+            onPress={() => void toggleMute()}
+          >
+            <Icon icon={muted ? Mic : MicOff} size={20} color={muted ? colors.red : colors.text} />
+            <Text style={[styles.muteText, muted && styles.muteTextActive]}>
+              {muted ? "Unmute" : "Mute"}
+            </Text>
+          </Pressable>
+          <Pressable style={styles.endBtn} onPress={() => router.back()}>
+            <Text style={styles.endText}>End</Text>
+          </Pressable>
+        </View>
       </Pressable>
     </>
   );
@@ -351,5 +408,22 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 44,
   },
+  controls: { flexDirection: "row", alignItems: "center", gap: 12 },
+  muteBtn: {
+    minHeight: 48,
+    backgroundColor: colors.panelStrong,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  muteBtnActive: { borderColor: colors.red },
+  muteText: { color: colors.text, fontSize: 15.5, fontWeight: "700" },
+  muteTextActive: { color: colors.red },
+  disabledBtn: { opacity: 0.6 },
   endText: { color: colors.text, fontSize: 15.5, fontWeight: "700" },
 });
