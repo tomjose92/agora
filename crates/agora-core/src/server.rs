@@ -30,12 +30,11 @@ use crate::config::{Config, Connection, PairingToken};
 use crate::connections::ConnectionManager;
 use crate::hub::{AgentHandle, Hub};
 use crate::store::{new_token, now, NewAttachment};
-use crate::attachments::{attachment_mime, safe_filename};
+use crate::attachments::{agent_wire_limit, attachment_mime, safe_filename};
 
 const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
 const MAX_FILES_PER_MESSAGE: usize = 5;
-const MAX_AGENT_WS_BYTES: usize = 80 * 1024 * 1024;
 const MAX_AGENT_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 /// Distinct emoji per message — bounds the chip row like Slack does.
 const MAX_REACTION_KINDS_PER_MESSAGE: usize = 20;
@@ -3161,10 +3160,7 @@ async fn agent_ws(
         return (StatusCode::UNAUTHORIZED, "bad pairing token").into_response();
     };
     let per_file = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
-    let wire_limit = (per_file
-        .saturating_mul(MAX_FILES_PER_MESSAGE)
-        .saturating_mul(4) / 3
-        + 1024 * 1024).min(MAX_AGENT_WS_BYTES);
+    let wire_limit = agent_wire_limit(per_file);
     let upload_key = format!("agent:{source}");
     ws.max_frame_size(wire_limit)
         .max_message_size(wire_limit)

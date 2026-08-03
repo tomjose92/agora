@@ -75,7 +75,9 @@ pub async fn run(data_dir: PathBuf, ui_dir: Option<PathBuf>) -> anyhow::Result<A
     bootstrap_admin_user(&config, &store);
     let hub = Arc::new(hub::Hub::new_with_attachment_limit(
         store,
-        snapshot.max_file_mb as usize * 1024 * 1024,
+        attachments::effective_agent_file_limit(
+            snapshot.max_file_mb as usize * 1024 * 1024,
+        ),
     ));
     // Link previews are fetched off the post path: posts queue their message
     // id here; the worker fetches behind SSRF guards and answers with a

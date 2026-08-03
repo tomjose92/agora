@@ -14,7 +14,8 @@ Cursor as access to that host within Cursor's configured restrictions.
   use `wss://` remotely, and rotate a token that may have leaked.
 - Attachments and prior channel messages are untrusted model input and may
   contain prompt injection. The sandbox—not prompting—is the security boundary.
-- A model can request a local image upload with the attachment sentinel.
+- A model can request a local image upload with the attachment sentinel,
+  including after prompt injection from an untrusted channel message.
   Resolved paths must stay inside the bound session cwd or
   `CURSOR_ALLOWED_ROOTS`; that setting now also acts as the upload-source
   allowlist, and symlinks are resolved before reading.

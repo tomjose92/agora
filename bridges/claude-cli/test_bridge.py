@@ -384,6 +384,20 @@ class OutboundAttachmentTests(unittest.TestCase):
             _, attachments, notices = bridge.Bridge._split_outbound_attachments(
                 f"{bridge.ATTACH_SENTINEL} {secret}", tmp, [], 1024)
             self.assertEqual((attachments, len(notices)), ([], 1))
+            link = Path(tmp) / "link.png"
+            link.symlink_to(secret)
+            _, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                f"{bridge.ATTACH_SENTINEL} {link}", tmp, [], 1024)
+            self.assertEqual((attachments, len(notices)), ([], 1))
+
+    def test_duplicate_attachment_paths_upload_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "same.png"
+            path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+            line = f"{bridge.ATTACH_SENTINEL} {path}"
+            _, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                f"{line}\n{line}", tmp, [], 1024)
+            self.assertEqual((len(attachments), notices), (1, []))
 
 
 if __name__ == "__main__":
