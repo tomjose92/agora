@@ -61,10 +61,31 @@ pub(crate) fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
     None
 }
 
+/// Video MIME from magic bytes, or None for anything that isn't a recognized
+/// playable container. Only verified video bytes earn the larger video upload
+/// cap, so this deliberately recognizes just the containers clients can play.
+pub(crate) fn sniff_video_mime(data: &[u8]) -> Option<&'static str> {
+    if data.len() >= 12 && &data[4..8] == b"ftyp" {
+        return match &data[8..12] {
+            b"qt  " => Some("video/quicktime"),
+            b"isom" | b"iso2" | b"iso4" | b"iso5" | b"iso6" | b"mp41" | b"mp42"
+            | b"mp4v" | b"avc1" | b"M4V " | b"3gp4" | b"3gp5" | b"dash" => Some("video/mp4"),
+            _ => None,
+        };
+    }
+    let header = &data[..data.len().min(64)];
+    if header.starts_with(b"\x1a\x45\xdf\xa3") && header.windows(7).any(|w| w == b"\x42\x82\x84webm") {
+        return Some("video/webm");
+    }
+    None
+}
+
 /// REST uploads may carry non-images, so fall back to their declared type
-/// after image sniffing. Agent image posts separately require a sniffed image.
+/// after image/video sniffing. Audio declarations skip the video sniff: voice
+/// notes share the mp4/webm containers but must keep their audio identity.
 pub(crate) fn attachment_mime(data: &[u8], declared: &str) -> String {
     sniff_image_mime(data)
+        .or_else(|| (!declared.to_ascii_lowercase().starts_with("audio/")).then(|| sniff_video_mime(data)).flatten())
         .map(str::to_string)
         .unwrap_or_else(|| declared.split(';').next().unwrap_or("").trim().to_string())
 }

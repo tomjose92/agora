@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::body::Body;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -24,13 +25,15 @@ use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio_util::io::ReaderStream;
 
 use crate::config::{Config, Connection, PairingToken};
 use crate::connections::ConnectionManager;
 use crate::hub::{AgentHandle, Hub};
 use crate::store::{new_token, now, NewAttachment};
-use crate::attachments::{agent_wire_limit, attachment_mime, safe_filename};
+use crate::attachments::{agent_wire_limit, attachment_mime, safe_filename, sniff_video_mime};
 
 const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
@@ -285,8 +288,23 @@ fn require_message_visible(
 /// per-file limit. Computed at router build, so a runtime max_file_mb change
 /// applies after restart.
 fn upload_body_limit(state: &AppState) -> axum::extract::DefaultBodyLimit {
-    let per_file = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
-    axum::extract::DefaultBodyLimit::max(per_file * MAX_FILES_PER_MESSAGE + 1024 * 1024)
+    let config = state.config.snapshot();
+    axum::extract::DefaultBodyLimit::max(upload_request_max_bytes(&config).saturating_add(1024 * 1024))
+}
+
+fn upload_request_max_bytes(config: &crate::config::ConfigData) -> usize {
+    let file = (config.max_file_mb as usize).saturating_mul(1024 * 1024);
+    let video_mb = if config.max_video_mb == 0 { config.max_file_mb } else { config.max_video_mb };
+    let video = (video_mb.max(config.max_file_mb) as usize).saturating_mul(1024 * 1024);
+    video.saturating_add(file.saturating_mul(MAX_FILES_PER_MESSAGE - 1))
+}
+
+fn voice_body_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(voice_request_max_bytes())
+}
+
+fn voice_request_max_bytes() -> usize {
+    MAX_VOICE_BYTES + 1024 * 1024
 }
 
 pub fn router(state: AppState) -> Router {
@@ -327,7 +345,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/api/channels/{channel_id}/voice",
-            post(post_voice_message).layer(upload_body_limit(&state)),
+            post(post_voice_message).layer(voice_body_limit()),
         )
         .route("/api/channels/{channel_id}/read", put(mark_read))
         .route("/api/messages/{message_id}", get(get_message))
@@ -475,6 +493,44 @@ fn group_payload(state: &AppState, group: &Value, user: &AuthedUser) -> Value {
     out
 }
 
+/// The per-attachment cap for these bytes: the video cap only for verified
+/// video containers (audio declarations keep the ordinary cap — voice notes
+/// share the mp4/webm containers).
+fn attachment_max_bytes(data: &[u8], declared: &str, config: &crate::config::ConfigData) -> usize {
+    let video = !declared.to_ascii_lowercase().starts_with("audio/") && sniff_video_mime(data).is_some();
+    let video_mb = if config.max_video_mb == 0 { config.max_file_mb } else { config.max_video_mb };
+    let mb = if video { video_mb } else { config.max_file_mb };
+    (mb as usize).saturating_mul(1024 * 1024)
+}
+
+fn upload_too_large_message(data: &[u8], declared: &str) -> &'static str {
+    if declared.to_ascii_lowercase().starts_with("video/") && sniff_video_mime(data).is_none() {
+        "Unrecognized video container — ordinary file limit applies"
+    } else {
+        "File too large"
+    }
+}
+
+fn inline_video_mime(mime: &str) -> bool {
+    matches!(mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase().as_str(),
+        "video/mp4" | "video/webm" | "video/quicktime")
+}
+
+fn byte_range(raw: &str, size: u64) -> Option<Result<(u64, u64), ()>> {
+    let raw = raw.strip_prefix("bytes=")?;
+    if raw.contains(',') { return None; }
+    let (start, end) = raw.split_once('-')?;
+    let last = match size.checked_sub(1) { Some(last) => last, None => return Some(Err(())) };
+    if start.is_empty() {
+        let suffix = end.parse::<u64>().ok()?;
+        if suffix == 0 { return Some(Err(())); }
+        return Some(Ok((size.saturating_sub(suffix), last)));
+    }
+    let start = start.parse::<u64>().ok()?;
+    let end = if end.is_empty() { last } else { end.parse::<u64>().ok()?.min(last) };
+    Some(if start <= end && start < size { Ok((start, end)) } else { Err(()) })
+}
+
 fn resolve_thread(
     state: &AppState,
     channel_id: &str,
@@ -499,6 +555,7 @@ async fn me(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
+    let config = state.config.snapshot();
     Ok(Json(json!({
         "username": user.username,
         "display_name": user.display_name,
@@ -506,7 +563,8 @@ async fn me(
         "version": env!("CARGO_PKG_VERSION"),
         // Clients use the real server limit to reject impossible uploads before
         // copying a promised file into the webview heap.
-        "max_file_mb": state.config.snapshot().max_file_mb,
+        "max_file_mb": config.max_file_mb,
+        "max_video_mb": config.max_video_mb,
         // Voice features (voice notes, speak-aloud, live voice) need an
         // OPENAI_API_KEY in the server env; clients hide the controls without it.
         "voice": crate::voice::api_key().is_some(),
@@ -1406,12 +1464,14 @@ async fn post_message_upload(
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
     }
     require_channel_member(&state, &user, &channel_id)?;
-    let max_bytes = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
+    let config = state.config.snapshot();
     let mut text = String::new();
     let mut thread_id: Option<i64> = None;
     let mut timezone: Option<String> = None;
     let mut reply_in_thread = false;
     let mut attachments: Vec<NewAttachment> = Vec::new();
+    let mut uploaded_bytes = 0usize;
+    let request_max_bytes = upload_request_max_bytes(&config);
     while let Some(field) = multipart
         .next_field()
         .await
@@ -1438,20 +1498,29 @@ async fn post_message_upload(
                 }
                 let filename = safe_filename(field.file_name().unwrap_or("file"));
                 let declared = field.content_type().unwrap_or("").to_string();
-                let data = field
-                    .bytes()
-                    .await
-                    .map_err(|_| err(StatusCode::BAD_REQUEST, "Upload read failed"))?;
+                let mut field = field;
+                let mut data = Vec::new();
+                while let Some(chunk) = field.chunk().await
+                    .map_err(|_| err(StatusCode::BAD_REQUEST, "Upload read failed"))? {
+                    uploaded_bytes = uploaded_bytes.saturating_add(chunk.len());
+                    if uploaded_bytes > request_max_bytes {
+                        return Err(err(StatusCode::BAD_REQUEST, "Attachments too large for one message"));
+                    }
+                    data.extend_from_slice(&chunk);
+                    if data.len() >= 12 && data.len() > attachment_max_bytes(&data, &declared, &config) {
+                        return Err(err(StatusCode::BAD_REQUEST, upload_too_large_message(&data, &declared)));
+                    }
+                }
                 if data.is_empty() {
                     return Err(err(StatusCode::BAD_REQUEST, "Empty file upload"));
                 }
-                if data.len() > max_bytes {
-                    return Err(err(StatusCode::BAD_REQUEST, "File too large"));
+                if data.len() > attachment_max_bytes(&data, &declared, &config) {
+                    return Err(err(StatusCode::BAD_REQUEST, upload_too_large_message(&data, &declared)));
                 }
                 attachments.push(NewAttachment {
                     filename,
                     mime: attachment_mime(&data, &declared),
-                    data: data.to_vec(),
+                    data,
                 });
             }
             _ => {}
@@ -1461,17 +1530,13 @@ async fn post_message_upload(
         return Err(err(StatusCode::BAD_REQUEST, "Message text required"));
     }
     let thread_id = resolve_thread(&state, &channel_id, thread_id)?;
-    let message = state.hub.post_user_message_opts(
-        &channel_id,
-        &text,
-        &user.username,
-        Some(&user.display_name),
-        thread_id,
-        attachments,
-        false,
-        timezone.as_deref(),
-        reply_in_thread,
-    );
+    let hub = Arc::clone(&state.hub);
+    let username = user.username.clone();
+    let display_name = user.display_name.clone();
+    let message = tokio::task::spawn_blocking(move || hub.post_user_message_opts(
+        &channel_id, &text, &username, Some(&display_name), thread_id, attachments,
+        false, timezone.as_deref(), reply_in_thread,
+    )).await.map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Message write failed"))?;
     Ok(Json(message))
 }
 
@@ -1656,19 +1721,44 @@ async fn get_file(
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown file"))?;
     require_channel_member(&state, &user, meta["channel_id"].as_str().unwrap_or_default())?;
     let path = state.hub.store.file_path(&file_id);
-    let data = std::fs::read(&path)
+    let mut file = tokio::fs::File::open(&path).await
         .map_err(|_| err(StatusCode::NOT_FOUND, "File content missing"))?;
+    let size = file.metadata().await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "File content missing"))?.len();
     let mime = meta["mime"].as_str().filter(|m| !m.is_empty()).unwrap_or("application/octet-stream");
     let mut resp_headers = HeaderMap::new();
     resp_headers.insert("content-type", mime.parse().unwrap());
-    if !mime.starts_with("image/") {
+    resp_headers.insert("accept-ranges", "bytes".parse().unwrap());
+    resp_headers.insert("x-content-type-options", "nosniff".parse().unwrap());
+    if !mime.starts_with("image/") && !inline_video_mime(mime) {
         let filename = meta["filename"].as_str().unwrap_or("file");
         resp_headers.insert(
             "content-disposition",
             format!("attachment; filename=\"{filename}\"").parse().unwrap(),
         );
     }
-    Ok((resp_headers, data).into_response())
+    let range = headers.get("range").and_then(|v| v.to_str().ok());
+    let (status, start, length) = match range {
+        Some(raw) => match byte_range(raw, size) {
+          Some(Ok((start, end))) => {
+            let length = end - start + 1;
+            resp_headers.insert("content-range", format!("bytes {start}-{end}/{size}").parse().unwrap());
+            (StatusCode::PARTIAL_CONTENT, start, length)
+          }
+          Some(Err(())) => {
+            resp_headers.insert("content-range", format!("bytes */{size}").parse().unwrap());
+            resp_headers.insert("content-length", "0".parse().unwrap());
+            return Ok((StatusCode::RANGE_NOT_SATISFIABLE, resp_headers, Body::empty()).into_response());
+          }
+          None => (StatusCode::OK, 0, size),
+        },
+        None => (StatusCode::OK, 0, size),
+    };
+    file.seek(SeekFrom::Start(start)).await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "File seek failed"))?;
+    resp_headers.insert("content-length", length.to_string().parse().unwrap());
+    let body = Body::from_stream(ReaderStream::with_capacity(file.take(length), 64 * 1024));
+    Ok((status, resp_headers, body).into_response())
 }
 
 async fn mark_read(
@@ -3548,6 +3638,133 @@ mod tests {
         assert_eq!(pantheo_http_base("ftp://host/agora/connect"), None);
     }
 
+    #[test]
+    fn video_mime_and_limits_require_verified_container_bytes() {
+        assert_eq!(sniff_video_mime(b"\0\0\0\x18ftypisomrest"), Some("video/mp4"));
+        assert_eq!(sniff_video_mime(b"\0\0\0\x18ftypqt  rest"), Some("video/quicktime"));
+        assert_eq!(sniff_video_mime(b"\x1a\x45\xdf\xa3\x42\x82\x84webm"), Some("video/webm"));
+        assert_eq!(sniff_video_mime(b"\x1a\x45\xdf\xa3\x42\x82\x88matroska"), None);
+        let mut late_marker = b"\x1a\x45\xdf\xa3".to_vec();
+        late_marker.extend_from_slice(&[0; 64]);
+        late_marker.extend_from_slice(b"\x42\x82\x84webm");
+        assert_eq!(sniff_video_mime(&late_marker), None);
+        let config = crate::config::ConfigData::default();
+        assert_eq!(attachment_max_bytes(b"\0\0\0\x18ftypisomrest", "video/mp4", &config), 100 * 1024 * 1024);
+        assert_eq!(attachment_max_bytes(b"zip pretending to be video", "video/mp4", &config), 10 * 1024 * 1024);
+        assert_eq!(attachment_max_bytes(b"\0\0\0\x18ftypisomrest", "audio/mp4", &config), 10 * 1024 * 1024);
+        assert_eq!(attachment_mime(b"\0\0\0\x18ftypisomrest", "audio/mp4"), "audio/mp4");
+        assert_eq!(attachment_mime(b"\x1a\x45\xdf\xa3\x42\x82\x84webm", "audio/webm"), "audio/webm");
+        assert_eq!(upload_request_max_bytes(&config), 140 * 1024 * 1024);
+        assert_eq!(voice_request_max_bytes(), 16 * 1024 * 1024);
+        let mut smaller_video = config.clone();
+        smaller_video.max_file_mb = 10;
+        smaller_video.max_video_mb = 5;
+        assert_eq!(upload_request_max_bytes(&smaller_video), 50 * 1024 * 1024);
+        smaller_video.max_video_mb = 0;
+        assert_eq!(attachment_max_bytes(b"\0\0\0\x18ftypisomrest", "video/mp4", &smaller_video), 10 * 1024 * 1024);
+        assert!(inline_video_mime("video/mp4"));
+        assert!(!inline_video_mime("video/x-matroska"));
+    }
+
+    #[test]
+    fn parses_bounded_video_byte_ranges() {
+        assert_eq!(byte_range("bytes=10-19", 100), Some(Ok((10, 19))));
+        assert_eq!(byte_range("bytes=90-", 100), Some(Ok((90, 99))));
+        assert_eq!(byte_range("bytes=90-999", 100), Some(Ok((90, 99))));
+        assert_eq!(byte_range("bytes=-10", 100), Some(Ok((90, 99))));
+        assert_eq!(byte_range("bytes=-999", 100), Some(Ok((0, 99))));
+        assert_eq!(byte_range("bytes=100-", 100), Some(Err(())));
+        assert_eq!(byte_range("bytes=-0", 100), Some(Err(())));
+        assert_eq!(byte_range("bytes=0-0,5-9", 100), None);
+        assert_eq!(byte_range("items=0-10", 100), None);
+        assert_eq!(byte_range("bytes=0-0", 0), Some(Err(())));
+        assert_eq!(byte_range(" bytes=0-1", 100), None);
+    }
+
+    #[tokio::test]
+    async fn file_endpoint_streams_video_ranges_and_rejects_unsatisfiable_ranges() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("ana", "Ana", None, "member").unwrap();
+        let group = store.create_group("Media", "", Some("ana"));
+        let channel = store.create_channel(group["id"].as_str().unwrap(), "video", "");
+        let message = store.add_message(
+            channel["id"].as_str().unwrap(), "clip", "user", "ana", None, None,
+            &[NewAttachment { filename: "clip.mp4".into(), mime: "video/mp4".into(), data: b"0123456789".to_vec() }],
+        );
+        let file_id = message["attachments"][0]["id"].as_str().unwrap().to_string();
+        let mut headers = session_headers(&state, "ana");
+        headers.insert("range", "bytes=2-5".parse().unwrap());
+        let response = get_file(
+            State(state.clone()), Path(file_id.clone()), Query(HashMap::new()), headers,
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()["content-range"], "bytes 2-5/10");
+        assert_eq!(response.headers()["content-length"], "4");
+        assert_eq!(response.headers()["accept-ranges"], "bytes");
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert!(response.headers().get("content-disposition").is_none());
+        assert_eq!(axum::body::to_bytes(response.into_body(), 16).await.unwrap(), "2345");
+
+        let mut headers = session_headers(&state, "ana");
+        headers.insert("range", "bytes=10-".parse().unwrap());
+        let response = get_file(State(state), Path(file_id), Query(HashMap::new()), headers)
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(response.headers()["content-range"], "bytes */10");
+    }
+
+    #[tokio::test]
+    async fn message_upload_rejects_bodies_above_the_aggregate_budget() {
+        let (state, _dir) = test_state();
+        state.config.update(|config| {
+            config.max_file_mb = 1;
+            config.max_video_mb = 2;
+        });
+        let group = state.hub.store.create_group("Media", "", None);
+        let channel = state.hub.store.create_channel(group["id"].as_str().unwrap(), "video", "");
+        let boundary = "agora-video-budget";
+        let mut body = Vec::new();
+        for index in 0..4 {
+            body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{index}.mp4\"\r\nContent-Type: video/mp4\r\n\r\n").as_bytes());
+            body.extend_from_slice(b"\0\0\0\x18ftypisom");
+            body.resize(body.len() + (1600 * 1024) - 12, 0);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        let token = state.config.snapshot().admin_key;
+        let response = router(state)
+            .oneshot(Request::post(format!("/api/channels/{}/messages/upload", channel["id"].as_str().unwrap()))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                .extension(ConnectInfo("127.0.0.1:12345".parse::<SocketAddr>().unwrap()))
+                .body(Body::from(body)).unwrap())
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("Attachments too large for one message"));
+    }
+
+    #[tokio::test]
+    async fn message_upload_accepts_recognized_video_above_the_regular_file_cap() {
+        let (state, _dir) = test_state();
+        state.config.update(|config| { config.max_file_mb = 1; config.max_video_mb = 2; });
+        let group = state.hub.store.create_group("Media", "", None);
+        let channel = state.hub.store.create_channel(group["id"].as_str().unwrap(), "video", "");
+        let boundary = "agora-valid-video";
+        let mut body = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"clip.mp4\"\r\nContent-Type: video/mp4\r\n\r\n").into_bytes();
+        body.extend_from_slice(b"\0\0\0\x18ftypisom");
+        body.resize(body.len() + (1500 * 1024) - 12, 0);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let token = state.config.snapshot().admin_key;
+        let response = router(state).oneshot(Request::post(format!("/api/channels/{}/messages/upload", channel["id"].as_str().unwrap()))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .extension(ConnectInfo("127.0.0.1:12345".parse::<SocketAddr>().unwrap()))
+            .body(Body::from(body)).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
     /// Auth headers for a freshly minted session of `username`.
     fn session_headers(state: &AppState, username: &str) -> HeaderMap {
         let v = state.hub.store.user(username).unwrap()["session_version"]
@@ -4523,6 +4740,7 @@ mod tests {
             res.0["max_file_mb"],
             state.config.snapshot().max_file_mb,
         );
+        assert_eq!(res.0["max_video_mb"], state.config.snapshot().max_video_mb);
     }
 
     #[tokio::test]

@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import type { Message } from "@agora/core";
-import { fileUrl, humanSize, BROWSER_IMAGE } from "../lib/files";
+import { fileUrl, humanSize, BROWSER_IMAGE, BROWSER_VIDEO } from "../lib/files";
 import { Icon } from "../lib/icons";
 import { ImageLightbox } from "./ImageLightbox";
 
 export function Attachments({ message }: { message: Message }) {
   const [preview, setPreview] = useState<{ url: string; filename: string } | null>(null);
+  const [failedVideos, setFailedVideos] = useState<Set<string>>(new Set());
   const files = message.attachments || [];
   if (!files.length) return null;
   return (
@@ -22,6 +23,11 @@ export function Attachments({ message }: { message: Message }) {
               <img src={url} alt={f.filename} loading="lazy" />
             </button>
           );
+        }
+        if (BROWSER_VIDEO.test(f.mime || "") && !failedVideos.has(f.id)) {
+          return <video key={f.id} className="ago-att-video" src={url} controls playsInline preload="metadata"
+            aria-label={`Play ${f.filename}`}
+            onError={() => setFailedVideos(current => new Set(current).add(f.id))} />;
         }
         return (
           <a key={f.id} className="ago-att-file" href={url} download={f.filename}

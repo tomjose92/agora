@@ -48,7 +48,7 @@ import {
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { OutgoingFile } from "@agora/core";
-import { fmtSize, MAX_MESSAGE_CHARS, slugify } from "@agora/core";
+import { fmtSize, MAX_MESSAGE_CHARS, slugify, uploadMaxBytes } from "@agora/core";
 import { toOutgoing, type LocalFile } from "../api/voice";
 import { useKeyboardVisible } from "../lib/keyboard";
 import { colors } from "../lib/theme";
@@ -144,6 +144,11 @@ export interface MentionCandidate {
   name: string;
 }
 
+export function withinUploadLimit(file: LocalFile, maxFileMb?: number, maxVideoMb?: number) {
+  const maxBytes = uploadMaxBytes(file.type, maxFileMb, maxVideoMb);
+  return file.size === undefined || maxBytes === undefined || file.size <= maxBytes;
+}
+
 export function Composer({
   placeholder,
   mentions,
@@ -155,6 +160,8 @@ export function Composer({
   onSend,
   onSendVoice,
   initialFiles = [],
+  maxFileMb,
+  maxVideoMb,
 }: {
   placeholder: string;
   mentions: MentionCandidate[];
@@ -177,6 +184,8 @@ export function Composer({
   onSendVoice?: (file: LocalFile, mentions?: string) => Promise<void>;
   /** Deterministic initial attachments for component catalogs and tests. */
   initialFiles?: LocalFile[];
+  maxFileMb?: number;
+  maxVideoMb?: number;
 }) {
   /* Keep this render-time so platform-branch tests can verify Android rather
      than inheriting the test runtime's iOS value captured at module load. */
@@ -358,11 +367,14 @@ export function Composer({
   };
 
   const addFiles = (picked: LocalFile[]): LocalFile[] => {
-    const accepted = picked.slice(0, Math.max(0, MAX_FILES - filesRef.current.length));
-    const dropped = picked.slice(accepted.length);
+    const candidates = picked.filter(file => withinUploadLimit(file, maxFileMb, maxVideoMb));
+    const oversized = picked.filter(file => !withinUploadLimit(file, maxFileMb, maxVideoMb));
+    const accepted = candidates.slice(0, Math.max(0, MAX_FILES - filesRef.current.length));
+    const dropped = [...oversized, ...candidates.slice(accepted.length)];
     filesRef.current = [...filesRef.current, ...accepted];
     setFiles(filesRef.current);
-    if (dropped.length > 0) toast(`Max ${MAX_FILES} files per message`, "warn");
+    if (oversized.length > 0) toast("One or more files exceed the server upload limit", "warn");
+    if (candidates.length > accepted.length) toast(`Max ${MAX_FILES} files per message`, "warn");
     return dropped;
   };
 
@@ -464,13 +476,18 @@ export function Composer({
   const pickPhotos = async () => {
     try {
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
+        mediaTypes: ["images", "videos"],
         allowsMultipleSelection: true,
         selectionLimit: MAX_FILES,
         quality: 0.9,
       });
       if (res.canceled) return;
-      addFiles(await Promise.all(res.assets.map(toWebSafeImage)));
+      addFiles(await Promise.all(res.assets.map((asset) => asset.type === "video" ? {
+        uri: asset.uri,
+        name: asset.fileName ?? `video-${Date.now()}.${asset.mimeType === "video/quicktime" ? "mov" : asset.mimeType === "video/webm" ? "webm" : "mp4"}`,
+        type: asset.mimeType ?? "video/mp4",
+        size: asset.fileSize,
+      } : toWebSafeImage(asset))));
     } catch (e) {
       toastErr("Photo pick failed", e);
     }

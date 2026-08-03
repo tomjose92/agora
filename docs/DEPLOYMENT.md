@@ -208,6 +208,7 @@ until you opt in.
 | `connections` | `[]` | Outbound Pantheo endpoints (managed from the UI). |
 | `pairing_tokens` | `[]` | Dial-in bridge credentials (managed from the UI). |
 | `max_file_mb` | `10` | Per-attachment upload cap. |
+| `max_video_mb` | `100` | Per-attachment cap for recognized MP4, MOV, M4V, and WebM containers. |
 | `google_client_id` | `""` | Google OAuth client id (see [AUTH.md](AUTH.md#google-sign-in)). |
 | `google_client_secret` | `""` | Google OAuth client secret. |
 | `google_allowed_emails` | `[]` | Google accounts allowed to sign in (fallback admission when no invite matches). Empty keeps Google sign-in off. |

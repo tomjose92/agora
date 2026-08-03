@@ -29,6 +29,7 @@ import {
   useGroups,
   useMarkRead,
   useMembers,
+  useMe,
   useMessages,
   usePins,
   useSendMessage,
@@ -115,6 +116,7 @@ export default function ChannelScreen() {
     messageId?: string;
   }>();
   const channelId = params.id;
+  const me = useMe().data;
   const targetMessageId = params.messageId ? Number(params.messageId) : null;
   const session = useSession((s) => s.session)!;
   const keyboardOffset = useHeaderKeyboardOffset();
@@ -487,6 +489,8 @@ export default function ChannelScreen() {
           agents={agentCandidates}
           addressKey={channelId}
           groupId={groupId}
+          maxFileMb={me?.max_file_mb}
+          maxVideoMb={me?.max_video_mb}
           sending={send.isPending}
           threadToggle
           onSend={async ({ text, files, replyInThread }) => {

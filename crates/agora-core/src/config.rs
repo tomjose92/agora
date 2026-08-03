@@ -112,6 +112,9 @@ pub struct ConfigData {
     /// Per-attachment upload cap, megabytes.
     #[serde(default = "default_max_file_mb")]
     pub max_file_mb: u64,
+    /// Per-attachment cap for verified video uploads, megabytes.
+    #[serde(default = "default_max_video_mb")]
+    pub max_video_mb: u64,
     /// Google OAuth client (Web application type). Both must be set for
     /// Google sign-in to be offered.
     #[serde(default)]
@@ -164,6 +167,8 @@ fn default_max_file_mb() -> u64 {
     10
 }
 
+fn default_max_video_mb() -> u64 { 100 }
+
 impl Default for ConfigData {
     fn default() -> Self {
         Self {
@@ -179,6 +184,7 @@ impl Default for ConfigData {
             connections: Vec::new(),
             pairing_tokens: Vec::new(),
             max_file_mb: default_max_file_mb(),
+            max_video_mb: default_max_video_mb(),
             google_client_id: String::new(),
             google_client_secret: String::new(),
             google_allowed_emails: Vec::new(),
@@ -451,6 +457,8 @@ mod tests {
     #[test]
     fn admin_login_is_visible_by_default_and_can_be_hidden() {
         let defaulted: ConfigData = serde_json::from_str(r#"{"admin_key":"key"}"#).unwrap();
+        assert_eq!(defaulted.max_file_mb, 10);
+        assert_eq!(defaulted.max_video_mb, 100);
         assert!(defaulted.admin_login_enabled);
         let hidden: ConfigData = serde_json::from_str(
             r#"{"admin_key":"key","admin_login_enabled":false}"#,

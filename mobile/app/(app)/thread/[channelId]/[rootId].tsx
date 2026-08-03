@@ -30,6 +30,7 @@ import {
   useGroups,
   useMarkThreadRead,
   useMembers,
+  useMe,
   useMessage,
   useMessages,
   useSendMessage,
@@ -71,6 +72,7 @@ export default function ThreadScreen() {
     groupId?: string;
   }>();
   const channelId = params.channelId;
+  const me = useMe().data;
   const rootId = Number(params.rootId);
   const targetMessageId = params.messageId ? Number(params.messageId) : null;
   const session = useSession((s) => s.session)!;
@@ -385,6 +387,8 @@ export default function ThreadScreen() {
           agents={agentCandidates}
           addressKey={threadAddressKey(channelId, rootId)}
           groupId={groupId ?? undefined}
+          maxFileMb={me?.max_file_mb}
+          maxVideoMb={me?.max_video_mb}
           sending={send.isPending}
           onSend={async ({ text, files }) => {
             await send.mutateAsync({ text, threadId: rootId, files });

@@ -4,7 +4,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  DROP_HEAP_MAX_BYTES, DroppedFileError, dropMaterializationLimit,
+  DroppedFileError, dropMaterializationLimit,
+  droppedTooLargeMessage, uploadMaxBytes,
   draftAttachmentPreviewUrl, materializeDroppedFile, MAX_MESSAGE_CHARS,
   useAgents, useAttachmentDrafts, useMe, useSendMessage,
   type ChannelAgent, type DraftAttachment, type OutgoingFile,
@@ -125,10 +126,9 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
   );
   const preparingAttachments = attachments.filter(entry => entry.status === "preparing");
   const sendingAttachments = attachments.filter(entry => entry.status === "sending");
-  const serverMaxBytes = typeof me?.max_file_mb === "number" && me.max_file_mb > 0
-    ? me.max_file_mb * 1024 * 1024
-    : undefined;
-  const dropMaxBytes = dropMaterializationLimit(me?.max_file_mb);
+  const maxBytesFor = (file: File) => uploadMaxBytes(file.type, me?.max_file_mb, me?.max_video_mb);
+  const dropMaxBytes = dropMaterializationLimit(Math.max(me?.max_file_mb ?? 0, me?.max_video_mb ?? 0));
+  const dropMaxBytesFor = (file: File) => Math.min(dropMaxBytes, maxBytesFor(file) ?? Infinity);
   const inputId = inThread ? "ago-thread-msg" : "ago-msg";
   const selectedAgents = addrSel
     .map(id => agents.find(a => a.id === id))
@@ -151,14 +151,17 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
   const addFiles = (list: FileList | File[]) => {
     const incoming = Array.from(list);
     const nonEmpty = incoming.filter((file) => file.size > 0);
-    const allowed = nonEmpty.filter(
-      (file) => serverMaxBytes === undefined || file.size <= serverMaxBytes,
-    );
+    const allowed = nonEmpty.filter((file) => {
+      const maxBytes = maxBytesFor(file);
+      return maxBytes === undefined || file.size <= maxBytes;
+    });
     if (nonEmpty.length < incoming.length) {
       toast("Empty files cannot be uploaded", { variant: "warn" });
     }
     if (allowed.length < nonEmpty.length) {
-      toast(`File too large (max ${me!.max_file_mb} MB)`, { variant: "warn" });
+      const messages = new Set(nonEmpty.filter(file => !allowed.includes(file)).map(file =>
+        droppedTooLargeMessage(file.type, me?.max_file_mb, me?.max_video_mb)));
+      toast(messages.size === 1 ? [...messages][0] : "Some files exceed their upload limit", { variant: "warn" });
     }
     const result = useAttachmentDrafts.getState().stage(
       draftKey,
@@ -176,13 +179,11 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
     source: File,
   ) => {
     try {
-      const file = await materializeDroppedFile(source, { maxBytes: dropMaxBytes });
+      const file = await materializeDroppedFile(source, { maxBytes: dropMaxBytesFor(source) });
       useAttachmentDrafts.getState().complete(draftKey, entry.id, file);
     } catch (error) {
       const message = error instanceof DroppedFileError && error.code === "too_large"
-        ? serverMaxBytes !== undefined && serverMaxBytes <= DROP_HEAP_MAX_BYTES
-          ? `File too large (max ${me!.max_file_mb} MB)`
-          : "Large files must be attached with the paperclip"
+        ? droppedTooLargeMessage(source.type, me?.max_file_mb, me?.max_video_mb)
         : error instanceof DroppedFileError && error.code === "empty"
           ? "Empty files cannot be uploaded"
           : "Could not read the dropped file";
@@ -196,16 +197,13 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
     const dropped = Array.from(list);
     // A promised file may report size 0 before its provider resolves, so only
     // reject metadata that already proves the drop cannot be materialized.
-    const allowed = dropped.filter((file) => file.size <= dropMaxBytes);
+    const allowed = dropped.filter((file) => file.size <= dropMaxBytesFor(file));
     if (allowed.length < dropped.length) {
-      const serverBound = serverMaxBytes !== undefined
-        && serverMaxBytes <= DROP_HEAP_MAX_BYTES;
-      toast(
-        serverBound
-          ? `File too large (max ${me!.max_file_mb} MB)`
-          : "Large files must be attached with the paperclip",
-        { variant: "warn" },
-      );
+      const rejected = dropped.filter(file => file.size > dropMaxBytesFor(file));
+      const messages = new Set(rejected.map(file =>
+        droppedTooLargeMessage(file.type, me?.max_file_mb, me?.max_video_mb)));
+      toast(messages.size === 1 ? [...messages][0] : "Large files must be attached with the paperclip",
+        { variant: "warn" });
     }
     const result = useAttachmentDrafts.getState().stage(
       draftKey,

@@ -19,6 +19,7 @@ export function withToken(url: string): string {
 }
 
 export const BROWSER_IMAGE = /^image\/(jpeg|png|gif|webp|svg\+xml|bmp)$/i;
+export const BROWSER_VIDEO = /^video\/(mp4|webm|quicktime)$/i;
 
 export function humanSize(bytes: number): string {
   if (!bytes && bytes !== 0) return "";

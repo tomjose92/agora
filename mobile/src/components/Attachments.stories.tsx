@@ -31,6 +31,12 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const ImageAndFile: Story = {};
+export const Video: Story = {
+  args: {
+    session,
+    attachments: [{ id: "demo-video", filename: "launch-demo.mp4", mime: "video/mp4", size: 24_000_000 }],
+  },
+};
 export const LongAndZeroByte: Story = {
   args: {
     session,

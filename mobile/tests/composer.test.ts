@@ -3,8 +3,8 @@ import TestRenderer, { act } from "react-test-renderer";
 import { Image, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
-import { Composer } from "../src/components/Composer";
-import { Attachments } from "../src/components/Attachments";
+import { Composer, withinUploadLimit } from "../src/components/Composer";
+import { Attachments, VideoAttachment } from "../src/components/Attachments";
 import { useMessageDrafts } from "@agora/core";
 
 jest.mock("expo-file-system/legacy", () => ({
@@ -15,6 +15,12 @@ jest.mock("expo-file-system/legacy", () => ({
   getInfoAsync: jest.fn(async () => ({ exists: true, size: 4_096 })),
   writeAsStringAsync: jest.fn(async () => {}),
 }));
+
+test("mobile attachment limits reject known oversize files but allow unknown sizes", () => {
+  expect(withinUploadLimit({ uri: "file:///clip.mp4", name: "clip.mp4", type: "video/mp4", size: 60 * 1024 * 1024 }, 10, 100)).toBe(true);
+  expect(withinUploadLimit({ uri: "file:///doc.pdf", name: "doc.pdf", type: "application/pdf", size: 60 * 1024 * 1024 }, 10, 100)).toBe(false);
+  expect(withinUploadLimit({ uri: "content://provider/file", name: "file", type: "application/pdf" }, 10, 100)).toBe(true);
+});
 jest.mock("expo-paste-input", () => {
   const mockReact = require("react");
   const { View: MockView } = require("react-native");
@@ -457,4 +463,49 @@ test("sent image attachments open and close the full-screen preview", () => {
   expect(tree.root.findAll((node) => node.props.accessibilityLabel === "Close image preview"))
     .toHaveLength(0);
   act(() => tree.unmount());
+});
+
+test("sent video attachments render an authenticated native player", () => {
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(Attachments, {
+      session: { baseUrl: "https://example.invalid", token: "test" },
+      attachments: [{ id: "video", filename: "demo.mp4", mime: "video/mp4", size: 24_000_000 }],
+    }));
+  });
+  expect(tree.root.findByProps({ testID: "video-view" }).props.player.source).toEqual({
+    uri: "https://example.invalid/api/files/video",
+    headers: { Authorization: "Bearer test" },
+  });
+  act(() => tree.unmount());
+});
+
+test("failed native video playback falls back to a file card", () => {
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(Attachments, {
+      session: { baseUrl: "https://example.invalid", token: "test" },
+      attachments: [{ id: "video-error", filename: "broken.mp4", mime: "video/mp4", size: 24_000_000 }],
+    }));
+  });
+  act(() => tree.root.findByType(VideoAttachment).props.onError());
+  expect(tree.root.findAllByProps({ testID: "video-view" })).toHaveLength(0);
+  expect(tree.root.findByProps({ children: "broken.mp4" })).toBeDefined();
+  act(() => tree.unmount());
+});
+
+test("iOS WebM attachments fall back to the downloadable file card", () => {
+  const original = Platform.OS;
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "ios" });
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(Attachments, {
+      session: { baseUrl: "https://example.invalid", token: "test" },
+      attachments: [{ id: "video", filename: "screen.webm", mime: "video/webm", size: 8_000_000 }],
+    }));
+  });
+  expect(tree.root.findAllByProps({ testID: "video-view" })).toHaveLength(0);
+  expect(tree.root.findByProps({ children: "screen.webm" })).toBeDefined();
+  act(() => tree.unmount());
+  Object.defineProperty(Platform, "OS", { configurable: true, value: original });
 });
