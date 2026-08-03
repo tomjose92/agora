@@ -52,11 +52,20 @@ static EMBEDDED: tokio::sync::OnceCell<Embedded> = tokio::sync::OnceCell::const_
 /// aborted) on every mode/settings change so at most one socket is live.
 static REMOTE_NOTIFIER: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
 
+/// The destination used to create or navigate the main window most recently.
+/// Linux relaunch/tray recovery can rebuild a window that disappeared during
+/// startup or was destroyed by the desktop environment.
+static LAST_MAIN_URL: Mutex<Option<Url>> = Mutex::new(None);
+
 /// Linux has no dock-reopen event. Only hide on close after the tray was
 /// created successfully; otherwise closing must terminate the process so it
 /// cannot become an unreachable background server.
 #[cfg(target_os = "linux")]
 static LINUX_TRAY_READY: AtomicBool = AtomicBool::new(false);
+
+/// Explain the background lifecycle once, without notifying on every close.
+#[cfg(target_os = "linux")]
+static LINUX_TRAY_CLOSE_NOTIFIED: AtomicBool = AtomicBool::new(false);
 
 struct Embedded {
     addr: std::net::SocketAddr,
@@ -78,6 +87,8 @@ impl Embedded {
 }
 
 fn main() {
+    // Load-bearing: GTK/WebKit initialization begins with the Tauri builder,
+    // so the WSL renderer override must be configured before anything else.
     configure_wsl_webview();
 
     tracing_subscriber::fmt()
@@ -86,12 +97,13 @@ fn main() {
         )
         .init();
 
-    // This must be the first plugin: a second launch should focus the hidden
-    // window instead of opening the same SQLite database in another process.
-    let builder =
-        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            show_main(app)
-        }));
+    let builder = tauri::Builder::default();
+    // Linux lacks macOS LaunchServices/Reopen. A second launch must focus the
+    // hidden window instead of opening the database in another process.
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        show_main(app)
+    }));
     #[cfg(feature = "updater")]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -170,6 +182,14 @@ fn main() {
                     if !LINUX_TRAY_READY.load(Ordering::Relaxed) {
                         window.app_handle().exit(0);
                         return;
+                    }
+                    #[cfg(target_os = "linux")]
+                    if !LINUX_TRAY_CLOSE_NOTIFIED.swap(true, Ordering::Relaxed) {
+                        deliver_notification(
+                            window.app_handle(),
+                            "Agora is still running",
+                            "Reopen it from the tray or launch Agora again. Use Quit Agora from the tray menu to stop it.",
+                        );
                     }
                     api.prevent_close();
                     let _ = window.hide();
@@ -269,6 +289,8 @@ fn configure_wsl_webview() {
         std::fs::read_to_string("/proc/sys/kernel/osrelease")
             .ok()
             .as_deref(),
+        std::env::var_os("WSL_DISTRO_NAME").is_some()
+            || std::env::var_os("WSL_INTEROP").is_some(),
         std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some(),
     ) {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
@@ -276,9 +298,14 @@ fn configure_wsl_webview() {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn should_disable_dmabuf_renderer(osrelease: Option<&str>, already_configured: bool) -> bool {
+fn should_disable_dmabuf_renderer(
+    osrelease: Option<&str>,
+    wsl_environment: bool,
+    already_configured: bool,
+) -> bool {
     !already_configured
-        && osrelease.is_some_and(|release| release.to_ascii_lowercase().contains("microsoft"))
+        && (wsl_environment
+            || osrelease.is_some_and(|release| release.to_ascii_lowercase().contains("microsoft")))
 }
 
 #[cfg(target_os = "linux")]
@@ -304,6 +331,8 @@ fn setup_linux_tray(app: &mut tauri::App) {
                     "tray-quit" => app.exit(0),
                     _ => {}
                 })
+                // Current Linux backends do not reliably deliver left-click
+                // events; the tray menu is the primary recovery path.
                 .on_tray_icon_event(|tray, event| {
                     if matches!(
                         event,
@@ -318,6 +347,8 @@ fn setup_linux_tray(app: &mut tauri::App) {
                 });
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
+            } else {
+                tracing::warn!("default window icon unavailable; tray may render without an icon");
             }
             tray.build(app).map(|_| ())
         });
@@ -327,11 +358,17 @@ fn setup_linux_tray(app: &mut tauri::App) {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        return;
+    }
+    let last_url = LAST_MAIN_URL.lock().unwrap().clone();
+    if let Some(url) = last_url {
+        open_main(app, url);
     }
 }
 
@@ -663,6 +700,7 @@ fn sync_remote_notifier(handle: &AppHandle, settings: &DesktopSettings) {
 
 /// Navigate the main window (creating it if needed) to the given URL.
 fn open_main(handle: &AppHandle, url: Url) {
+    *LAST_MAIN_URL.lock().unwrap() = Some(url.clone());
     if let Some(window) = handle.get_webview_window("main") {
         let _ = window.navigate(url);
         let _ = window.show();
@@ -710,17 +748,22 @@ mod tests {
     fn wsl_renderer_workaround_is_narrow_and_respects_override() {
         assert!(should_disable_dmabuf_renderer(
             Some("5.15.153.1-microsoft-standard-WSL2"),
+            false,
             false
         ));
         assert!(!should_disable_dmabuf_renderer(
             Some("6.8.0-generic"),
+            false,
             false
         ));
         assert!(!should_disable_dmabuf_renderer(
             Some("5.15.153.1-Microsoft-standard-WSL2"),
+            false,
             true
         ));
-        assert!(!should_disable_dmabuf_renderer(None, false));
+        assert!(!should_disable_dmabuf_renderer(None, false, false));
+        assert!(should_disable_dmabuf_renderer(None, true, false));
+        assert!(!should_disable_dmabuf_renderer(None, true, true));
     }
 
     #[cfg(feature = "updater")]

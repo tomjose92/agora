@@ -178,7 +178,14 @@ jobs:
           gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
             --pattern latest.json --dir "$CHECK_DIR" --clobber
           jq -e '
-            (.platforms | has("linux-x86_64")) and
-            ([.platforms | keys[] | select(startswith("darwin"))] | length > 0)
+            ((.version | ltrimstr("v")) == env.VERSION) and
+            (.platforms["linux-x86_64"] as $linux |
+              (($linux.url // "") | length > 0) and
+              (($linux.signature // "") | length > 0)) and
+            ([.platforms | to_entries[] | select(.key | startswith("darwin"))] as $darwin |
+              ($darwin | length > 0) and
+              all($darwin[];
+                ((.value.url // "") | length > 0) and
+                ((.value.signature // "") | length > 0)))
           ' "$CHECK_DIR/latest.json"
           gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false
