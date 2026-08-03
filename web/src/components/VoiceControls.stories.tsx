@@ -6,7 +6,7 @@ import { useVoiceRec } from "../state/voiceRec";
 import { LiveButton, LiveStrip, MicButton, SpeakButton } from "./VoiceControls";
 
 type VoiceState = "idle" | "recording" | "transcribing" | "live"
-  | "live-muted" | "live-thinking-muted" | "live-speaking-muted";
+  | "live-muted" | "live-muted-speaker-off" | "live-thinking-muted" | "live-speaking-muted";
 
 function VoiceSurface({ state }: { state: VoiceState }) {
   return (
@@ -63,7 +63,7 @@ function setup(state: VoiceState) {
       : state === "live-speaking-muted" ? "speaking" : "listening",
     muted,
   });
-  useSpeak.setState({ on: state === "live" });
+  useSpeak.setState({ on: live && state !== "live-muted-speaker-off" });
 }
 
 const meta = {
@@ -110,6 +110,23 @@ export const LiveMuted: Story = {
     const canvas = within(canvasElement);
     await expect(canvas.getByText("Muted — tap Unmute to talk")).toBeVisible();
     await expect(canvas.getByRole("button", { name: "Unmute" })).toHaveAttribute("aria-pressed", "true");
+    const dot = canvasElement.querySelector<HTMLElement>(".ago-live-dot");
+    await expect(dot).not.toBeNull();
+    const faint = getComputedStyle(canvasElement).getPropertyValue("--faint").trim();
+    const probe = document.createElement("span");
+    probe.style.color = faint;
+    canvasElement.appendChild(probe);
+    const expectedMutedColor = getComputedStyle(probe).color;
+    probe.remove();
+    await expect(getComputedStyle(dot!).backgroundColor).toBe(expectedMutedColor);
+  },
+};
+
+export const LiveMutedSpeakerOff: Story = {
+  args: { state: "live-muted-speaker-off" },
+  parameters: { setup: () => setup("live-muted-speaker-off") },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText("Muted — replies appear in chat")).toBeVisible();
   },
 };
 
