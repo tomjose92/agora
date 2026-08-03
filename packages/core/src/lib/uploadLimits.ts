@@ -1,4 +1,4 @@
-import { DROP_HEAP_MAX_BYTES } from "@agora/core";
+import { DROP_HEAP_MAX_BYTES } from "./dropFiles";
 
 export function uploadMaxBytes(type: string, maxFileMb?: number, maxVideoMb?: number) {
   const mb = type.startsWith("video/") ? (maxVideoMb ?? maxFileMb) : maxFileMb;

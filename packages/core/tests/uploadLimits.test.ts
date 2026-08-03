@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { droppedTooLargeMessage, uploadMaxBytes } from "./uploadLimits";
+import { droppedTooLargeMessage, uploadMaxBytes } from "../src/lib/uploadLimits";
 
 describe("attachment upload limits", () => {
   it("uses the larger advertised video limit", () => {

@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   DroppedFileError, dropMaterializationLimit,
+  droppedTooLargeMessage, uploadMaxBytes,
   draftAttachmentPreviewUrl, materializeDroppedFile, MAX_MESSAGE_CHARS,
   useAgents, useAttachmentDrafts, useMe, useSendMessage,
   type ChannelAgent, type DraftAttachment, type OutgoingFile,
@@ -15,7 +16,6 @@ import { autoGrow } from "../lib/autoGrow";
 import { BROWSER_IMAGE, humanSize, withToken } from "../lib/files";
 import { slugify } from "../lib/mentions";
 import { toast } from "../lib/toast";
-import { droppedTooLargeMessage, uploadMaxBytes } from "../lib/uploadLimits";
 import { MicButton } from "./VoiceControls";
 import { ImageLightbox } from "./ImageLightbox";
 import { TemplateControls } from "./TemplateControls";
@@ -128,6 +128,7 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
   const sendingAttachments = attachments.filter(entry => entry.status === "sending");
   const maxBytesFor = (file: File) => uploadMaxBytes(file.type, me?.max_file_mb, me?.max_video_mb);
   const dropMaxBytes = dropMaterializationLimit(Math.max(me?.max_file_mb ?? 0, me?.max_video_mb ?? 0));
+  const dropMaxBytesFor = (file: File) => Math.min(dropMaxBytes, maxBytesFor(file) ?? Infinity);
   const inputId = inThread ? "ago-thread-msg" : "ago-msg";
   const selectedAgents = addrSel
     .map(id => agents.find(a => a.id === id))
@@ -175,7 +176,7 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
     source: File,
   ) => {
     try {
-      const file = await materializeDroppedFile(source, { maxBytes: dropMaxBytes });
+      const file = await materializeDroppedFile(source, { maxBytes: dropMaxBytesFor(source) });
       useAttachmentDrafts.getState().complete(draftKey, entry.id, file);
     } catch (error) {
       const message = error instanceof DroppedFileError && error.code === "too_large"
@@ -193,9 +194,9 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
     const dropped = Array.from(list);
     // A promised file may report size 0 before its provider resolves, so only
     // reject metadata that already proves the drop cannot be materialized.
-    const allowed = dropped.filter((file) => file.size <= dropMaxBytes);
+    const allowed = dropped.filter((file) => file.size === 0 || file.size <= dropMaxBytesFor(file));
     if (allowed.length < dropped.length) {
-      const rejected = dropped.filter(file => file.size > dropMaxBytes);
+      const rejected = dropped.filter(file => file.size > 0 && file.size > dropMaxBytesFor(file));
       const messages = new Set(rejected.map(file =>
         droppedTooLargeMessage(file.type, me?.max_file_mb, me?.max_video_mb)));
       toast(messages.size === 1 ? [...messages][0] : "Some files are too large; use the paperclip for large videos",

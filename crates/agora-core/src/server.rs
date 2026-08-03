@@ -554,17 +554,19 @@ fn attachment_max_bytes(data: &[u8], config: &crate::config::ConfigData) -> usiz
     (mb as usize).saturating_mul(1024 * 1024)
 }
 
-fn byte_range(raw: &str, size: u64) -> Result<(u64, u64), ()> {
-    let (start, end) = raw.strip_prefix("bytes=").ok_or(())?.split_once('-').ok_or(())?;
-    let last = size.checked_sub(1).ok_or(())?;
+fn byte_range(raw: &str, size: u64) -> Option<Result<(u64, u64), ()>> {
+    let raw = raw.strip_prefix("bytes=")?;
+    if raw.contains(',') { return None; }
+    let (start, end) = raw.split_once('-')?;
+    let last = match size.checked_sub(1) { Some(last) => last, None => return Some(Err(())) };
     if start.is_empty() {
-        let suffix = end.parse::<u64>().map_err(|_| ())?;
-        if suffix == 0 { return Err(()); }
-        return Ok((size.saturating_sub(suffix), last));
+        let suffix = end.parse::<u64>().ok()?;
+        if suffix == 0 { return Some(Err(())); }
+        return Some(Ok((size.saturating_sub(suffix), last)));
     }
-    let start = start.parse::<u64>().map_err(|_| ())?;
-    let end = if end.is_empty() { last } else { end.parse::<u64>().map_err(|_| ())?.min(last) };
-    if start <= end && start < size { Ok((start, end)) } else { Err(()) }
+    let start = start.parse::<u64>().ok()?;
+    let end = if end.is_empty() { last } else { end.parse::<u64>().ok()?.min(last) };
+    Some(if start <= end && start < size { Ok((start, end)) } else { Err(()) })
 }
 
 fn resolve_thread(
@@ -1776,16 +1778,17 @@ async fn get_file(
     let range = headers.get("range").and_then(|v| v.to_str().ok());
     let (status, start, length) = match range {
         Some(raw) => match byte_range(raw, size) {
-          Ok((start, end)) => {
+          Some(Ok((start, end))) => {
             let length = end - start + 1;
             resp_headers.insert("content-range", format!("bytes {start}-{end}/{size}").parse().unwrap());
             (StatusCode::PARTIAL_CONTENT, start, length)
           }
-          Err(()) => {
+          Some(Err(())) => {
             resp_headers.insert("content-range", format!("bytes */{size}").parse().unwrap());
             resp_headers.insert("content-length", "0".parse().unwrap());
             return Ok((StatusCode::RANGE_NOT_SATISFIABLE, resp_headers, Body::empty()).into_response());
           }
+          None => (StatusCode::OK, 0, size),
         },
         None => (StatusCode::OK, 0, size),
     };
@@ -3709,13 +3712,15 @@ mod tests {
 
     #[test]
     fn parses_bounded_video_byte_ranges() {
-        assert_eq!(byte_range("bytes=10-19", 100), Ok((10, 19)));
-        assert_eq!(byte_range("bytes=90-", 100), Ok((90, 99)));
-        assert_eq!(byte_range("bytes=90-999", 100), Ok((90, 99)));
-        assert_eq!(byte_range("bytes=-10", 100), Ok((90, 99)));
-        assert_eq!(byte_range("bytes=-999", 100), Ok((0, 99)));
-        assert_eq!(byte_range("bytes=100-", 100), Err(()));
-        assert_eq!(byte_range("bytes=-0", 100), Err(()));
+        assert_eq!(byte_range("bytes=10-19", 100), Some(Ok((10, 19))));
+        assert_eq!(byte_range("bytes=90-", 100), Some(Ok((90, 99))));
+        assert_eq!(byte_range("bytes=90-999", 100), Some(Ok((90, 99))));
+        assert_eq!(byte_range("bytes=-10", 100), Some(Ok((90, 99))));
+        assert_eq!(byte_range("bytes=-999", 100), Some(Ok((0, 99))));
+        assert_eq!(byte_range("bytes=100-", 100), Some(Err(())));
+        assert_eq!(byte_range("bytes=-0", 100), Some(Err(())));
+        assert_eq!(byte_range("bytes=0-0,5-9", 100), None);
+        assert_eq!(byte_range("items=0-10", 100), None);
     }
 
     #[tokio::test]
