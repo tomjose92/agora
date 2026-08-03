@@ -1599,7 +1599,7 @@ async fn message_speech(
     let Some(key) = crate::voice::openai_api_key() else {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "Live voice needs OPENAI_API_KEY on the server for transcription, even when ElevenLabs handles text-to-speech",
+            "Spoken replies need OPENAI_API_KEY on the server — it also powers transcription, so an ELEVENLABS_API_KEY alone doesn't enable voice",
         ));
     };
     let cached = {
