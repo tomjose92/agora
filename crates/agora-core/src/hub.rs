@@ -256,6 +256,7 @@ pub struct Hub {
 impl Hub {
     /// Test/default constructor. Production passes the configured boot-time
     /// snapshot through `new_with_attachment_limit`; 10 MB mirrors config's default.
+    /// Agent uploads retain that snapshot until restart while REST reads live config.
     pub fn new(store: Arc<Store>) -> Self {
         Self::new_with_attachment_limit(store, 10 * 1024 * 1024)
     }
@@ -760,7 +761,7 @@ impl Hub {
     }
 
     fn decode_agent_attachments(&self, raw: Option<&Value>) -> Result<Vec<NewAttachment>, String> {
-        let Some(raw) = raw else { return Ok(vec![]) };
+        let Some(raw) = raw.filter(|value| !value.is_null()) else { return Ok(vec![]) };
         let files = raw.as_array().ok_or("attachments must be an array")?;
         if files.len() > MAX_FILES_PER_AGENT_POST {
             return Err(format!("too many attachments (max {MAX_FILES_PER_AGENT_POST})"));
@@ -2696,10 +2697,27 @@ mod tests {
     }
 
     #[test]
+    fn null_agent_attachments_are_treated_as_absent() {
+        let h = hub();
+        let _rx = add_agent(&h, "bot-a", "Bot A", false);
+        let conn_id = h.agent_handle("bot-a").unwrap().conn_id;
+        let cid = setup_channel(&h, &["bot-a"]);
+        h.handle_agent_frame_from(conn_id, &json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "request_id": "null-attachments", "text": "still lands", "attachments": null,
+        }));
+        let messages = h.store.messages(&cid, None, None, 10);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["text"], "still lands");
+    }
+
+    #[test]
     fn agent_attachment_decoder_rejects_every_invalid_shape() {
         let h = Hub::new_with_attachment_limit(Arc::new(Store::open_in_memory().unwrap()), 8);
         let file = |data: &str| json!({"filename": "x.png", "mime": "image/png", "data_b64": data});
         assert!(h.decode_agent_attachments(Some(&json!({}))).is_err());
+        assert!(h.decode_agent_attachments(Some(&Value::Null)).unwrap().is_empty());
+        assert!(h.decode_agent_attachments(Some(&json!([1, 2, 3]))).is_err());
         assert!(h.decode_agent_attachments(Some(&json!([
             file("eA=="), file("eA=="), file("eA=="), file("eA=="), file("eA=="), file("eA==")
         ]))).is_err());
@@ -2709,6 +2727,10 @@ mod tests {
         let oversized = base64::engine::general_purpose::STANDARD
             .encode(b"\x89PNG\r\n\x1a\nextra");
         assert!(h.decode_agent_attachments(Some(&json!([file(&oversized)]))).is_err());
+        let exact = b"\x89PNG\r\n\x1a\n";
+        assert_eq!(exact.len(), 8);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(exact);
+        assert_eq!(h.decode_agent_attachments(Some(&json!([file(&encoded)]))).unwrap().len(), 1);
     }
 
     #[test]

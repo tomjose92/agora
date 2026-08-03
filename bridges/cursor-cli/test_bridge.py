@@ -322,8 +322,9 @@ class OutboundAttachmentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
             large = Path(tmp) / "large.png"
             large.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 16)
-            _, attachments, notices = bridge.Bridge._split_outbound_attachments(
-                f"{bridge.ATTACH_SENTINEL} {large}", tmp, [], 8)
+            with patch.object(Path, "read_bytes", side_effect=AssertionError("oversize file read")):
+                _, attachments, notices = bridge.Bridge._split_outbound_attachments(
+                    f"{bridge.ATTACH_SENTINEL} {large}", tmp, [], 8)
             self.assertEqual((attachments, len(notices)), ([], 1))
             secret = Path(outside) / "secret.png"
             secret.write_bytes(b"\x89PNG\r\n\x1a\nimage")

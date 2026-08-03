@@ -294,6 +294,8 @@ impl ConnectionManager {
                                         });
                                     }
                                 } else {
+                                    // Operator-configured outbound peers are trusted and
+                                    // deliberately bypass the public dial-in upload limiter.
                                     self.hub.handle_agent_frame_from(conn_id, &frame);
                                 }
                             }
