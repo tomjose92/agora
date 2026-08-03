@@ -15,7 +15,11 @@ interface PersistedPrefs {
   unreadsOnly: boolean;
   speakAloud: boolean;
   recentEmoji: string[];
+  preferNativeApps: boolean;
+  linkBrowser: LinkBrowser;
 }
+
+export type LinkBrowser = "in-app" | "system" | "chrome";
 
 interface PrefsState {
   loaded: boolean;
@@ -26,12 +30,16 @@ interface PrefsState {
   speakAloud: boolean;
   /** Most-recently-picked emoji, newest first (the picker's top row). */
   recentEmoji: string[];
+  preferNativeApps: boolean;
+  linkBrowser: LinkBrowser;
   load: () => Promise<void>;
   toggleGroup: (groupId: string) => void;
   expandGroup: (groupId: string) => void;
   setUnreadsOnly: (on: boolean) => void;
   setSpeakAloud: (on: boolean) => void;
   rememberEmoji: (ch: string) => void;
+  setPreferNativeApps: (on: boolean) => void;
+  setLinkBrowser: (browser: LinkBrowser) => void;
 }
 
 function persist(state: PrefsState): void {
@@ -40,6 +48,8 @@ function persist(state: PrefsState): void {
     unreadsOnly: state.unreadsOnly,
     speakAloud: state.speakAloud,
     recentEmoji: state.recentEmoji,
+    preferNativeApps: state.preferNativeApps,
+    linkBrowser: state.linkBrowser,
   };
   FileSystem.writeAsStringAsync(PREFS_FILE, JSON.stringify(data)).catch(() => {
     /* best-effort */
@@ -52,6 +62,8 @@ export const usePrefs = create<PrefsState>((set, get) => ({
   unreadsOnly: false,
   speakAloud: false,
   recentEmoji: [],
+  preferNativeApps: true,
+  linkBrowser: "in-app",
 
   async load() {
     try {
@@ -67,6 +79,10 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         recentEmoji: Array.isArray(data.recentEmoji)
           ? data.recentEmoji.filter((c) => typeof c === "string").slice(0, RECENT_EMOJI_MAX)
           : [],
+        preferNativeApps: data.preferNativeApps ?? true,
+        linkBrowser: ["in-app", "system", "chrome"].includes(data.linkBrowser ?? "")
+          ? data.linkBrowser as LinkBrowser
+          : "in-app",
       });
     } catch {
       set({ loaded: true }); // first run
@@ -103,6 +119,16 @@ export const usePrefs = create<PrefsState>((set, get) => ({
     set({
       recentEmoji: [ch, ...get().recentEmoji.filter((c) => c !== ch)].slice(0, RECENT_EMOJI_MAX),
     });
+    persist(get());
+  },
+
+  setPreferNativeApps(on) {
+    set({ preferNativeApps: on });
+    persist(get());
+  },
+
+  setLinkBrowser(browser) {
+    set({ linkBrowser: browser });
     persist(get());
   },
 }));

@@ -4,7 +4,6 @@
 import React, { useMemo, useState } from "react";
 import {
   Image,
-  Linking,
   Pressable,
   Share,
   StyleSheet,
@@ -15,6 +14,7 @@ import {
   View,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import { openLinkOrThrow } from "../lib/openLink";
 import {
   Bot,
   Check,
@@ -516,7 +516,7 @@ export function AddAgentFlow({
           <PrimaryButton
             label="Open setup guide"
             onPress={() =>
-              void Linking.openURL(guideUrl).catch((error) =>
+              void openLinkOrThrow(guideUrl).catch((error) =>
                 toastErr("Couldn't open setup guide", error),
               )
             }
@@ -557,7 +557,7 @@ export function AddAgentFlow({
           accessibilityLabel="Open full setup guide"
           style={styles.guideLink}
           onPress={() =>
-            void Linking.openURL(guideUrl).catch((error) =>
+            void openLinkOrThrow(guideUrl).catch((error) =>
               toastErr("Couldn't open setup guide", error),
             )
           }

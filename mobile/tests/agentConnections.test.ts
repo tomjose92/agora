@@ -1,6 +1,7 @@
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { Linking, Share, Text } from "react-native";
+import { Share, Text } from "react-native";
+import * as WebBrowser from "expo-web-browser";
 import * as Clipboard from "expo-clipboard";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, ApiProvider, keys } from "@agora/core";
@@ -290,7 +291,9 @@ test("success state shows the supplied token and remote socket address", () => {
 });
 
 test("local success opens the origin-hosted guide without a socket address", async () => {
-  const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+  const open = jest.spyOn(WebBrowser, "openBrowserAsync").mockResolvedValue({
+    type: WebBrowser.WebBrowserResultType.OPENED,
+  });
   const tree = renderFlow(
     new RecordingApi(),
     React.createElement(AddAgentFlow, {

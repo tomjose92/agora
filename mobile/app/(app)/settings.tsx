@@ -18,9 +18,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { keys, useApi } from "@agora/core";
 import type { Me } from "@agora/core";
 import { ArmedButton } from "../../src/components/ArmedButton";
+import { LinkPreferences } from "../../src/components/LinkPreferences";
 import { toast, toastErr } from "../../src/components/Toast";
 import { compareVersions, lookupStoreVersion } from "../../src/lib/appVersion";
+import { openLink } from "../../src/lib/openLink";
 import { colors } from "../../src/lib/theme";
+import { usePrefs } from "../../src/state/prefs";
 import { useSession } from "../../src/state/session";
 
 function Section({
@@ -120,6 +123,10 @@ export default function SettingsScreen() {
   const signOut = useSession((s) => s.signOut);
   const forgetServer = useSession((s) => s.forgetServer);
   const instanceAdmin = useSession((s) => s.instanceAdmin);
+  const preferNativeApps = usePrefs((s) => s.preferNativeApps);
+  const linkBrowser = usePrefs((s) => s.linkBrowser);
+  const setPreferNativeApps = usePrefs((s) => s.setPreferNativeApps);
+  const setLinkBrowser = usePrefs((s) => s.setLinkBrowser);
   const me = useQuery({
     queryKey: keys.me,
     queryFn: () => api.get<Me>("/api/me"),
@@ -149,6 +156,8 @@ export default function SettingsScreen() {
               ? [
                   {
                     text: "Open App Store",
+                    // Preserve the OS-level App Store handoff instead of applying
+                    // the user's browser fallback preference to this system link.
                     onPress: () => void Linking.openURL(listing.url),
                   },
                 ]
@@ -256,6 +265,15 @@ export default function SettingsScreen() {
           </View>
         </Section>
 
+        <Section title="Links">
+          <LinkPreferences
+            preferNativeApps={preferNativeApps}
+            browser={linkBrowser}
+            onPreferNativeAppsChange={setPreferNativeApps}
+            onBrowserChange={setLinkBrowser}
+          />
+        </Section>
+
         <Section title="About">
           <View style={styles.row}>
             <View style={{ flex: 1 }}>
@@ -280,7 +298,7 @@ export default function SettingsScreen() {
             <Pressable
               style={styles.linkBtn}
               onPress={() =>
-                void Linking.openURL(
+                void openLink(
                   "https://tomjose92.github.io/agora/privacy.html",
                 )
               }
@@ -291,7 +309,7 @@ export default function SettingsScreen() {
             <Pressable
               style={styles.linkBtn}
               onPress={() =>
-                void Linking.openURL("https://tomjose92.github.io/agora/")
+                void openLink("https://tomjose92.github.io/agora/")
               }
             >
               <Text style={styles.linkBtnText}>Support</Text>

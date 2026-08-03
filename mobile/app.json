@@ -27,7 +27,13 @@
             }
           }
         },
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "LSApplicationQueriesSchemes": [
+          "comgooglemaps",
+          "vnd.youtube",
+          "googlechrome",
+          "googlechromes"
+        ]
       }
     },
     "android": {
@@ -51,6 +57,7 @@
     },
     "plugins": [
       "expo-router",
+      "./plugins/withAndroidLinkQueries.js",
       "expo-secure-store",
       "expo-sharing",
       "expo-image",
