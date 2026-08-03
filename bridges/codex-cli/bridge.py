@@ -56,6 +56,7 @@ MAX_AVATAR_BYTES = 2 * 1024 * 1024
 MAX_ATTACHMENTS = 5
 MAX_INBOUND_ATTACHMENT_BYTES = 512 * 1024 * 1024
 ATTACHMENT_FETCH_TIMEOUT = 30
+MIN_DOWNLOAD_RATE_BYTES_PER_SECOND = 1024 * 1024
 ATTACH_SENTINEL = "<<<AGORA_ATTACH>>>"
 ATTACH_PROMPT_SUFFIX = (
     "\n\n(Attachment note from the relay: to send a generated image, end your reply "
@@ -442,7 +443,11 @@ def _download_attachment(http_base: str, token: str, agent_id: str, att: dict, p
     url = f"{http_base}/agent/files/{file_id}?{urlencode({'agent_id': agent_id})}"
     request = Request(url, headers={"Authorization": f"Bearer {token}"})
     written = 0
-    deadline = time.monotonic() + ATTACHMENT_FETCH_TIMEOUT
+    deadline = (
+        time.monotonic()
+        + ATTACHMENT_FETCH_TIMEOUT
+        + expected / MIN_DOWNLOAD_RATE_BYTES_PER_SECOND
+    )
     try:
         with _NO_REDIRECT_OPENER.open(request, timeout=ATTACHMENT_FETCH_TIMEOUT) as response, path.open("wb") as output:
             read = getattr(response, "read1", response.read)
@@ -469,8 +474,8 @@ def materialize_attachments(attachments: list, dest_dir: Path, http_base: str = 
     """Write inlined attachment bytes into ``dest_dir`` for Codex to read.
 
     The hub inlines files up to a size cap as base64 (``data_b64``); larger
-    ones arrive as name-only refs with no bytes. Returns ``(saved, images,
-    notes)``: the saved paths, the subset that are images (attached to the run
+    ones carry an id that this bridge fetches over authenticated HTTP. Returns
+    ``(saved, images, notes)``: the saved paths, the subset that are images (attached to the run
     via ``codex -i`` so the model actually sees them), and human/agent-readable
     note lines describing every attachment to append to the prompt.
     """

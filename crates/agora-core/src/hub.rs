@@ -1185,8 +1185,8 @@ impl Hub {
             ),
             None => channel["name"].as_str().unwrap_or("?").to_string(),
         };
-        // Inline attachment bytes (base64) so remote agents don't need HTTP
-        // reachability back to us; oversized files ride as name-only refs.
+        // Inline small attachment bytes (base64); oversized files carry an id
+        // that dial-in bridges can fetch through the authenticated agent route.
         let mut atts = Vec::new();
         for f in message["attachments"].as_array().cloned().unwrap_or_default() {
             let file_id = f["id"].as_str().unwrap_or_default();

@@ -27,10 +27,13 @@ class AttachmentFetchTests(unittest.TestCase):
     def test_fetches_missing_inline_bytes_and_cleans_truncation(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"image")):
             saved, images, _notes = bridge.materialize_attachments(
-                [{"id": "f1", "filename": "x.png", "mime": "image/png", "size": 5}],
+                [{"id": "f/1", "filename": "x.png", "mime": "image/png", "size": 5}],
                 Path(tmp), "http://host", "token", "cursor-cli")
             self.assertEqual(saved, images)
             self.assertEqual(saved[0].read_bytes(), b"image")
+            request = bridge._NO_REDIRECT_OPENER.open.call_args.args[0]
+            self.assertEqual(request.full_url, "http://host/agent/files/f%2F1?agent_id=cursor-cli")
+            self.assertEqual(request.headers["Authorization"], "Bearer token")
         with tempfile.TemporaryDirectory() as tmp, patch.object(bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"short")):
             saved, images, notes = bridge.materialize_attachments(
                 [{"id": "f1", "filename": "x.png", "mime": "image/png", "size": 6}],
@@ -39,6 +42,7 @@ class AttachmentFetchTests(unittest.TestCase):
             self.assertIn("downloaded size mismatch", notes[0])
 
     def test_refuses_redirects_and_enforces_total_deadline(self):
+        self.assertEqual(bridge.ATTACHMENT_FETCH_TIMEOUT + (100 * 1024 * 1024) / bridge.MIN_DOWNLOAD_RATE_BYTES_PER_SECOND, 130)
         self.assertIsNone(bridge._NoRedirectHandler().redirect_request(Mock(), None, 302, "Found", {}, "https://elsewhere/file"))
         with tempfile.TemporaryDirectory() as tmp, patch.object(bridge.time, "monotonic", side_effect=[0, 31]), patch.object(bridge._NO_REDIRECT_OPENER, "open") as fetch:
             fetch.return_value.__enter__.return_value.read1.return_value = b"image"

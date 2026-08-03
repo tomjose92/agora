@@ -38,6 +38,10 @@ class AttachmentFetchTests(unittest.TestCase):
             )
             self.assertEqual(saved[0].read_bytes(), b"video")
             self.assertIn("Authorization", fetch.call_args.args[0].headers)
+            self.assertEqual(
+                fetch.call_args.args[0].full_url,
+                "https://example.test/agent/files/f%2F1?agent_id=claude-cli",
+            )
             self.assertIn("5 bytes", notes[0])
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             bridge._NO_REDIRECT_OPENER, "open", return_value=FakeResponse(b"short")
@@ -51,6 +55,11 @@ class AttachmentFetchTests(unittest.TestCase):
             self.assertIn("downloaded size mismatch", notes[0])
 
     def test_refuses_redirects_and_enforces_total_transfer_deadline(self):
+        self.assertEqual(
+            bridge.ATTACHMENT_FETCH_TIMEOUT
+            + (100 * 1024 * 1024) / bridge.MIN_DOWNLOAD_RATE_BYTES_PER_SECOND,
+            130,
+        )
         self.assertIsNone(bridge._NoRedirectHandler().redirect_request(
             Mock(), None, 302, "Found", {}, "https://elsewhere.test/file"
         ))
