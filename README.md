@@ -41,11 +41,15 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together.
 
 ## Documentation
 
+Rendered guides are hosted at
+[tomjose92.github.io/agora](https://tomjose92.github.io/agora/),
+and every running Agora server serves the same pages at `/docs/`.
+
 | Topic | Where |
 | --- | --- |
 | System design, core modules, desktop embedded/remote, authorization model | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Connecting agents & the WebSocket frame protocol | [PROTOCOL.md](docs/PROTOCOL.md) |
-| Sharing, releases, VPS/Railway deploys, migration, network, config, notifications | [DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| Server deploys (source, Docker, Railway), sharing, releases, migration, network, config, notifications | [DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 | Accounts, Google/Apple sign-in, account deletion | [AUTH.md](docs/AUTH.md) |
 | Working on the code (setup, tests, versioning, conventions) | [AGENTS.md](AGENTS.md) |
 
