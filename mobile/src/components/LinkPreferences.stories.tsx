@@ -27,4 +27,4 @@ const args = {
 export const InApp: Story = { args, render: () => <Demo /> };
 export const SystemWithoutNativeApps: Story = { args, render: () => <Demo initialBrowser="system" initialNative={false} /> };
 export const ChromeInstalled: Story = { args, render: () => <Demo initialBrowser="chrome" /> };
-export const ChromeUnavailable: Story = { args, render: () => <Demo chromeAvailable={false} /> };
+export const ChromeUnavailable: Story = { args, render: () => <Demo initialBrowser="chrome" chromeAvailable={false} /> };

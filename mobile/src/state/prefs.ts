@@ -79,7 +79,10 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         recentEmoji: Array.isArray(data.recentEmoji)
           ? data.recentEmoji.filter((c) => typeof c === "string").slice(0, RECENT_EMOJI_MAX)
           : [],
-        preferNativeApps: data.preferNativeApps ?? true,
+        preferNativeApps:
+          typeof data.preferNativeApps === "boolean"
+            ? data.preferNativeApps
+            : true,
         linkBrowser: ["in-app", "system", "chrome"].includes(data.linkBrowser ?? "")
           ? data.linkBrowser as LinkBrowser
           : "in-app",

@@ -1,6 +1,6 @@
 const { withAndroidManifest } = require("@expo/config-plugins");
 
-const schemes = ["comgooglemaps", "vnd.youtube"];
+const schemes = ["geo", "google.navigation", "vnd.youtube"];
 
 module.exports = function withAndroidLinkQueries(config) {
   return withAndroidManifest(config, (result) => {

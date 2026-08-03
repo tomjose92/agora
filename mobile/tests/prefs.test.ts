@@ -32,6 +32,12 @@ it("defaults new link preferences when an old prefs file has no keys", async () 
   });
 });
 
+it("rejects non-boolean native-app preferences from a corrupt file", async () => {
+  mockRead.mockResolvedValue(JSON.stringify({ preferNativeApps: "false" }));
+  await usePrefs.getState().load();
+  expect(usePrefs.getState().preferNativeApps).toBe(true);
+});
+
 it("does not wedge loading when the prefs file is corrupt", async () => {
   mockRead.mockResolvedValue("not json");
   await usePrefs.getState().load();

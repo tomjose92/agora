@@ -23,12 +23,20 @@ export function LinkPreferences({
     void isChromeAvailable().then(setDetectedChrome).catch(() => setDetectedChrome(false));
   }, [givenChromeAvailable]);
   const chromeAvailable = givenChromeAvailable ?? detectedChrome;
-  const choices: { value: LinkBrowser; label: string; detail: string }[] = [
+  const choices: {
+    value: LinkBrowser;
+    label: string;
+    detail: string;
+    disabled?: boolean;
+  }[] = [
     { value: "in-app", label: "In-app browser", detail: "Stay inside Agora" },
     { value: "system", label: "System browser", detail: "Your device default" },
-    ...(chromeAvailable
-      ? [{ value: "chrome" as const, label: "Chrome", detail: "Open with Google Chrome" }]
-      : []),
+    {
+      value: "chrome",
+      label: "Chrome",
+      detail: chromeAvailable ? "Open with Google Chrome" : "Not installed",
+      disabled: !chromeAvailable,
+    },
   ];
 
   return (
@@ -51,8 +59,9 @@ export function LinkPreferences({
           <Pressable
             key={choice.value}
             accessibilityRole="radio"
-            accessibilityState={{ selected }}
-            style={styles.choice}
+            accessibilityState={{ checked: selected, disabled: choice.disabled }}
+            disabled={choice.disabled}
+            style={[styles.choice, choice.disabled && styles.choiceDisabled]}
             onPress={() => onBrowserChange(choice.value)}
           >
             <View style={[styles.radio, selected && styles.radioSelected]} />
@@ -72,6 +81,7 @@ const styles = StyleSheet.create({
   nativeRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14 },
   heading: { color: colors.dim, fontSize: 11, fontWeight: "800", textTransform: "uppercase", paddingHorizontal: 14, paddingTop: 6 },
   choice: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 11 },
+  choiceDisabled: { opacity: 0.45 },
   copy: { flex: 1 },
   name: { color: colors.text, fontSize: 14, fontWeight: "700" },
   meta: { color: colors.dim, fontSize: 12, marginTop: 2 },

@@ -8,7 +8,10 @@ import * as WebBrowser from "expo-web-browser";
 import { Linking, Platform } from "react-native";
 import { usePrefs, type LinkBrowser } from "../state/prefs";
 
-export function nativeAppUrl(raw: string): string | null {
+export function nativeAppUrl(
+  raw: string,
+  platform: typeof Platform.OS = Platform.OS,
+): string | null {
   try {
     const url = new URL(raw);
     const host = url.hostname.toLowerCase();
@@ -19,13 +22,17 @@ export function nativeAppUrl(raw: string): string | null {
     ) {
       if (url.pathname.startsWith("/maps/search")) {
         const query = url.searchParams.get("query");
-        return query ? `comgooglemaps://?q=${encodeURIComponent(query)}` : null;
+        if (!query) return null;
+        return platform === "android"
+          ? `geo:0,0?q=${encodeURIComponent(query)}`
+          : `comgooglemaps://?q=${encodeURIComponent(query)}`;
       }
       if (url.pathname.startsWith("/maps/dir")) {
         const destination = url.searchParams.get("destination");
-        return destination
-          ? `comgooglemaps://?daddr=${encodeURIComponent(destination)}&directionsmode=driving`
-          : null;
+        if (!destination) return null;
+        return platform === "android"
+          ? `google.navigation:q=${encodeURIComponent(destination)}`
+          : `comgooglemaps://?daddr=${encodeURIComponent(destination)}`;
       }
       return null;
     }
@@ -57,7 +64,7 @@ export async function isChromeAvailable(): Promise<boolean> {
   if (Platform.OS === "ios") return Linking.canOpenURL("googlechrome://");
   if (Platform.OS === "android") {
     const browsers = await WebBrowser.getCustomTabsSupportingBrowsersAsync();
-    return browsers.servicePackages.includes("com.android.chrome");
+    return (browsers.servicePackages ?? []).includes("com.android.chrome");
   }
   return false;
 }

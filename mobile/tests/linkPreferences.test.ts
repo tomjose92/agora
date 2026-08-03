@@ -2,7 +2,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { LinkPreferences } from "../src/components/LinkPreferences";
 
-it("shows Chrome only when installed and reports browser selections", () => {
+it("reports browser selections and disables unavailable Chrome", () => {
   const change = jest.fn();
   let tree: TestRenderer.ReactTestRenderer;
   act(() => {
@@ -30,7 +30,31 @@ it("shows Chrome only when installed and reports browser selections", () => {
       chromeAvailable: false,
     }));
   });
-  expect(tree!.root.findAll((node) =>
+  const unavailable = tree!.root.findAll((node) =>
     node.props.accessibilityRole === "radio" && typeof node.props.onPress === "function"
-  )).toHaveLength(2);
+  );
+  expect(unavailable).toHaveLength(3);
+  expect(unavailable[2].props.accessibilityState).toMatchObject({ disabled: true });
+});
+
+it("keeps a stored Chrome choice selected when Chrome is unavailable", () => {
+  let tree: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(LinkPreferences, {
+      preferNativeApps: true,
+      browser: "chrome",
+      onPreferNativeAppsChange: () => {},
+      onBrowserChange: () => {},
+      chromeAvailable: false,
+    }));
+  });
+  const chrome = tree!.root.findAll((node) =>
+    node.props.accessibilityRole === "radio" &&
+    typeof node.props.onPress === "function"
+  )[2];
+  expect(chrome.props.accessibilityState).toMatchObject({
+    checked: true,
+    disabled: true,
+  });
+  expect(JSON.stringify(tree!.toJSON())).toContain("Not installed");
 });
