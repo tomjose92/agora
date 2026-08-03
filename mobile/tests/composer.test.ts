@@ -4,7 +4,7 @@ import { Image, Platform, StyleSheet, Text, TextInput, View } from "react-native
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
 import { Composer, withinUploadLimit } from "../src/components/Composer";
-import { Attachments } from "../src/components/Attachments";
+import { Attachments, VideoAttachment } from "../src/components/Attachments";
 import { useMessageDrafts } from "@agora/core";
 
 jest.mock("expo-file-system/legacy", () => ({
@@ -477,6 +477,20 @@ test("sent video attachments render an authenticated native player", () => {
     uri: "https://example.invalid/api/files/video",
     headers: { Authorization: "Bearer test" },
   });
+  act(() => tree.unmount());
+});
+
+test("failed native video playback falls back to a file card", () => {
+  let tree!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    tree = TestRenderer.create(React.createElement(Attachments, {
+      session: { baseUrl: "https://example.invalid", token: "test" },
+      attachments: [{ id: "video-error", filename: "broken.mp4", mime: "video/mp4", size: 24_000_000 }],
+    }));
+  });
+  act(() => tree.root.findByType(VideoAttachment).props.onError());
+  expect(tree.root.findAllByProps({ testID: "video-view" })).toHaveLength(0);
+  expect(tree.root.findByProps({ children: "broken.mp4" })).toBeDefined();
   act(() => tree.unmount());
 });
 

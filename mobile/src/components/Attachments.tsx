@@ -57,7 +57,7 @@ function FileChip({ session, att }: { session: Session; att: Attachment }) {
 
 const NATIVE_VIDEO = /^video\/(mp4|quicktime|webm)(?:;|$)/i;
 
-function VideoAttachment({ session, att, onError }: {
+export function VideoAttachment({ session, att, onError }: {
   session: Session; att: Attachment; onError: () => void;
 }) {
   const player = useVideoPlayer({ uri: fileUrl(session, att.id), headers: authHeaders(session) });

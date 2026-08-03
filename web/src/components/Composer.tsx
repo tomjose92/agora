@@ -159,7 +159,9 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
       toast("Empty files cannot be uploaded", { variant: "warn" });
     }
     if (allowed.length < nonEmpty.length) {
-      toast(`File too large (videos max ${me?.max_video_mb ?? me?.max_file_mb} MB; other files max ${me?.max_file_mb} MB)`, { variant: "warn" });
+      const messages = new Set(nonEmpty.filter(file => !allowed.includes(file)).map(file =>
+        droppedTooLargeMessage(file.type, me?.max_file_mb, me?.max_video_mb)));
+      toast(messages.size === 1 ? [...messages][0] : "Some files exceed their upload limit", { variant: "warn" });
     }
     const result = useAttachmentDrafts.getState().stage(
       draftKey,
@@ -197,7 +199,7 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
     // reject metadata that already proves the drop cannot be materialized.
     const allowed = dropped.filter((file) => file.size <= dropMaxBytesFor(file));
     if (allowed.length < dropped.length) {
-      const rejected = dropped.filter(file => file.size > 0 && file.size > dropMaxBytesFor(file));
+      const rejected = dropped.filter(file => file.size > dropMaxBytesFor(file));
       const messages = new Set(rejected.map(file =>
         droppedTooLargeMessage(file.type, me?.max_file_mb, me?.max_video_mb)));
       toast(messages.size === 1 ? [...messages][0] : "Large files must be attached with the paperclip",

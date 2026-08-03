@@ -8,6 +8,7 @@ describe("attachment upload limits", () => {
     expect(uploadMaxBytes("video/x-matroska", 10, 100)).toBe(10 * 1024 * 1024);
     expect(uploadMaxBytes("video/mp4", 10, undefined)).toBe(10 * 1024 * 1024);
     expect(uploadMaxBytes("video/mp4", undefined, undefined)).toBeUndefined();
+    expect(uploadMaxBytes("video/mp4", 10, 0)).toBe(10 * 1024 * 1024);
   });
 
   it("directs heap-clamped video drops to the paperclip", () => {
