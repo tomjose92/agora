@@ -9,6 +9,8 @@ on:
       - "packages/**"
       - "package.json"
       - "package-lock.json"
+      - "scripts/build-docs.mjs"
+      - "scripts/docs-site/**"
       - ".github/workflows/deploy-storybook-pages.yml"
   workflow_dispatch:
 
@@ -35,10 +37,11 @@ jobs:
       - run: npm ci
       - name: Build Storybook
         run: npm run build-storybook -w web
-      - name: Assemble support site and Storybook
+      - name: Assemble docs site and Storybook
         run: |
+          node scripts/build-docs.mjs --out _site --flavor pages
+          cp -a web/public/docs/coding-agents _site/coding-agents
           mkdir -p _site/storybook
-          cp -a docs/. _site/
           cp -a web/storybook-static/. _site/storybook/
       - name: Upload Pages site
         uses: actions/upload-pages-artifact@v4

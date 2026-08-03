@@ -27,7 +27,8 @@ document.title = `${guide.name} for Agora`;
 document.querySelector("#docs-root").innerHTML = `
   <div class="docs-shell">
     <aside class="docs-nav">
-      <a class="docs-brand" href="/"><img src="/icon.png" alt=""><span>Agora</span></a>
+      <a class="docs-brand" href="../"><img src="../icon.png" alt=""><span>Agora</span></a>
+      <a class="docs-eyebrow docs-index-link" href="../">All documentation</a>
       <a class="docs-eyebrow docs-index-link" href="./">Coding agents</a>
       <nav class="docs-nav-list docs-guide-switcher">${guideLinks}</nav>
       <div class="docs-eyebrow docs-page-label">On this page</div>

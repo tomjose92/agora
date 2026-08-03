@@ -7,3 +7,7 @@ scripts
 data
 .git
 *.md
+# The web build renders docs/site/*.md into dist/docs via scripts/build-docs.mjs.
+!docs/site/*.md
+!scripts/build-docs.mjs
+!scripts/docs-site/**

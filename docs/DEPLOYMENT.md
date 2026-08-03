@@ -2,83 +2,55 @@
 
 # Deployment & operations
 
-Sharing the app, shipping releases, running a shared server, moving data
-between instances, network hardening, configuration, and notifications.
+How to get an Agora server running and configured: three recipes (source,
+Docker, Railway), the config reference, and the operational essentials.
+For how the system works, see [ARCHITECTURE.md](ARCHITECTURE.md); for
+accounts and sign-in, [AUTH.md](AUTH.md).
 
-## Sharing the desktop app
+Pick the recipe that matches your setup:
 
-Linux releases include an x86-64 Debian package and AppImage. Install the
-Debian package with `sudo apt install ./Agora_*.deb`, or mark the AppImage
-executable and launch it directly. The AppImage bundles its media framework
-for consistent voice and audio playback; Debian resolves WebKitGTK and GTK
-through package dependencies.
+| You want | Recipe |
+| --- | --- |
+| The macOS desktop app for yourself | Quick start in the [README](../README.md) |
+| A headless server on your own machine or VPS | [Run the server from source](#run-the-server-from-source) |
+| A container on any Docker host | [Run the server with Docker](#run-the-server-with-docker) |
+| A managed deploy with TLS and a public URL | [Deploying on Railway (or any Docker PaaS)](#deploying-on-railway-or-any-docker-paas) |
 
-WSL2 with WSLg is suitable for development and internal use, but notification
-and tray integration depend on the Windows/WSLg environment. WSL1 and
-headless WSL are unsupported. Agora detects WSL and applies the WebKit
-DMA-BUF renderer workaround unless the user has already configured that
-environment variable.
+The user-facing version of this material lives in the hosted docs at
+<https://tomjose92.github.io/agora/> (also served by every running server at
+`/docs/`); this file keeps the full operator detail.
 
-### macOS distribution
+## Run the server from source
 
-The `.app` this repo builds is ad-hoc signed — fine for your own machine, but
-another Mac's Gatekeeper will refuse it ("damaged / unidentified developer").
-Your options, in increasing order of effort:
-
-1. **They build it themselves** from source (the Quick start in the README). No
-   signing hassle; Gatekeeper trusts locally built apps.
-2. **Send the `.app` anyway** and have them clear quarantine once:
-   `xattr -dr com.apple.quarantine /Applications/Agora.app` (or right-click →
-   Open). Works, but it's a rough install experience and notifications stay
-   unreliable (see below).
-3. **Sign and notarize properly** — the real answer for distribution. Needs an
-   Apple Developer account ($99/yr): set `bundle.macOS.signingIdentity` in
-   `crates/agora-desktop/tauri.conf.json` to your *Developer ID Application*
-   certificate, then notarize the DMG (`xcrun notarytool`). Tauri automates
-   most of this; see [Tauri's macOS signing guide](https://v2.tauri.app/distribute/sign/macos/).
-   This is also the path that ends at the Mac App Store, and later the iOS
-   App Store (same codebase — Tauri v2 compiles to iOS/Android).
-
-## Releases and auto-update
-
-Versioned releases are built by CI
-([.github/workflows/release-desktop.yml](../.github/workflows/release-desktop.yml)):
-merging a version bump builds a universal macOS DMG plus Linux Debian and
-AppImage packages. Each platform uploads to a draft release in sequence, then
-CI publishes one combined signed updater feed only after every artifact is
-ready. The macOS app and Linux AppImage check that feed on every launch
-(silently installing updates for the next start) and on demand via
-**Agora → Check for Updates…** in the app menu, which walks through native
-install/restart dialogs. Debian installs update through their package
-distributor and do not expose the direct updater. Local
-`scripts/redeploy.sh` builds compile the updater out (`--no-default-features`)
-so a dev install is never silently replaced by a published release. Updater
-artifacts are signed with the project's updater key (`plugins.updater.pubkey`
-in `tauri.conf.json`); CI needs the private key in the
-`TAURI_SIGNING_PRIVATE_KEY` repo secret. Until the Apple signing secrets are
-configured the workflow ad-hoc signs, so downloads still hit Gatekeeper —
-options 1/2 above apply. A Mac App Store build must exclude the updater:
-`--no-default-features` on `agora-desktop` compiles it out.
-If a draft release becomes stuck or contains unusable artifacts, delete that
-draft and re-run the release workflow so it can rebuild from a clean release.
-
-Each installed app is its **own Agora** — own database, own groups. Two people
-running the desktop app have two separate chat worlds that can talk to the
-*same* Pantheo agents (each adds a connection to the same instance), but they
-don't see each other's messages. A *shared* room for multiple people is what a
-server deployment is for.
-
-## Deploying a shared/always-on Agora (VPS)
-
-Run `agora-server` on a box that never sleeps; agents stay reachable 24/7 and
-any browser (and the mobile app) can open the UI:
+Works on Linux and macOS. **Prerequisites:** Rust (stable) and Node 22+.
 
 ```bash
-# on the server
 cargo build --release -p agora-server
 npm ci && npm run build        # web UI -> web/dist
-sudo mkdir -p /var/lib/agora && sudo cp -r web/dist /var/lib/agora/ui
-./target/release/agora-server --data-dir /var/lib/agora --ui-dir /var/lib/agora/ui
+
+./target/release/agora-server --data-dir /var/lib/agora --ui-dir web/dist
+# Agora ready at http://127.0.0.1:4470
+# Admin key: <printed on first run>
+```
+
+Open `http://127.0.0.1:4470/?token=<admin-key>`. The admin key is printed on
+first boot and stored in `<data-dir>/config.json`.
+
+The binary and the UI directory are self-contained — build on one machine,
+copy `target/release/agora-server` plus `web/dist` to the box that runs them.
+A systemd unit to keep it alive:
+
+```ini
+[Unit]
+Description=Agora
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/agora-server --data-dir /var/lib/agora --ui-dir /var/lib/agora/ui
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 Keep the bind loopback and put a TLS reverse proxy in front (WebSockets need
@@ -97,36 +69,35 @@ server {
 }
 ```
 
-A systemd unit to keep it alive:
+Then share `https://agora.example.com/?token=<admin-key>`, or invite users so
+they sign in with their own accounts — see [AUTH.md](AUTH.md).
 
-```ini
-[Unit]
-Description=Agora
-After=network.target
+## Run the server with Docker
 
-[Service]
-ExecStart=/usr/local/bin/agora-server --data-dir /var/lib/agora --ui-dir /var/lib/agora/ui
-Restart=on-failure
+The repo's [`Dockerfile`](../Dockerfile) bakes the web UI into the image —
+the host needs nothing but Docker.
 
-[Install]
-WantedBy=multi-user.target
+```bash
+docker build -t agora .
+docker run -d --name agora -p 4470:4470 -v agora-data:/data agora
+docker logs agora            # "Admin key: ..." is printed on first boot
 ```
 
-Then share `https://agora.example.com/?token=<admin-key>` (the token is in
-`/var/lib/agora/config.json`), or invite users so they sign in with their own
-accounts — see [AUTH.md](AUTH.md).
+Open `http://127.0.0.1:4470/?token=<admin-key>`. Two things to know:
+
+- **The `/data` volume is mandatory.** Config, database, and uploads live
+  there; without it every container replacement regenerates the admin key
+  and wipes messages.
+- The container does not terminate TLS. Publishing the port beyond localhost
+  needs a TLS reverse proxy in front, exactly as in the source recipe — see
+  [Network exposure](#network-exposure). The image sets `AGORA_BIND=0.0.0.0`
+  and honors `PORT`.
 
 ## Deploying on Railway (or any Docker PaaS)
 
-The repo ships a [`Dockerfile`](../Dockerfile) and [`railway.json`](../railway.json)
-that build the headless server with the web UI bundled. The server honors the
-PaaS conventions: `PORT` (injected by Railway) and `AGORA_BIND` (the image
-defaults it to `0.0.0.0`) override `config.json` at boot. Set
-`AGORA_ADMIN_LOGIN_ENABLED=false` to hide admin-key login controls without
-invalidating the key itself; `true` re-enables them. The conventional
-`1`/`0`, `yes`/`no`, and `on`/`off` spellings are also accepted. Like the other
-`AGORA_*` overrides, the value is written into `config.json`, so unsetting it
-later keeps the last value rather than reverting to the default.
+The repo ships the [`Dockerfile`](../Dockerfile) and
+[`railway.json`](../railway.json); the image follows PaaS conventions
+(`PORT` injected by the platform, `AGORA_BIND=0.0.0.0`).
 
 ```bash
 railway init --name agora
@@ -136,35 +107,51 @@ railway domain                          # get the public https URL
 railway logs                            # "Admin key: ..." is printed on first boot
 ```
 
-Two things matter:
+- **The `/data` volume is mandatory** — same reason as Docker above.
+- **TLS comes free** with the platform domain, so browsers, the mobile app,
+  and dial-in bridges (`wss://.../agent/ws?token=...`) work with no reverse
+  proxy.
+- Optional: `AGORA_ADMIN_LOGIN_ENABLED=false` hides admin-key login controls
+  in the clients without invalidating the key.
 
-- **The `/data` volume is mandatory.** Without it every deploy regenerates the
-  admin key and wipes messages and attachments.
-- **TLS comes free** with the Railway domain, so browsers, the mobile app
-  (`https://<app>.up.railway.app` + admin key), and dial-in bridges
-  (`wss://.../agent/ws?token=...`) all work with no reverse proxy. Outbound
-  Pantheo connections are unaffected — the server dials out from Railway the
-  same as anywhere else; the Pantheo instance just has to be reachable from
-  the internet, not your laptop's localhost.
+## Sharing the desktop app
+
+**Linux** — releases include an x86-64 Debian package and AppImage: install
+with `sudo apt install ./Agora_*.deb`, or mark the AppImage executable and
+launch it directly. WSL2 with WSLg works for development and internal use
+(WSL1 and headless WSL are unsupported).
+
+**macOS** — the locally built `.app` is ad-hoc signed, so another Mac's
+Gatekeeper refuses it. Options, in increasing order of effort:
+
+1. **They build it themselves** (Quick start in the README) — Gatekeeper
+   trusts locally built apps.
+2. **Send the `.app`** and have them clear quarantine once:
+   `xattr -dr com.apple.quarantine /Applications/Agora.app`.
+3. **Sign and notarize** with an Apple Developer account — see
+   [Tauri's macOS signing guide](https://v2.tauri.app/distribute/sign/macos/).
+
+Note each installed app is its **own Agora** (own database, own groups); a
+shared room for multiple people is what a server deployment is for.
+
+## Releases and auto-update
+
+Merging a version bump to `main` publishes a desktop release via
+[release-desktop.yml](../.github/workflows/release-desktop.yml): a universal
+macOS DMG plus Linux Debian and AppImage packages, published together with
+one signed updater feed once every artifact is ready. The macOS app and the
+Linux AppImage self-update from that feed (checked on launch and via
+**Agora → Check for Updates…**); Debian installs update through the package
+itself. Local dev builds compile the updater out, so they are never silently
+replaced. If a draft release gets stuck, delete the draft and re-run the
+workflow.
 
 ## Moving between Agoras
 
-An Agora's data (groups, channels, messages, threads, pins, stars, reads,
-attachments) can be exported as one archive and imported into any other
-instance. Tokens, bind settings, and pairing credentials never migrate —
-each instance keeps its own `config.json`.
-
-- `GET /api/export` (admin key) downloads a `.tar.gz` snapshot — safe on a
-  live server, and handy as a periodic backup.
-- `POST /api/import` (admin key, multipart `archive` field) stages the
-  archive and restarts to apply it. It refuses if the target already has data
-  unless you pass `?replace=true`; the previous data is kept in a
-  `pre-import-<ts>/` folder inside the data dir.
-- `AGORA_IMPORT_URL=<url>` seeds a **fresh** data dir (no `agora.db` yet) by
-  downloading an archive on first boot — useful for a brand-new deployment.
-
-[`scripts/agora_migrate.py`](../scripts/agora_migrate.py) composes those for
-every combination of local data dir and live server:
+An Agora's data can be exported as one archive and imported into any other
+instance (`GET /api/export` / `POST /api/import`, admin key; tokens and bind
+settings never migrate). [`scripts/agora_migrate.py`](../scripts/agora_migrate.py)
+composes those for every combination of local data dir and live server:
 
 ```bash
 # laptop desktop app -> hosted Railway deployment
@@ -176,90 +163,63 @@ scripts/agora_migrate.py \
 scripts/agora_migrate.py --from https://old.example --from-token AAA \
                          --to https://new.example --to-token BBB --replace
 
-# hosted -> local desktop data dir (applied next app launch)
-scripts/agora_migrate.py --from https://agora.up.railway.app --from-token AAA \
-    --to "~/Library/Application Support/app.agora.desktop" --replace
-
 # just take a backup
 scripts/agora_migrate.py --from https://agora.up.railway.app --from-token AAA \
     --save agora-backup.tar.gz
 ```
 
 The typical "graduate my laptop Agora to the cloud" flow: deploy on Railway,
-run the first command above, then flip the desktop app to remote mode
+run the first command, then flip the desktop app to remote mode
 (Server → Server Settings…) and sign the mobile app into the same URL.
 
 ## Network exposure
 
-Agora authenticates every request with the admin key (or a Google session
-token), and it defaults to a **loopback bind** so nothing is reachable off-host
-until you opt in.
-
-- **Binding `0.0.0.0`** (LAN bridges, or the Docker image, which forces it for
-  PaaS routing) puts the API on the network. The admin key is then the *only*
-  thing standing between the internet and full control of the instance, so a
-  `0.0.0.0` deployment **must** sit behind a firewall and a TLS reverse proxy —
-  never expose the raw port directly. On boot the server logs a warning when it
-  binds a non-loopback address.
-- **TLS is not terminated by Agora itself.** Over plaintext `ws://`/`http://`
-  the admin key and every message travel in the clear. Front it with TLS
-  (see the reverse-proxy config above; Railway/PaaS domains give you TLS for
-  free). Outbound Pantheo connections send the instance token as an
-  `Authorization: Bearer` header (not a logged `?token=`), and setting
-  `require_tls` makes the server refuse to dial a non-loopback peer over
-  plaintext.
-- **Rate limiting** on the Google sign-in and upload endpoints is an in-process
-  backstop only. Behind a proxy every request shares the proxy's IP, so keep a
-  real limiter at the edge for internet-facing deployments.
+- The server defaults to a **loopback bind**; nothing is reachable off-host
+  until you set `bind: 0.0.0.0` (the Docker image does).
+- On `0.0.0.0` the admin key is the only thing between the internet and full
+  control — always front it with a firewall and a **TLS reverse proxy**,
+  never expose the raw port. Without TLS the key and every message travel in
+  the clear.
+- The built-in rate limiting is an in-process backstop; keep a real limiter
+  at the edge for internet-facing deployments.
 
 ## Configuration (`config.json` in the data dir)
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `admin_key` | generated | Operator credential for the UI/REST API (`?token=` or `Authorization: Bearer`). Resolves to an instance-admin user. |
-| `admin_login_enabled` | `true` | Set to `false` (or use `AGORA_ADMIN_LOGIN_ENABLED=false`) to hide admin-key login controls in web/desktop and mobile clients; the key itself remains valid. |
-| `session_secret` | generated | Signs the session tokens minted by Google/Apple sign-in; rotate it to sign everyone out. |
+| `admin_key` | generated | Operator credential for the UI/REST API (`?token=` or `Authorization: Bearer`). |
+| `admin_login_enabled` | `true` | `false` hides admin-key login controls in the clients (env: `AGORA_ADMIN_LOGIN_ENABLED`). |
+| `session_secret` | generated | Signs session tokens; rotate it to sign everyone out. |
 | `username` | `me` | Display name of the bootstrap local user. |
-| `bind` | `127.0.0.1` | Set `0.0.0.0` to accept LAN/remote agent bridges. See [Network exposure](#network-exposure). |
-| `port` | `4470` | Falls back to an ephemeral port if taken. |
-| `require_tls` | `false` | Refuse plaintext `ws://`/`http://` outbound connections to non-loopback hosts (the token would travel in the clear). |
+| `bind` | `127.0.0.1` | `0.0.0.0` accepts LAN/remote connections — see [Network exposure](#network-exposure). |
+| `port` | `4470` | Falls back to an ephemeral port if taken (env: `PORT`). |
+| `require_tls` | `false` | Refuse plaintext outbound connections to non-loopback hosts. |
 | `connections` | `[]` | Outbound Pantheo endpoints (managed from the UI). |
 | `pairing_tokens` | `[]` | Dial-in bridge credentials (managed from the UI). |
 | `max_file_mb` | `10` | Per-attachment upload cap. |
-| `max_video_mb` | `100` | Per-attachment cap for recognized MP4, MOV, M4V, and WebM containers. |
-| `google_client_id` | `""` | Google OAuth client id (see [AUTH.md](AUTH.md#google-sign-in)). |
+| `max_video_mb` | `100` | Cap for recognized video containers (MP4, MOV, M4V, WebM). |
+| `google_client_id` | `""` | Google OAuth client id — see [AUTH.md](AUTH.md#google-sign-in). |
 | `google_client_secret` | `""` | Google OAuth client secret. |
-| `google_allowed_emails` | `[]` | Google accounts allowed to sign in (fallback admission when no invite matches). Empty keeps Google sign-in off. |
-| `apple_allowed_emails` | `[]` | Apple-account emails allowed to sign in (see [AUTH.md](AUTH.md#sign-in-with-apple)). Empty keeps Apple sign-in off. |
-| `apple_bundle_id` | `""` | iOS bundle id the Apple identity token must be issued for. Empty means the stock app (`app.agora.mobile`). |
-| `public_url` | `""` | Public https origin (behind a proxy) used to build the OAuth redirect URI. |
-| `map_style_url` | `""` | MapLibre style URL (vector tiles + style JSON) used to render map artifacts. Empty uses the built-in default ([OpenFreeMap Liberty](https://openfreemap.org) — free, no API key; note clients fetch tiles from that third-party host). Set your own style URL to self-host, or `"none"` to disable external tiles and draw the coordinate-only fallback. Agents never supply tiles, so hosting/licensing stays an operator choice. |
+| `google_allowed_emails` | `[]` | Google accounts allowed to sign in; empty keeps Google sign-in off. |
+| `apple_allowed_emails` | `[]` | Apple emails allowed to sign in — see [AUTH.md](AUTH.md#sign-in-with-apple). |
+| `apple_bundle_id` | `""` | iOS bundle id for Apple sign-in; empty means the stock app. |
+| `public_url` | `""` | Public https origin used to build the OAuth redirect URI. |
+| `map_style_url` | `""` | MapLibre style URL for map artifacts; empty uses the built-in default, `"none"` disables external tiles. |
+
+`AGORA_*` environment overrides are written into `config.json` at boot, so
+unsetting one later keeps the last value rather than reverting.
 
 ## Notifications
 
-Agent replies that land while nobody is looking pop native banners. What
-"looking" and "instant" mean depends on the client:
+Agent replies that land while nobody is looking pop native banners: the
+desktop app notifies while unfocused, and the mobile app gets instant remote
+push (Expo → APNs/FCM) when backgrounded, with tap-to-open and unread
+badges. Two requirements:
 
-| Client | While the app is open | While it's backgrounded / closed |
-| --- | --- | --- |
-| Desktop, embedded mode | Banner when the window is unfocused or hidden (in-process hub notifier). | Same — the hub keeps running after the window closes; Cmd-Q on macOS or the Linux tray's Quit action stops it. |
-| Desktop, remote mode | Banner when unfocused, via the shell's own event socket to the remote server (per-channel throttle, same title shape). | Same, as long as the app is running (closing the window only hides it). |
-| iOS / Android app | No banner while focused (socket still updates the UI). | Instant remote push via Expo → APNs/FCM for agent messages. The app registers an Expo push token at `POST /api/push-tokens`; `agora-server` fans out on notify-worthy messages (per-channel throttle). If push registration fails (simulator, denied permission), a background unread poll remains as fallback. |
-| Browser tab | Nothing (no notification path). | Nothing. |
-
-Tapping a mobile banner opens the channel (or thread) it came from, and the
-app icon badge tracks total unread across devices.
-
-Remote push needs a paid Apple Developer Program membership for iOS (APNs
-entitlement + EAS push credentials) and a native rebuild after enabling the
-`expo-notifications` plugin. Sign-out calls `DELETE /api/push-tokens` so the
-server stops waking that device.
-
-**macOS signing requirement:** banners post through the modern
-`UNUserNotificationCenter` framework, and macOS only delivers those for apps
-with a **stable code signature** — a plain ad-hoc build gets "notifications
-are not allowed for this application". For local development, sign the bundle
-with a self-signed code-signing certificate (create one in Keychain Access,
-then `codesign --force --deep --sign "Agora Dev" /Applications/Agora.app`);
-for distribution, the Developer ID signature covers it. On first properly
-signed launch, macOS shows the usual "allow notifications?" prompt.
+- **iOS push** needs a paid Apple Developer membership (APNs entitlement)
+  and a native rebuild with the `expo-notifications` plugin enabled.
+- **macOS banners** need a stable code signature — an ad-hoc build gets
+  "notifications are not allowed". For local dev:
+  `codesign --force --deep --sign "Agora Dev" /Applications/Agora.app`
+  (self-signed cert created in Keychain Access); a Developer ID signature
+  covers distribution.

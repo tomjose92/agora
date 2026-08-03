@@ -11,5 +11,8 @@
     "test": "npm run test -w packages/core",
     "test:worktree": "bash scripts/worktree.test.sh",
     "typecheck": "npm run typecheck -w packages/core && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "marked": "^18.0.7"
   }
 }

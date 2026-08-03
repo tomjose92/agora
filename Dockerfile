@@ -11,11 +11,15 @@ COPY crates ./crates
 RUN cargo build --release -p agora-server
 
 # The web UI is built from source (web/ + packages/core), never committed.
+# scripts/ + docs/ feed the web build's docs step (scripts/build-docs.mjs
+# renders docs/*.md into dist/docs, served by the server at /docs/).
 FROM node:22-bookworm-slim AS web-build
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY packages ./packages
 COPY web ./web
+COPY scripts ./scripts
+COPY docs ./docs
 RUN npm ci --no-audit --no-fund && npm run build -w web
 
 FROM debian:bookworm-slim

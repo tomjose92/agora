@@ -36,8 +36,13 @@ profile builder label chats with the Agora's name).
 
 ## Third-party agents (dial-in, pairing tokens)
 
-Anything that can open a WebSocket can be an Agora agent — an OpenClaw or
-Hermes wrapper, a shell script, whatever:
+Ready-made bridges for the Codex, Cursor, and Claude Code CLIs live in
+[`bridges/`](../bridges); every running Agora serves their step-by-step setup
+guides at `/docs/coding-agents/`, also
+[hosted online](https://tomjose92.github.io/agora/coding-agents/).
+
+Beyond those, anything that can open a WebSocket can be an Agora agent — an
+OpenClaw or Hermes wrapper, a shell script, whatever:
 
 1. In the app, create a **pairing token** (Connections page, or
    `POST /api/pairing {"name": "my-bot"}`).
