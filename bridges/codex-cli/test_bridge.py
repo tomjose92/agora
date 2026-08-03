@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,28 @@ SPEC = importlib.util.spec_from_file_location(
 bridge = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(bridge)
+
+
+class AttachmentFetchTests(unittest.TestCase):
+    def test_http_base_preserves_server_prefix(self):
+        self.assertEqual(bridge.Bridge._http_base("wss://host/p/agent/ws?token=x"), "https://host/p")
+
+    def test_fetches_missing_inline_bytes_and_cleans_truncation(self):
+        class Response(io.BytesIO):
+            def __enter__(self): return self
+            def __exit__(self, *_args): self.close()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge, "urlopen", return_value=Response(b"image")):
+            saved, images, _notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "x.png", "mime": "image/png", "size": 5}],
+                Path(tmp), "https://host", "token", "codex-cli")
+            self.assertEqual(saved, images)
+            self.assertEqual(saved[0].read_bytes(), b"image")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge, "urlopen", return_value=Response(b"short")):
+            saved, images, notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "x.png", "mime": "image/png", "size": 6}],
+                Path(tmp), "https://host", "token", "codex-cli")
+            self.assertEqual((saved, images, list(Path(tmp).iterdir())), ([], [], []))
+            self.assertIn("could not be downloaded", notes[0])
 
 
 class ModelSelectionTests(unittest.TestCase):

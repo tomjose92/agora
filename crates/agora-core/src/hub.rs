@@ -520,6 +520,19 @@ impl Hub {
         self.state.lock().unwrap().agents.get(agent_id).cloned()
     }
 
+    /// Whether this exact pairing credential owns the live socket that
+    /// registered `agent_id`. Pairing display names are deliberately not an
+    /// identity boundary: multiple credentials may share one.
+    pub fn pairing_token_owns_agent(&self, token: &str, agent_id: &str) -> bool {
+        let st = self.state.lock().unwrap();
+        let Some(agent) = st.agents.get(agent_id) else {
+            return false;
+        };
+        st.pairing_conns
+            .get(&agent.conn_id)
+            .is_some_and(|conn| conn.token == token)
+    }
+
     /// The channel's member agents that are live right now (id + name).
     pub fn channel_agents(&self, channel_id: &str) -> Vec<Value> {
         let members = self.store.agents_for_channel(channel_id);
@@ -1179,7 +1192,8 @@ impl Hub {
             let file_id = f["id"].as_str().unwrap_or_default();
             let size = f["size"].as_i64().unwrap_or(0) as usize;
             let mut entry = json!({
-                "filename": f["filename"], "mime": f["mime"], "size": f["size"],
+                "id": f["id"], "filename": f["filename"], "mime": f["mime"],
+                "size": f["size"],
             });
             if size <= MAX_INLINE_ATTACHMENT {
                 if let Ok(data) = std::fs::read(self.store.file_path(file_id)) {
@@ -2675,6 +2689,7 @@ mod tests {
         assert_eq!(messages[0]["attachments"][0]["filename"], "shot.png");
         assert_eq!(messages[0]["attachments"][0]["mime"], "image/png");
         let inbound = last_frame(&mut recipient_rx, "inbound").unwrap();
+        assert_eq!(inbound["attachments"][0]["id"], messages[0]["attachments"][0]["id"]);
         assert_eq!(inbound["attachments"][0]["data_b64"],
             base64::engine::general_purpose::STANDARD.encode(png));
     }

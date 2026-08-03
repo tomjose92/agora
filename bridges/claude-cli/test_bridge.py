@@ -1,6 +1,7 @@
 import asyncio
 import json
 import importlib.util
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,40 @@ SPEC = importlib.util.spec_from_file_location(
 bridge = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(bridge)
+
+
+class AttachmentFetchTests(unittest.TestCase):
+    def test_http_base_preserves_server_prefix(self):
+        self.assertEqual(
+            bridge.Bridge._http_base("wss://example.test/agora/agent/ws?token=secret"),
+            "https://example.test/agora",
+        )
+
+    def test_fetches_missing_inline_bytes_and_rejects_truncation(self):
+        class Response(io.BytesIO):
+            def __enter__(self): return self
+            def __exit__(self, *_args): self.close()
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            bridge, "urlopen", return_value=Response(b"video")
+        ) as fetch:
+            saved, notes = bridge.materialize_attachments(
+                [{"id": "f/1", "filename": "clip.mov", "mime": "video/quicktime", "size": 5}],
+                Path(tmp), "https://example.test", "secret", "claude-cli",
+            )
+            self.assertEqual(saved[0].read_bytes(), b"video")
+            self.assertIn("Authorization", fetch.call_args.args[0].headers)
+            self.assertIn("5 bytes", notes[0])
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            bridge, "urlopen", return_value=Response(b"short")
+        ):
+            saved, notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "clip.mov", "mime": "video/quicktime", "size": 6}],
+                Path(tmp), "https://example.test", "secret", "claude-cli",
+            )
+            self.assertEqual(saved, [])
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+            self.assertIn("could not be downloaded", notes[0])
 
 
 def make_bridge(peer_agents=""):
