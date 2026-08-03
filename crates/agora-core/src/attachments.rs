@@ -16,6 +16,8 @@ pub(crate) fn safe_filename(name: &str) -> String {
     }
 }
 
+/// Image MIME from magic bytes, or None for unrecognized image data. Stored
+/// MIME drives inline rendering and agent vision, so bytes outrank declarations.
 pub(crate) fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Some("image/png");
@@ -29,6 +31,7 @@ pub(crate) fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
     if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
         return Some("image/webp");
     }
+    // ISO-BMFF image brands: HEIC (iPhone default), HEIF, AVIF.
     if data.len() >= 12 && &data[4..8] == b"ftyp" {
         return match &data[8..12] {
             b"heic" | b"heix" | b"hevc" => Some("image/heic"),
@@ -40,6 +43,8 @@ pub(crate) fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
     None
 }
 
+/// REST uploads may carry non-images, so fall back to their declared type
+/// after image sniffing. Agent image posts separately require a sniffed image.
 pub(crate) fn attachment_mime(data: &[u8], declared: &str) -> String {
     sniff_image_mime(data)
         .map(str::to_string)

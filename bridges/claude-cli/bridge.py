@@ -68,7 +68,6 @@ BLANK_RESULT_IDLE_GRACE = 45.0
 TAIL_BYTES = 256 * 1024  # how much of a session .jsonl to scan for the last prompt
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
-MAX_OUTBOUND_ATTACHMENT_BYTES = int(os.environ.get("AGORA_MAX_FILE_MB", "10")) * 1024 * 1024
 ATTACH_SENTINEL = "<<<AGORA_ATTACH>>>"
 ATTACH_SYSTEM_PROMPT = (
     "To send a generated image to Agora, end your reply with one "
@@ -227,6 +226,14 @@ def parse_allowed_roots(raw: str) -> list[Path]:
         except OSError:
             continue
     return roots
+
+
+def parse_positive_int(raw: str | None, default: int) -> int:
+    try:
+        value = int(raw if raw is not None else str(default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def log(msg: str) -> None:
@@ -461,6 +468,7 @@ class Bridge:
         self.permission_timeout = args.permission_timeout
         self.sessions_limit = args.sessions
         self.allowed_roots = parse_allowed_roots(args.allowed_roots)
+        self.max_attachment_bytes = args.max_file_mb * 1024 * 1024
         self.auto_worktree = args.auto_worktree
         self.state_file = Path(args.state_file)
         self.bindings: dict[str, dict] = self._load_state()
@@ -1116,7 +1124,8 @@ class Bridge:
             if not text.lstrip().startswith("/"):
                 text = self._flush_context(key, text)
             reply = await self.run_claude(key, frame, binding, text)
-            reply, attachments, notices = self._split_outbound_attachments(reply)
+            reply, attachments, notices = self._split_outbound_attachments(
+                reply, binding["cwd"], self.allowed_roots, self.max_attachment_bytes)
             body, tldr = self._split_tldr(
                 reply, self._tldr_enabled(binding), self.tldr_min_chars)
             if notices:
@@ -1168,7 +1177,9 @@ class Bridge:
         return body, tldr
 
     @staticmethod
-    def _split_outbound_attachments(reply: str) -> tuple[str, list[dict], list[str]]:
+    def _split_outbound_attachments(
+        reply: str, cwd: str, allowed_roots: list[Path], max_bytes: int,
+    ) -> tuple[str, list[dict], list[str]]:
         lines = reply.splitlines()
         paths, kept = [], []
         for line in lines:
@@ -1182,10 +1193,15 @@ class Bridge:
             return "\n".join(kept).rstrip(), [], ["Could not attach images: maximum 5 files per message."]
         for value in paths:
             path = Path(value).expanduser()
+            path = (path if path.is_absolute() else Path(cwd) / path).resolve()
+            roots = [Path(cwd).resolve(), *allowed_roots]
+            if not any(path == root or path.is_relative_to(root) for root in roots):
+                notices.append(f"Could not attach {path.name or 'image'}: path is outside allowed roots.")
+                continue
             try: data = path.read_bytes() if path.is_file() else b""
             except OSError: data = b""
             mime = _image_mime(data)
-            if not data or len(data) > MAX_OUTBOUND_ATTACHMENT_BYTES or not mime:
+            if not data or len(data) > max_bytes or not mime:
                 notices.append(f"Could not attach {path.name or 'image'}: missing, too large, or unsupported.")
                 continue
             attachments.append({"filename": path.name, "mime": mime,
@@ -1932,6 +1948,9 @@ def main() -> None:
     ap.add_argument("--allowed-roots", default=os.environ.get("CLAUDE_ALLOWED_ROOTS", ""),
                     help="colon-separated dirs /new sessions may start under; "
                          "/new is disabled when empty")
+    ap.add_argument("--max-file-mb", type=int,
+                    default=parse_positive_int(os.environ.get("AGORA_MAX_FILE_MB"), 10),
+                    help="maximum outbound image size in MB (default: 10)")
     ap.add_argument("--auto-worktree", action="store_true",
                     default=os.environ.get("CLAUDE_AUTO_WORKTREE", "").lower()
                     in ("1", "true", "yes"),
@@ -1981,6 +2000,8 @@ def main() -> None:
                          "the humans-only posture; other agents' messages are "
                          "context only")
     args = ap.parse_args()
+    if args.max_file_mb <= 0:
+        ap.error("--max-file-mb must be positive")
     if args.token:
         log("warning: --token on the command line is visible to other local users "
             "(ps/proc). Prefer AGORA_PAIRING_TOKEN or --token-file.")

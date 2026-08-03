@@ -254,6 +254,8 @@ pub struct Hub {
 }
 
 impl Hub {
+    /// Test/default constructor. Production passes the configured boot-time
+    /// snapshot through `new_with_attachment_limit`; 10 MB mirrors config's default.
     pub fn new(store: Arc<Store>) -> Self {
         Self::new_with_attachment_limit(store, 10 * 1024 * 1024)
     }
@@ -2691,6 +2693,22 @@ mod tests {
         let error = last_frame(&mut rx, "error").unwrap();
         assert_eq!(error["request_id"], "bad-image");
         assert_eq!(error["frame_type"], "post");
+    }
+
+    #[test]
+    fn agent_attachment_decoder_rejects_every_invalid_shape() {
+        let h = Hub::new_with_attachment_limit(Arc::new(Store::open_in_memory().unwrap()), 8);
+        let file = |data: &str| json!({"filename": "x.png", "mime": "image/png", "data_b64": data});
+        assert!(h.decode_agent_attachments(Some(&json!({}))).is_err());
+        assert!(h.decode_agent_attachments(Some(&json!([
+            file("eA=="), file("eA=="), file("eA=="), file("eA=="), file("eA=="), file("eA==")
+        ]))).is_err());
+        assert!(h.decode_agent_attachments(Some(&json!([file("")]))).is_err());
+        let plain = base64::engine::general_purpose::STANDARD.encode(b"plain");
+        assert!(h.decode_agent_attachments(Some(&json!([file(&plain)]))).is_err());
+        let oversized = base64::engine::general_purpose::STANDARD
+            .encode(b"\x89PNG\r\n\x1a\nextra");
+        assert!(h.decode_agent_attachments(Some(&json!([file(&oversized)]))).is_err());
     }
 
     #[test]
