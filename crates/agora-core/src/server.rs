@@ -288,8 +288,21 @@ fn require_message_visible(
 /// applies after restart.
 fn upload_body_limit(state: &AppState) -> axum::extract::DefaultBodyLimit {
     let config = state.config.snapshot();
-    let per_file = (config.max_file_mb.max(config.max_video_mb) as usize).saturating_mul(1024 * 1024);
-    axum::extract::DefaultBodyLimit::max(per_file.saturating_mul(MAX_FILES_PER_MESSAGE).saturating_add(1024 * 1024))
+    axum::extract::DefaultBodyLimit::max(upload_request_max_bytes(&config).saturating_add(1024 * 1024))
+}
+
+fn upload_request_max_bytes(config: &crate::config::ConfigData) -> usize {
+    let file = (config.max_file_mb as usize).saturating_mul(1024 * 1024);
+    let video = (config.max_video_mb as usize).saturating_mul(1024 * 1024);
+    video.saturating_add(file.saturating_mul(MAX_FILES_PER_MESSAGE - 1))
+}
+
+fn voice_body_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(voice_request_max_bytes())
+}
+
+fn voice_request_max_bytes() -> usize {
+    MAX_VOICE_BYTES + 1024 * 1024
 }
 
 pub fn router(state: AppState) -> Router {
@@ -330,7 +343,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/api/channels/{channel_id}/voice",
-            post(post_voice_message).layer(upload_body_limit(&state)),
+            post(post_voice_message).layer(voice_body_limit()),
         )
         .route("/api/channels/{channel_id}/read", put(mark_read))
         .route("/api/messages/{message_id}", get(get_message))
@@ -528,7 +541,7 @@ fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
 /// content-type otherwise.
 fn attachment_mime(data: &[u8], declared: &str) -> String {
     sniff_image_mime(data)
-        .or_else(|| sniff_video_mime(data))
+        .or_else(|| (!declared.to_ascii_lowercase().starts_with("audio/")).then(|| sniff_video_mime(data)).flatten())
         .map(str::to_string)
         .unwrap_or_else(|| declared.split(';').next().unwrap_or("").trim().to_string())
 }
@@ -549,8 +562,9 @@ fn sniff_video_mime(data: &[u8]) -> Option<&'static str> {
     None
 }
 
-fn attachment_max_bytes(data: &[u8], config: &crate::config::ConfigData) -> usize {
-    let mb = if sniff_video_mime(data).is_some() { config.max_video_mb } else { config.max_file_mb };
+fn attachment_max_bytes(data: &[u8], declared: &str, config: &crate::config::ConfigData) -> usize {
+    let video = !declared.to_ascii_lowercase().starts_with("audio/") && sniff_video_mime(data).is_some();
+    let mb = if video { config.max_video_mb } else { config.max_file_mb };
     (mb as usize).saturating_mul(1024 * 1024)
 }
 
@@ -1508,6 +1522,8 @@ async fn post_message_upload(
     let mut timezone: Option<String> = None;
     let mut reply_in_thread = false;
     let mut attachments: Vec<NewAttachment> = Vec::new();
+    let mut uploaded_bytes = 0usize;
+    let request_max_bytes = upload_request_max_bytes(&config);
     while let Some(field) = multipart
         .next_field()
         .await
@@ -1538,9 +1554,13 @@ async fn post_message_upload(
                 let mut data = Vec::new();
                 while let Some(chunk) = field.chunk().await
                     .map_err(|_| err(StatusCode::BAD_REQUEST, "Upload read failed"))? {
+                    uploaded_bytes = uploaded_bytes.saturating_add(chunk.len());
+                    if uploaded_bytes > request_max_bytes {
+                        return Err(err(StatusCode::BAD_REQUEST, "Attachments too large for one message"));
+                    }
                     data.extend_from_slice(&chunk);
                     if data.len() >= 12 {
-                        if data.len() > attachment_max_bytes(&data, &config) {
+                        if data.len() > attachment_max_bytes(&data, &declared, &config) {
                             return Err(err(StatusCode::BAD_REQUEST, "File too large"));
                         }
                     }
@@ -1548,7 +1568,7 @@ async fn post_message_upload(
                 if data.is_empty() {
                     return Err(err(StatusCode::BAD_REQUEST, "Empty file upload"));
                 }
-                if data.len() > attachment_max_bytes(&data, &config) {
+                if data.len() > attachment_max_bytes(&data, &declared, &config) {
                     return Err(err(StatusCode::BAD_REQUEST, "File too large"));
                 }
                 attachments.push(NewAttachment {
@@ -3706,8 +3726,13 @@ mod tests {
         late_marker.extend_from_slice(b"\x42\x82\x84webm");
         assert_eq!(sniff_video_mime(&late_marker), None);
         let config = crate::config::ConfigData::default();
-        assert_eq!(attachment_max_bytes(b"\0\0\0\x18ftypisomrest", &config), 100 * 1024 * 1024);
-        assert_eq!(attachment_max_bytes(b"zip pretending to be video", &config), 10 * 1024 * 1024);
+        assert_eq!(attachment_max_bytes(b"\0\0\0\x18ftypisomrest", "video/mp4", &config), 100 * 1024 * 1024);
+        assert_eq!(attachment_max_bytes(b"zip pretending to be video", "video/mp4", &config), 10 * 1024 * 1024);
+        assert_eq!(attachment_max_bytes(b"\0\0\0\x18ftypisomrest", "audio/mp4", &config), 10 * 1024 * 1024);
+        assert_eq!(attachment_mime(b"\0\0\0\x18ftypisomrest", "audio/mp4"), "audio/mp4");
+        assert_eq!(attachment_mime(b"\x1a\x45\xdf\xa3\x42\x82\x84webm", "audio/webm"), "audio/webm");
+        assert_eq!(upload_request_max_bytes(&config), 140 * 1024 * 1024);
+        assert_eq!(voice_request_max_bytes(), 16 * 1024 * 1024);
     }
 
     #[test]
@@ -3754,6 +3779,37 @@ mod tests {
             .await.unwrap();
         assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(response.headers()["content-range"], "bytes */10");
+    }
+
+    #[tokio::test]
+    async fn message_upload_rejects_bodies_above_the_aggregate_budget() {
+        let (state, _dir) = test_state();
+        state.config.update(|config| {
+            config.max_file_mb = 1;
+            config.max_video_mb = 2;
+        });
+        let group = state.hub.store.create_group("Media", "", None);
+        let channel = state.hub.store.create_channel(group["id"].as_str().unwrap(), "video", "");
+        let boundary = "agora-video-budget";
+        let mut body = Vec::new();
+        for index in 0..4 {
+            body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{index}.mp4\"\r\nContent-Type: video/mp4\r\n\r\n").as_bytes());
+            body.extend_from_slice(b"\0\0\0\x18ftypisom");
+            body.resize(body.len() + (1600 * 1024) - 12, 0);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        let token = state.config.snapshot().admin_key;
+        let response = router(state)
+            .oneshot(Request::post(format!("/api/channels/{}/messages/upload", channel["id"].as_str().unwrap()))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                .extension(ConnectInfo("127.0.0.1:12345".parse::<SocketAddr>().unwrap()))
+                .body(Body::from(body)).unwrap())
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("Attachments too large for one message"));
     }
 
     /// Auth headers for a freshly minted session of `username`.

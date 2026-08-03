@@ -151,9 +151,10 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
   const addFiles = (list: FileList | File[]) => {
     const incoming = Array.from(list);
     const nonEmpty = incoming.filter((file) => file.size > 0);
-    const allowed = nonEmpty.filter(
-      (file) => maxBytesFor(file) === undefined || file.size <= maxBytesFor(file)!,
-    );
+    const allowed = nonEmpty.filter((file) => {
+      const maxBytes = maxBytesFor(file);
+      return maxBytes === undefined || file.size <= maxBytes;
+    });
     if (nonEmpty.length < incoming.length) {
       toast("Empty files cannot be uploaded", { variant: "warn" });
     }
@@ -194,12 +195,12 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
     const dropped = Array.from(list);
     // A promised file may report size 0 before its provider resolves, so only
     // reject metadata that already proves the drop cannot be materialized.
-    const allowed = dropped.filter((file) => file.size === 0 || file.size <= dropMaxBytesFor(file));
+    const allowed = dropped.filter((file) => file.size <= dropMaxBytesFor(file));
     if (allowed.length < dropped.length) {
       const rejected = dropped.filter(file => file.size > 0 && file.size > dropMaxBytesFor(file));
       const messages = new Set(rejected.map(file =>
         droppedTooLargeMessage(file.type, me?.max_file_mb, me?.max_video_mb)));
-      toast(messages.size === 1 ? [...messages][0] : "Some files are too large; use the paperclip for large videos",
+      toast(messages.size === 1 ? [...messages][0] : "Large files must be attached with the paperclip",
         { variant: "warn" });
     }
     const result = useAttachmentDrafts.getState().stage(

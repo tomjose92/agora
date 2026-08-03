@@ -3,7 +3,7 @@ import TestRenderer, { act } from "react-test-renderer";
 import { Image, Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
-import { Composer } from "../src/components/Composer";
+import { Composer, withinUploadLimit } from "../src/components/Composer";
 import { Attachments } from "../src/components/Attachments";
 import { useMessageDrafts } from "@agora/core";
 
@@ -15,6 +15,12 @@ jest.mock("expo-file-system/legacy", () => ({
   getInfoAsync: jest.fn(async () => ({ exists: true, size: 4_096 })),
   writeAsStringAsync: jest.fn(async () => {}),
 }));
+
+test("mobile attachment limits reject known oversize files but allow unknown sizes", () => {
+  expect(withinUploadLimit({ uri: "file:///clip.mp4", name: "clip.mp4", type: "video/mp4", size: 60 * 1024 * 1024 }, 10, 100)).toBe(true);
+  expect(withinUploadLimit({ uri: "file:///doc.pdf", name: "doc.pdf", type: "application/pdf", size: 60 * 1024 * 1024 }, 10, 100)).toBe(false);
+  expect(withinUploadLimit({ uri: "content://provider/file", name: "file", type: "application/pdf" }, 10, 100)).toBe(true);
+});
 jest.mock("expo-paste-input", () => {
   const mockReact = require("react");
   const { View: MockView } = require("react-native");
