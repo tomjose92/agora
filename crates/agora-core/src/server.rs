@@ -31,8 +31,6 @@ use crate::connections::ConnectionManager;
 use crate::hub::{AgentHandle, Hub};
 use crate::store::{new_token, now, NewAttachment};
 use crate::attachments::{attachment_mime, safe_filename};
-#[cfg(test)]
-use crate::attachments::sniff_image_mime;
 
 const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
@@ -3156,7 +3154,6 @@ async fn handle_ui_socket(state: AppState, user: AuthedUser, socket: WebSocket) 
 async fn agent_ws(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> Response {
     let token = q.get("token").cloned().unwrap_or_default();
@@ -3168,7 +3165,7 @@ async fn agent_ws(
         .saturating_mul(MAX_FILES_PER_MESSAGE)
         .saturating_mul(4) / 3
         + 1024 * 1024).min(MAX_AGENT_WS_BYTES);
-    let upload_key = format!("agent:{}", rate_key(&peer));
+    let upload_key = format!("agent:{source}");
     ws.max_frame_size(wire_limit)
         .max_message_size(wire_limit)
         .on_upgrade(move |socket| handle_agent_socket(state, socket, source, token, upload_key))
@@ -3553,43 +3550,6 @@ mod tests {
         // Not a connect URL, or not a websocket/http scheme.
         assert_eq!(pantheo_http_base("wss://host/other"), None);
         assert_eq!(pantheo_http_base("ftp://host/agora/connect"), None);
-    }
-
-    #[test]
-    fn sniff_recognizes_classic_web_formats() {
-        assert_eq!(sniff_image_mime(b"\x89PNG\r\n\x1a\n\x00\x00"), Some("image/png"));
-        assert_eq!(sniff_image_mime(b"\xff\xd8\xff\xe0rest"), Some("image/jpeg"));
-        assert_eq!(sniff_image_mime(b"GIF89a......"), Some("image/gif"));
-        assert_eq!(sniff_image_mime(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("image/webp"));
-    }
-
-    #[test]
-    fn sniff_recognizes_iso_bmff_image_brands() {
-        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypheic\x00\x00"), Some("image/heic"));
-        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypmif1\x00\x00"), Some("image/heif"));
-        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypavif\x00\x00"), Some("image/avif"));
-        // Video brands are not images.
-        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypisom\x00\x00"), None);
-    }
-
-    #[test]
-    fn sniff_rejects_non_images_and_short_input() {
-        assert_eq!(sniff_image_mime(b"plain text"), None);
-        assert_eq!(sniff_image_mime(b""), None);
-        assert_eq!(sniff_image_mime(b"RIFF"), None);
-    }
-
-    #[test]
-    fn attachment_mime_trusts_bytes_over_declaration() {
-        // A HEIC upload declared as octet-stream still stores as image/heic.
-        assert_eq!(
-            attachment_mime(b"\x00\x00\x00\x18ftypheic\x00\x00", "application/octet-stream"),
-            "image/heic"
-        );
-        // A JPEG mislabeled as png corrects to jpeg.
-        assert_eq!(attachment_mime(b"\xff\xd8\xff\xe0rest", "image/png"), "image/jpeg");
-        // Non-images keep the declared type, parameters stripped.
-        assert_eq!(attachment_mime(b"%PDF-1.7", "application/pdf; name=x"), "application/pdf");
     }
 
     /// Auth headers for a freshly minted session of `username`.

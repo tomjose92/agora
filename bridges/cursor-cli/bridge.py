@@ -1212,7 +1212,7 @@ class Bridge:
             if not any(path == root or path.is_relative_to(root) for root in roots):
                 notices.append(f"Could not attach {path.name or 'image'}: path is outside allowed roots.")
                 continue
-            try: data = path.read_bytes() if path.is_file() else b""
+            try: data = path.read_bytes() if path.is_file() and path.stat().st_size <= max_bytes else b""
             except OSError: data = b""
             mime = _image_mime(data)
             if not data or len(data) > max_bytes or not mime:

@@ -50,3 +50,40 @@ pub(crate) fn attachment_mime(data: &[u8], declared: &str) -> String {
         .map(str::to_string)
         .unwrap_or_else(|| declared.split(';').next().unwrap_or("").trim().to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sniff_recognizes_classic_web_formats() {
+        assert_eq!(sniff_image_mime(b"\x89PNG\r\n\x1a\n\x00\x00"), Some("image/png"));
+        assert_eq!(sniff_image_mime(b"\xff\xd8\xff\xe0rest"), Some("image/jpeg"));
+        assert_eq!(sniff_image_mime(b"GIF89a......"), Some("image/gif"));
+        assert_eq!(sniff_image_mime(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("image/webp"));
+    }
+
+    #[test]
+    fn sniff_recognizes_iso_bmff_image_brands() {
+        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypheic\x00\x00"), Some("image/heic"));
+        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypmif1\x00\x00"), Some("image/heif"));
+        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypavif\x00\x00"), Some("image/avif"));
+        assert_eq!(sniff_image_mime(b"\x00\x00\x00\x18ftypisom\x00\x00"), None);
+    }
+
+    #[test]
+    fn sniff_rejects_non_images_and_short_input() {
+        assert_eq!(sniff_image_mime(b"plain text"), None);
+        assert_eq!(sniff_image_mime(b""), None);
+        assert_eq!(sniff_image_mime(b"RIFF"), None);
+    }
+
+    #[test]
+    fn attachment_mime_trusts_bytes_over_declaration() {
+        assert_eq!(attachment_mime(
+            b"\x00\x00\x00\x18ftypheic\x00\x00", "application/octet-stream"), "image/heic");
+        assert_eq!(attachment_mime(b"\xff\xd8\xff\xe0rest", "image/png"), "image/jpeg");
+        assert_eq!(attachment_mime(
+            b"%PDF-1.7", "application/pdf; name=x"), "application/pdf");
+    }
+}

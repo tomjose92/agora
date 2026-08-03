@@ -1201,8 +1201,7 @@ class Bridge:
             else: kept.append(line)
         notices, attachments = [], []
         if len(paths) > 5:
-            notices.append("Could not attach images: maximum 5 files per message.")
-            return "\n".join(kept).rstrip(), [], notices
+            return "\n".join(kept).rstrip(), [], ["Could not attach images: maximum 5 files per message."]
         for value in paths:
             path = Path(value).expanduser()
             path = (path if path.is_absolute() else Path(cwd) / path).resolve()
@@ -1211,7 +1210,7 @@ class Bridge:
                 notices.append(f"Could not attach {path.name or 'image'}: path is outside allowed roots.")
                 continue
             try:
-                data = path.read_bytes() if path.is_file() else b""
+                data = path.read_bytes() if path.is_file() and path.stat().st_size <= max_bytes else b""
             except OSError:
                 data = b""
             mime = _image_mime(data)
