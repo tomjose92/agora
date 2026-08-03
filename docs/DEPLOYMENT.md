@@ -98,6 +98,26 @@ Then share `https://agora.example.com/?token=<admin-key>` (the token is in
 `/var/lib/agora/config.json`), or invite users so they sign in with their own
 accounts — see [AUTH.md](AUTH.md).
 
+### Voice providers
+
+`OPENAI_API_KEY` enables voice transcription and spoken replies. To use
+ElevenLabs for lower-latency text-to-speech, also set `ELEVENLABS_API_KEY`.
+Agora then tries ElevenLabs Flash first and automatically falls back to OpenAI
+after any ElevenLabs error, including timeout, invalid credentials, rate
+limits, or exhausted credits. Transcription remains on OpenAI, so the live
+voice controls still require `OPENAI_API_KEY`.
+
+The default premade voice is Rachel (`21m00Tcm4TlvDq8ikWAM`). Set
+`ELEVENLABS_VOICE_ID` to a voice ID from your ElevenLabs account to change it,
+and optionally set `ELEVENLABS_MODEL_ID` (default `eleven_flash_v2_5`). Keep
+both API keys in the server environment, never in a browser or mobile client.
+
+ElevenLabs' Free plan has a monthly quota, is limited to personal,
+non-commercial use, and requires attribution. For a private deployment, a
+conservative attribution is “Voice generated with ElevenLabs” in the app's
+About or settings screen. Check ElevenLabs' current plan and licensing terms
+before public, work-related, or monetized use.
+
 ## Deploying on Railway (or any Docker PaaS)
 
 The repo ships a [`Dockerfile`](../Dockerfile) and [`railway.json`](../railway.json)

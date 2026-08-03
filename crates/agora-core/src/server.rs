@@ -509,7 +509,7 @@ async fn me(
         "max_file_mb": state.config.snapshot().max_file_mb,
         // Voice features (voice notes, speak-aloud, live voice) need an
         // OPENAI_API_KEY in the server env; clients hide the controls without it.
-        "voice": crate::voice::api_key().is_some(),
+        "voice": crate::voice::openai_api_key().is_some(),
         // AI search answers (/api/search/ask) need an ANTHROPIC_API_KEY in the
         // server env; clients hide their "Ask AI" controls without it.
         "search_ai": crate::ai::api_key().is_some(),
@@ -1492,7 +1492,7 @@ async fn post_voice_message(
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
     }
     require_channel_member(&state, &user, &channel_id)?;
-    let Some(key) = crate::voice::api_key() else {
+    let Some(key) = crate::voice::openai_api_key() else {
         return Err(err(
             StatusCode::BAD_REQUEST,
             "Voice input needs OPENAI_API_KEY on the server (speech-to-text is not configured)",
@@ -1596,10 +1596,10 @@ async fn message_speech(
 ) -> Result<Response, ApiError> {
     let user = require_user(&state, &headers, &q)?;
     let message = require_message_visible(&state, &user, message_id)?;
-    let Some(key) = crate::voice::api_key() else {
+    let Some(key) = crate::voice::openai_api_key() else {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "Spoken replies need OPENAI_API_KEY on the server (text-to-speech is not configured)",
+            "Spoken replies need OPENAI_API_KEY on the server — it also powers transcription, so an ELEVENLABS_API_KEY alone doesn't enable voice",
         ));
     };
     let cached = {

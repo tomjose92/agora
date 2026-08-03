@@ -1,33 +1,91 @@
-//! Speech-to-text and text-to-speech via OpenAI's audio APIs.
+//! Speech-to-text via OpenAI and text-to-speech via ElevenLabs with OpenAI
+//! fallback.
 //!
 //! Powers the voice features (voice notes, speak-aloud, live voice) that the
 //! web/desktop/mobile clients call through `/api/channels/{id}/voice` and
-//! `/api/messages/{id}/speech`. Enabled by setting `OPENAI_API_KEY` in the
-//! server's environment; without it the endpoints return a clear 400 and the
-//! clients hide their voice controls (`voice: false` in `/api/me`).
+//! `/api/messages/{id}/speech`. Voice input is enabled by `OPENAI_API_KEY`;
+//! when `ELEVENLABS_API_KEY` is also set, spoken replies prefer ElevenLabs and
+//! fall back to OpenAI on every failure.
 //!
 //! Mirrors Pantheo's `engine/transcription.py` / `engine/tts.py` so the same
 //! models and behavior apply on both sides of the bridge.
 
 use std::io::Read;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const STT_MODEL: &str = "gpt-4o-mini-transcribe";
 const TTS_MODEL: &str = "gpt-4o-mini-tts";
 const TTS_VOICE: &str = "alloy";
+const ELEVENLABS_MODEL: &str = "eleven_flash_v2_5";
+const ELEVENLABS_VOICE: &str = "21m00Tcm4TlvDq8ikWAM"; // Rachel, premade.
+const ELEVENLABS_OUTPUT: &str = "mp3_44100_128";
 
 /// The speech API caps input at 4096 chars; clip a bit below to stay safe.
 const MAX_TTS_CHARS: usize = 4000;
 
 const TIMEOUT: Duration = Duration::from_secs(120);
+const ELEVENLABS_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ElevenLabsConfig {
+    key: String,
+    voice_id: String,
+    model_id: String,
+}
+
+static ELEVENLABS_CONFIG: OnceLock<Option<ElevenLabsConfig>> = OnceLock::new();
 
 /// The key that enables voice, straight from the process env (no config-file
 /// storage: this is a secret, and the server env is the deployment boundary).
-pub fn api_key() -> Option<String> {
+pub fn openai_api_key() -> Option<String> {
     std::env::var("OPENAI_API_KEY")
         .ok()
         .map(|k| k.trim().to_string())
         .filter(|k| !k.is_empty())
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn valid_voice_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
+fn elevenlabs_config_from(
+    key: Option<String>,
+    voice_id: Option<String>,
+    model_id: Option<String>,
+) -> Option<ElevenLabsConfig> {
+    let key = non_empty(key)?;
+    let voice_id = non_empty(voice_id).unwrap_or_else(|| ELEVENLABS_VOICE.to_string());
+    if !valid_voice_id(&voice_id) {
+        tracing::warn!("Ignoring ElevenLabs configuration: invalid ELEVENLABS_VOICE_ID");
+        return None;
+    }
+    Some(ElevenLabsConfig {
+        key,
+        voice_id,
+        model_id: non_empty(model_id).unwrap_or_else(|| ELEVENLABS_MODEL.to_string()),
+    })
+}
+
+fn elevenlabs_config() -> Option<&'static ElevenLabsConfig> {
+    ELEVENLABS_CONFIG
+        .get_or_init(|| {
+            elevenlabs_config_from(
+                std::env::var("ELEVENLABS_API_KEY").ok(),
+                std::env::var("ELEVENLABS_VOICE_ID").ok(),
+                std::env::var("ELEVENLABS_MODEL_ID").ok(),
+            )
+        })
+        .as_ref()
 }
 
 /// Clip overly long replies at a sentence-ish boundary for speech.
@@ -77,16 +135,52 @@ pub fn transcribe(key: &str, data: &[u8], filename: &str) -> anyhow::Result<Stri
         .set("Authorization", &format!("Bearer {key}"))
         .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
         .send_bytes(&body)
-        .map_err(flatten_api_error)?;
+        .map_err(|e| flatten_api_error("OpenAI", e))?;
     let parsed: serde_json::Value = response.into_json()?;
     Ok(parsed["text"].as_str().unwrap_or_default().trim().to_string())
 }
 
 /// Render text to MP3 bytes (Safari's `<audio>` can't decode Opus).
 /// Blocking — run via `spawn_blocking`.
-pub fn synthesize(key: &str, text: &str) -> anyhow::Result<Vec<u8>> {
+pub fn synthesize(openai_key: &str, text: &str) -> anyhow::Result<Vec<u8>> {
     let input = clip_for_tts(text);
     anyhow::ensure!(!input.is_empty(), "nothing to speak");
+    synthesize_with_fallback(
+        elevenlabs_config(),
+        |config| synthesize_elevenlabs(config, &input),
+        || synthesize_openai(openai_key, &input),
+    )
+}
+
+fn synthesize_with_fallback<F, G>(
+    elevenlabs: Option<&ElevenLabsConfig>,
+    try_elevenlabs: F,
+    try_openai: G,
+) -> anyhow::Result<Vec<u8>>
+where
+    F: FnOnce(&ElevenLabsConfig) -> anyhow::Result<Vec<u8>>,
+    G: FnOnce() -> anyhow::Result<Vec<u8>>,
+{
+    if let Some(config) = elevenlabs {
+        match try_elevenlabs(config) {
+            Ok(audio) => return Ok(audio),
+            Err(elevenlabs_error) => {
+                tracing::warn!(
+                    "ElevenLabs speech synthesis failed; falling back to OpenAI: {elevenlabs_error}"
+                );
+                return try_openai().map_err(|openai_error| {
+                    let context = format!(
+                        "OpenAI fallback failed: {openai_error}; ElevenLabs attempt also failed: {elevenlabs_error}"
+                    );
+                    openai_error.context(context)
+                });
+            }
+        }
+    }
+    try_openai()
+}
+
+fn synthesize_openai(key: &str, input: &str) -> anyhow::Result<Vec<u8>> {
     let response = ureq::post("https://api.openai.com/v1/audio/speech")
         .timeout(TIMEOUT)
         .set("Authorization", &format!("Bearer {key}"))
@@ -96,24 +190,74 @@ pub fn synthesize(key: &str, text: &str) -> anyhow::Result<Vec<u8>> {
             "input": input,
             "response_format": "mp3",
         }))
-        .map_err(flatten_api_error)?;
+        .map_err(|e| flatten_api_error("OpenAI", e))?;
+    read_audio(response)
+}
+
+fn synthesize_elevenlabs(config: &ElevenLabsConfig, input: &str) -> anyhow::Result<Vec<u8>> {
+    let response = ureq::post(&elevenlabs_url(config))
+        .timeout(ELEVENLABS_TIMEOUT)
+        .set("xi-api-key", &config.key)
+        .send_json(serde_json::json!({
+            "text": input,
+            "model_id": config.model_id,
+        }))
+        .map_err(|e| flatten_api_error("ElevenLabs", e))?;
+    let content_type = response.header("content-type").unwrap_or_default();
+    anyhow::ensure!(
+        content_type.to_ascii_lowercase().starts_with("audio/"),
+        "ElevenLabs returned non-audio content-type: {content_type}"
+    );
+    read_audio(response)
+}
+
+fn elevenlabs_url(config: &ElevenLabsConfig) -> String {
+    format!(
+        "https://api.elevenlabs.io/v1/text-to-speech/{}?output_format={}",
+        config.voice_id, ELEVENLABS_OUTPUT
+    )
+}
+
+fn api_error_detail(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return body.to_string();
+    };
+    value["error"]["message"]
+        .as_str()
+        .or_else(|| value["detail"]["message"].as_str())
+        .map(String::from)
+        .or_else(|| {
+            value.get("detail").map(|detail| {
+                detail
+                    .as_str()
+                    .map(String::from)
+                    .unwrap_or_else(|| detail.to_string())
+            })
+        })
+        .unwrap_or_else(|| body.to_string())
+}
+
+fn read_audio(response: ureq::Response) -> anyhow::Result<Vec<u8>> {
     let mut audio = Vec::new();
-    response.into_reader().take(32 * 1024 * 1024).read_to_end(&mut audio)?;
+    response
+        .into_reader()
+        .take(32 * 1024 * 1024)
+        .read_to_end(&mut audio)?;
     anyhow::ensure!(!audio.is_empty(), "empty audio response");
     Ok(audio)
 }
 
 /// Pull the API's error message out of a non-2xx response so logs say
 /// "invalid api key" instead of just "status 401".
-fn flatten_api_error(e: ureq::Error) -> anyhow::Error {
+fn flatten_api_error(provider: &str, e: ureq::Error) -> anyhow::Error {
     match e {
         ureq::Error::Status(code, response) => {
             let body = response.into_string().unwrap_or_default();
-            let detail = serde_json::from_str::<serde_json::Value>(&body)
-                .ok()
-                .and_then(|v| v["error"]["message"].as_str().map(String::from))
-                .unwrap_or(body);
-            anyhow::anyhow!("OpenAI API error {code}: {}", detail.chars().take(300).collect::<String>())
+            let detail = api_error_detail(&body);
+            anyhow::anyhow!(
+                "{provider} API error {code}: {}",
+                detail.chars().take(300).collect::<String>()
+            )
         }
         other => anyhow::anyhow!(other),
     }
@@ -133,10 +277,110 @@ mod tests {
     }
 
     #[test]
-    fn api_key_requires_non_empty_env() {
+    fn openai_api_key_requires_non_empty_env() {
         // Not set in the test env; the endpoints must gate cleanly on None.
         if std::env::var("OPENAI_API_KEY").is_err() {
-            assert!(api_key().is_none());
+            assert!(openai_api_key().is_none());
         }
+    }
+
+    #[test]
+    fn elevenlabs_config_needs_a_key_and_defaults_voice_and_model() {
+        assert!(elevenlabs_config_from(None, None, None).is_none());
+        assert!(elevenlabs_config_from(Some("  ".into()), None, None).is_none());
+        assert_eq!(
+            elevenlabs_config_from(Some(" key ".into()), None, None),
+            Some(ElevenLabsConfig {
+                key: "key".into(),
+                voice_id: ELEVENLABS_VOICE.into(),
+                model_id: ELEVENLABS_MODEL.into(),
+            })
+        );
+        let configured = elevenlabs_config_from(
+            Some("key".into()),
+            Some(" voice ".into()),
+            Some(" model ".into()),
+        )
+        .unwrap();
+        assert_eq!(configured.voice_id, "voice");
+        assert_eq!(configured.model_id, "model");
+    }
+
+    #[test]
+    fn elevenlabs_voice_id_rejects_url_injection_before_requests() {
+        assert!(valid_voice_id(ELEVENLABS_VOICE));
+        assert!(!valid_voice_id("abc/../v1"));
+        assert!(!valid_voice_id("a?b=c"));
+        assert!(elevenlabs_config_from(
+            Some("key".into()),
+            Some("abc/../v1".into()),
+            None,
+        )
+        .is_none());
+        let config = elevenlabs_config_from(Some("key".into()), None, None).unwrap();
+        assert_eq!(
+            elevenlabs_url(&config),
+            "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM?output_format=mp3_44100_128"
+        );
+    }
+
+    #[test]
+    fn api_error_detail_understands_openai_and_elevenlabs_shapes() {
+        assert_eq!(api_error_detail(r#"{"error":{"message":"bad key"}}"#), "bad key");
+        assert_eq!(api_error_detail(r#"{"detail":{"message":"quota used"}}"#), "quota used");
+        assert_eq!(
+            api_error_detail(r#"{"detail":[{"msg":"invalid voice"}]}"#),
+            r#"[{"msg":"invalid voice"}]"#
+        );
+        assert_eq!(api_error_detail("<html>bad gateway</html>"), "<html>bad gateway</html>");
+    }
+
+    #[test]
+    fn synthesis_prefers_elevenlabs_and_skips_openai_on_success() {
+        let config = elevenlabs_config_from(Some("key".into()), None, None).unwrap();
+        let audio = synthesize_with_fallback(
+            Some(&config),
+            |_| Ok(vec![1]),
+            || panic!("OpenAI should not run"),
+        )
+        .unwrap();
+        assert_eq!(audio, vec![1]);
+    }
+
+    #[test]
+    fn synthesis_falls_back_to_openai_after_any_elevenlabs_error() {
+        let config = elevenlabs_config_from(Some("key".into()), None, None).unwrap();
+        let audio = synthesize_with_fallback(
+            Some(&config),
+            |_| anyhow::bail!("quota exhausted"),
+            || Ok(vec![2]),
+        )
+        .unwrap();
+        assert_eq!(audio, vec![2]);
+    }
+
+    #[test]
+    fn synthesis_uses_openai_directly_without_elevenlabs() {
+        let audio = synthesize_with_fallback(
+            None,
+            |_| panic!("ElevenLabs should not run"),
+            || Ok(vec![3]),
+        )
+        .unwrap();
+        assert_eq!(audio, vec![3]);
+    }
+
+    #[test]
+    fn synthesis_reports_both_provider_errors_when_fallback_fails() {
+        let config = elevenlabs_config_from(Some("key".into()), None, None).unwrap();
+        let error = synthesize_with_fallback(
+            Some(&config),
+            |_| anyhow::bail!("quota exhausted"),
+            || anyhow::bail!("OpenAI unavailable"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("quota exhausted"));
+        assert!(error.contains("OpenAI unavailable"));
     }
 }
