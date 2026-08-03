@@ -21,6 +21,16 @@ class FakeResponse(io.BytesIO):
     def __exit__(self, *_args): self.close()
 
 
+class AdvancingClock:
+    def __init__(self, step=31):
+        self.now = -step
+        self.step = step
+
+    def __call__(self):
+        self.now += self.step
+        return self.now
+
+
 class AttachmentFetchTests(unittest.TestCase):
     def test_http_base_preserves_server_prefix(self):
         self.assertEqual(
@@ -64,13 +74,13 @@ class AttachmentFetchTests(unittest.TestCase):
             Mock(), None, 302, "Found", {}, "https://elsewhere.test/file"
         ))
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            bridge.time, "monotonic", side_effect=[0, 31]
+            bridge.time, "monotonic", new=AdvancingClock()
         ), patch.object(bridge._NO_REDIRECT_OPENER, "open") as fetch:
+            fetch.return_value.__enter__.return_value.read1.return_value = b"video"
             saved, notes = bridge.materialize_attachments(
                 [{"id": "f1", "filename": "clip.mov", "mime": "video/quicktime", "size": 5}],
                 Path(tmp), "https://example.test", "secret", "claude-cli",
             )
-            fetch.return_value.__enter__.return_value.read1.return_value = b"video"
             self.assertEqual(saved, [])
             self.assertEqual(list(Path(tmp).iterdir()), [])
             self.assertIn("total-transfer deadline", notes[0])
@@ -96,6 +106,24 @@ class AttachmentFetchTests(unittest.TestCase):
             self.assertEqual(saved, [])
             self.assertEqual(list(Path(tmp).iterdir()), [])
             self.assertIn("downloaded size mismatch", notes[0])
+
+    def test_legacy_metadata_falls_back_and_inline_bytes_win_over_id(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            bridge._NO_REDIRECT_OPENER, "open"
+        ) as fetch:
+            saved, notes = bridge.materialize_attachments(
+                [{"filename": "legacy.mov", "mime": "video/quicktime", "size": 99}],
+                Path(tmp), "https://example.test", "secret", "claude-cli",
+            )
+            self.assertEqual(saved, [])
+            self.assertIn("too large to inline; not available locally", notes[0])
+            saved, _notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "inline.bin", "mime": "application/octet-stream",
+                  "size": 5, "data_b64": "aW1hZ2U="}],
+                Path(tmp), "https://example.test", "secret", "claude-cli",
+            )
+            self.assertEqual(saved[0].read_bytes(), b"image")
+            fetch.assert_not_called()
 
 
 def make_bridge(peer_agents=""):

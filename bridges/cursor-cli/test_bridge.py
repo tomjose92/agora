@@ -20,6 +20,16 @@ class FakeResponse(io.BytesIO):
     def __exit__(self, *_args): self.close()
 
 
+class AdvancingClock:
+    def __init__(self, step=31):
+        self.now = -step
+        self.step = step
+
+    def __call__(self):
+        self.now += self.step
+        return self.now
+
+
 class AttachmentFetchTests(unittest.TestCase):
     def test_http_base_preserves_server_prefix(self):
         self.assertEqual(bridge.Bridge._http_base("ws://host/p/agent/ws?token=x"), "http://host/p")
@@ -44,7 +54,7 @@ class AttachmentFetchTests(unittest.TestCase):
     def test_refuses_redirects_and_enforces_total_deadline(self):
         self.assertEqual(bridge.ATTACHMENT_FETCH_TIMEOUT + (100 * 1024 * 1024) / bridge.MIN_DOWNLOAD_RATE_BYTES_PER_SECOND, 130)
         self.assertIsNone(bridge._NoRedirectHandler().redirect_request(Mock(), None, 302, "Found", {}, "https://elsewhere/file"))
-        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge.time, "monotonic", side_effect=[0, 31]), patch.object(bridge._NO_REDIRECT_OPENER, "open") as fetch:
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge.time, "monotonic", new=AdvancingClock()), patch.object(bridge._NO_REDIRECT_OPENER, "open") as fetch:
             fetch.return_value.__enter__.return_value.read1.return_value = b"image"
             saved, images, notes = bridge.materialize_attachments(
                 [{"id": "f1", "filename": "x.png", "mime": "image/png", "size": 5}], Path(tmp),
@@ -66,6 +76,21 @@ class AttachmentFetchTests(unittest.TestCase):
                 "http://host", "token", "cursor-cli")
             self.assertEqual((saved, images, list(Path(tmp).iterdir())), ([], [], []))
             self.assertIn("downloaded size mismatch", notes[0])
+
+    def test_legacy_metadata_falls_back_and_inline_bytes_win_over_id(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge._NO_REDIRECT_OPENER, "open") as fetch:
+            saved, images, notes = bridge.materialize_attachments(
+                [{"filename": "legacy.mov", "mime": "video/quicktime", "size": 99}],
+                Path(tmp), "http://host", "token", "cursor-cli")
+            self.assertEqual((saved, images), ([], []))
+            self.assertIn("too large to inline; not available locally", notes[0])
+            saved, images, _notes = bridge.materialize_attachments(
+                [{"id": "f1", "filename": "inline.png", "mime": "image/png",
+                  "size": 5, "data_b64": "aW1hZ2U="}],
+                Path(tmp), "http://host", "token", "cursor-cli")
+            self.assertEqual(saved, images)
+            self.assertEqual(saved[0].read_bytes(), b"image")
+            fetch.assert_not_called()
 
 
 class ModelSelectionTests(unittest.TestCase):
