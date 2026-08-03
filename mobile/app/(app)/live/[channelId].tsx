@@ -11,7 +11,6 @@
    talk-over. */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import {
   AudioModule,
@@ -21,11 +20,9 @@ import {
   useAudioRecorderState,
 } from "expo-audio";
 import { useKeepAwake } from "expo-keep-awake";
-import { Headphones, Mic, MicOff } from "lucide-react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useChannelAgents } from "@agora/core";
 import { useSendVoice } from "../../../src/api/voice";
-import { Icon } from "../../../src/components/Icon";
+import { LiveVoiceView, type LiveStatus } from "../../../src/components/LiveVoice";
 import { toast } from "../../../src/components/Toast";
 import { onAgentMessage } from "../../../src/lib/agentBus";
 import { slugify } from "@agora/core";
@@ -35,21 +32,9 @@ import {
   prepareSpeechAudio,
   stopSpeech,
 } from "../../../src/lib/speech";
-import { colors } from "../../../src/lib/theme";
 import { initialVadState, vadCanSend, vadStep } from "../../../src/lib/vad";
 import { threadAddressKey, useAddressed } from "@agora/core";
 import { useSession } from "../../../src/state/session";
-
-type LiveStatus = "starting" | "listening" | "recording" | "thinking" | "speaking" | "error";
-
-const LABELS: Record<LiveStatus, string> = {
-  starting: "Starting…",
-  listening: "Listening — just talk",
-  recording: "Recording…",
-  thinking: "Thinking…",
-  speaking: "Speaking — tap to interrupt",
-  error: "Microphone unavailable",
-};
 
 /** A silent listening stretch longer than this recycles the recorder so idle
     sessions don't accumulate a huge file between utterances. */
@@ -69,7 +54,6 @@ export default function LiveScreen() {
   const threadId = params.rootId ? Number(params.rootId) : null;
   const session = useSession((s) => s.session)!;
   const sendVoice = useSendVoice(channelId);
-  const insets = useSafeAreaInsets();
   useKeepAwake();
 
   /* The conversation's "talk to" selection (set in the composer) also
@@ -324,134 +308,21 @@ export default function LiveScreen() {
     void startMic();
   };
 
-  // Mic level drives the orb size: -60dB..0dB → 1.0..1.5 scale.
-  const db = recorderState.metering ?? -60;
-  const level = Math.max(0, Math.min(1, (db + 60) / 60));
-  const active = status === "listening" || status === "recording";
-  const scale = active ? 1 + level * 0.5 : 1;
-  const muteDisabled = muteBusy || status === "starting" || status === "error";
-
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <Pressable style={[styles.root, { paddingTop: insets.top + 18 }]} onPress={interrupt}>
-        {threadId != null ? (
-          <>
-            <Text style={styles.channel}>
-              Thread · # {params.channelName || channelId}
-            </Text>
-            {params.rootSnippet ? (
-              <Text style={styles.rootSnippet} numberOfLines={2}>
-                {params.rootSnippet}
-              </Text>
-            ) : null}
-          </>
-        ) : (
-          <View style={styles.channelRow}>
-            <Icon icon={Headphones} size={16} />
-            <Text style={styles.channel}># {params.channelName || channelId}</Text>
-          </View>
-        )}
-        <View style={styles.center}>
-          <View
-            style={[
-              styles.orb,
-              status === "recording" && styles.orbRecording,
-              status === "thinking" && styles.orbThinking,
-              status === "speaking" && styles.orbSpeaking,
-              { transform: [{ scale }] },
-            ]}
-          />
-          <Text style={styles.status}>
-            {muted
-              ? status === "listening"
-                ? "Muted — tap Unmute to talk"
-                : status === "speaking" ? "Speaking… · Mic muted" : `${LABELS[status]} · Mic muted`
-              : LABELS[status]}
-          </Text>
-          {status === "error" ? (
-            <Text style={styles.errorHint}>
-              Allow microphone access in Settings, then try again.
-            </Text>
-          ) : null}
-        </View>
-        <View style={[styles.controls, { marginBottom: insets.bottom + 22 }]}>
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityLabel={muted ? "Unmute microphone" : "Mute microphone and finish this turn"}
-            accessibilityState={{ checked: muted, disabled: muteDisabled }}
-            disabled={muteDisabled}
-            style={[styles.muteBtn, muted && styles.muteBtnActive, muteDisabled && styles.disabledBtn]}
-            onPress={() => void toggleMute()}
-          >
-            <Icon icon={muted ? Mic : MicOff} size={20} color={muted ? colors.red : colors.text} />
-            <Text style={[styles.muteText, muted && styles.muteTextActive]}>
-              {muted ? "Unmute" : "Mute"}
-            </Text>
-          </Pressable>
-          <Pressable style={styles.endBtn} onPress={() => router.back()}>
-            <Text style={styles.endText}>End</Text>
-          </Pressable>
-        </View>
-      </Pressable>
+      <LiveVoiceView
+        channelLabel={params.channelName || channelId}
+        threadSession={threadId != null}
+        rootSnippet={params.rootSnippet}
+        status={status}
+        muted={muted}
+        muteBusy={muteBusy}
+        meteringDb={recorderState.metering ?? null}
+        onInterrupt={interrupt}
+        onToggleMute={() => void toggleMute()}
+        onEnd={() => router.back()}
+      />
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg, alignItems: "center" },
-  channelRow: { flexDirection: "row", alignItems: "center", gap: 7 },
-  channel: { color: colors.dim, fontSize: 14.5, fontWeight: "700" },
-  rootSnippet: {
-    color: colors.dim,
-    fontSize: 12.5,
-    marginTop: 6,
-    paddingHorizontal: 36,
-    textAlign: "center",
-    opacity: 0.8,
-  },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 34 },
-  orb: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
-    backgroundColor: colors.accent,
-    opacity: 0.9,
-  },
-  orbRecording: { backgroundColor: colors.red },
-  orbThinking: { backgroundColor: colors.amber, opacity: 0.6 },
-  orbSpeaking: { backgroundColor: colors.a1 },
-  status: { color: colors.text, fontSize: 16.5, fontWeight: "600" },
-  errorHint: {
-    color: colors.dim,
-    fontSize: 13.5,
-    textAlign: "center",
-    paddingHorizontal: 40,
-  },
-  endBtn: {
-    backgroundColor: colors.panelStrong,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 24,
-    paddingVertical: 12,
-    paddingHorizontal: 44,
-  },
-  controls: { flexDirection: "row", alignItems: "center", gap: 12 },
-  muteBtn: {
-    minHeight: 48,
-    backgroundColor: colors.panelStrong,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 24,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  muteBtnActive: { borderColor: colors.red },
-  muteText: { color: colors.text, fontSize: 15.5, fontWeight: "700" },
-  muteTextActive: { color: colors.red },
-  disabledBtn: { opacity: 0.6 },
-  endText: { color: colors.text, fontSize: 15.5, fontWeight: "700" },
-});
