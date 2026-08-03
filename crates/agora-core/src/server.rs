@@ -37,6 +37,7 @@ use crate::attachments::sniff_image_mime;
 const MAX_MESSAGE_CHARS: usize = 20_000;
 const MAX_PINS_PER_CHANNEL: i64 = 25;
 const MAX_FILES_PER_MESSAGE: usize = 5;
+const MAX_AGENT_WS_BYTES: usize = 80 * 1024 * 1024;
 const MAX_AGENT_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 /// Distinct emoji per message — bounds the chip row like Slack does.
 const MAX_REACTION_KINDS_PER_MESSAGE: usize = 20;
@@ -3155,6 +3156,7 @@ async fn handle_ui_socket(state: AppState, user: AuthedUser, socket: WebSocket) 
 async fn agent_ws(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> Response {
     let token = q.get("token").cloned().unwrap_or_default();
@@ -3162,13 +3164,14 @@ async fn agent_ws(
         return (StatusCode::UNAUTHORIZED, "bad pairing token").into_response();
     };
     let per_file = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
-    let wire_limit = per_file
+    let wire_limit = (per_file
         .saturating_mul(MAX_FILES_PER_MESSAGE)
         .saturating_mul(4) / 3
-        + 1024 * 1024;
+        + 1024 * 1024).min(MAX_AGENT_WS_BYTES);
+    let upload_key = format!("agent:{}", rate_key(&peer));
     ws.max_frame_size(wire_limit)
         .max_message_size(wire_limit)
-        .on_upgrade(move |socket| handle_agent_socket(state, socket, source, token))
+        .on_upgrade(move |socket| handle_agent_socket(state, socket, source, token, upload_key))
 }
 
 fn register_pairing_socket(
@@ -3188,7 +3191,9 @@ fn register_pairing_socket(
 
 /// Dial-in bridge: the agent speaks first with `hello {agents: [...]}`,
 /// then the same frame protocol as an outbound connection.
-async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String, token: String) {
+async fn handle_agent_socket(
+    state: AppState, socket: WebSocket, source: String, token: String, upload_key: String,
+) {
     let (sink, mut stream) = socket.split();
     let (tx, rx) = unbounded_channel::<Value>();
     let conn_id = state.hub.next_conn_id();
@@ -3227,11 +3232,11 @@ async fn handle_agent_socket(state: AppState, socket: WebSocket, source: String,
                             let has_attachments = frame["type"] == "post"
                                 && frame["attachments"].as_array().is_some_and(|a| !a.is_empty());
                             let agent_id = frame["agent_id"].as_str().unwrap_or_default();
-                            if has_attachments && !state.upload_limiter.allow(&format!("agent-conn:{conn_id}")) {
+                            if has_attachments && !state.upload_limiter.allow(&upload_key) {
                                 let _ = tx.send(json!({
                                     "type": "error", "frame_type": "post", "agent_id": agent_id,
                                     "request_id": frame["request_id"], "error": "too many uploads — slow down",
-                                    "channel_id": frame["channel_id"], "thread_id": frame["thread_id"],
+                                    "channel_id": frame["channel_id"], "thread_id": frame["thread_id"].as_i64(),
                                 }));
                             } else {
                                 state.hub.handle_agent_frame_from(conn_id, &frame);
