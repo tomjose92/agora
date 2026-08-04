@@ -45,9 +45,9 @@ function AgentAccessPolicy({ agent, onBack }: { agent: AgentSource["agents"][num
       <p className="conn-hint">Instance admins always have access. Select additional members below.</p>
       {!policy.is_public && <><input aria-label="Search people" placeholder="Search people" value={filter} onChange={event=>setFilter(event.target.value)}/><div className="conn-access-users">{users.filter(user => !user.disabled && user.instance_role !== "admin" && `${user.display_name} ${user.username}`.toLowerCase().includes(filter.toLowerCase())).map(user => {
         const checked=policy.grants.includes(user.username);
-        return <label key={user.username}><input type="checkbox" checked={checked} disabled={update.isPending}
-          onChange={event => save(false,event.target.checked?[...policy.grants,user.username]:policy.grants.filter(x=>x!==user.username))}/>
-          <span>{user.display_name || user.username}<small>@{user.username}</small></span></label>;
+        return <label key={user.username}><span>{user.display_name || user.username}<small>@{user.username}</small></span>
+          <input type="checkbox" checked={checked} disabled={update.isPending}
+            onChange={event => save(false,event.target.checked?[...policy.grants,user.username]:policy.grants.filter(x=>x!==user.username))}/></label>;
       })}</div></>}
     </>}
   </div>;
@@ -56,7 +56,7 @@ function AgentAccessPolicy({ agent, onBack }: { agent: AgentSource["agents"][num
 function SourceAgentAccess({ source, onBack, onSelect }: { source: AgentSource; onBack: () => void; onSelect: (agent: AgentSource["agents"][number]) => void }) {
   return <div className="conn-access"><BackButton onClick={onBack} label="Connections" />
     <h3>{source.name}</h3><p className="dim">Choose an agent to manage who can start a direct message.</p>
-    <div className="conn-access-agent-list">{source.agents.map(agent => <button className="conn-row" key={agent.id} onClick={()=>onSelect(agent)}>
+    <div className="conn-access-agent-list">{source.agents.map(agent => <button className="conn-row conn-access-agent" key={agent.id} onClick={()=>onSelect(agent)}>
       <span className={`conn-dot ${agent.live?"on":"off"}`}/><span className="conn-row-main"><strong>{agent.name}</strong><small>{agent.live?"Online":"Offline"}</small></span><Icon name="chevron-right"/>
     </button>)}</div>
     {!source.agents.length && <p className="dim conn-empty">No agents have registered through this connection yet.</p>}

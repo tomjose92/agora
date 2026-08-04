@@ -18,6 +18,11 @@ import { ChannelPane } from "./ChannelPane";
 import { ThreadPane } from "./ThreadPane";
 import { MembersPanel } from "./MembersPanel";
 
+const namedRoot = { ...fixtureMessages[0], alias: "Responsive layout review" };
+const namedThreads = fixtureThreads.map(thread => thread.root.id === namedRoot.id
+  ? { ...thread, root: namedRoot }
+  : thread);
+
 type LayoutMode = "channel" | "thread" | "members";
 
 function RealResponsivePanes({ mode }: { mode: LayoutMode }) {
@@ -41,16 +46,16 @@ function RealResponsivePanes({ mode }: { mode: LayoutMode }) {
 const routes = {
   "GET /api/me": fixtureMe,
   "GET /api/groups": { groups: fixtureGroups },
-  "GET /api/threads?limit=100": { threads: fixtureThreads },
+  "GET /api/threads?limit=100": { threads: namedThreads },
   "GET /api/agents": { agents: fixtureAgents },
   "GET /api/users": { users: fixtureUsers },
   "GET /api/groups/product/members": { members: fixtureMembers },
   "GET /api/groups/product/templates": { templates: fixtureTemplates },
   "GET /api/channels/general/agents": { agents: fixtureChannelAgents },
   "GET /api/channels/general/activity": { typing: [], progress: [] },
-  "GET /api/channels/general/messages?limit=50": { messages: fixtureMessages },
+  "GET /api/channels/general/messages?limit=50": { messages: [namedRoot, ...fixtureMessages.slice(1)] },
   "GET /api/channels/general/messages?limit=50&thread_id=42": { messages: fixtureReplies },
-  "GET /api/messages/42": fixtureMessages[0],
+  "GET /api/messages/42": namedRoot,
   "GET /api/channels/general/pins": { pins: [] },
   "GET /api/channels/general/stars": { stars: [] },
   "PUT /api/channels/general/read": { ok: true, last_read_id: 43 },
@@ -132,6 +137,7 @@ export const TabletThreadOverlay: Story = {
   play: async ({ canvasElement }) => {
     const thread = element(canvasElement, "#agora-thread");
     await waitFor(() => expect(thread).toBeVisible());
+    await waitFor(() => expect(thread.querySelector(".ago-thread-name")).toHaveTextContent("Responsive layout review"));
     expect(getComputedStyle(thread).position).toBe("fixed");
     expect(element(canvasElement, "#agora-main")).toBeVisible();
     await expectNoHorizontalOverflow(canvasElement);

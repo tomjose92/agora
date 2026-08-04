@@ -90,6 +90,7 @@ export function ThreadPane() {
   const fetchedRootQ = useMessage(rootId, !cachedRoot);
   const fetchedRoot = fetchedRootQ.data;
   const root = cachedRoot || fetchedRoot;
+  const threadName = root?.alias?.trim() || "";
 
   const threads = useThreads().data || [];
   const threadRow = threads.find(t => t.root.id === rootId);
@@ -166,6 +167,7 @@ export function ThreadPane() {
             onClick={() => ui.closeThread()}>
             <span className="hash">#</span>{channel.name}
           </span>
+          {threadName && <span className="ago-thread-name" title={threadName}>{threadName}</span>}
         </div>
         <div className="ago-head-actions">
           {group && channel && (

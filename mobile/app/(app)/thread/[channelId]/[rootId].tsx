@@ -287,6 +287,7 @@ export default function ThreadScreen() {
       </View>
     );
   }
+  const threadName = root?.alias?.trim() || "";
 
   return (
     <>
@@ -295,9 +296,10 @@ export default function ThreadScreen() {
           headerTitle: () =>
             channelName ? (
               <Pressable onPress={openChannel} hitSlop={6}>
-                <Text style={styles.headerTitle}>
-                  Thread · <Text style={styles.headerChan}># {channelName}</Text>
-                </Text>
+                <View style={styles.headerTitleWrap}>
+                  <Text style={styles.headerTitle}>Thread · <Text style={styles.headerChan}># {channelName}</Text></Text>
+                  {threadName ? <Text numberOfLines={1} style={styles.headerThreadName}>{threadName}</Text> : null}
+                </View>
               </Pressable>
             ) : (
               <Text style={styles.headerTitle}>Thread</Text>
@@ -440,6 +442,8 @@ const styles = StyleSheet.create({
   headerBtnOff: { opacity: 0.35 },
   deepLinkTarget: { backgroundColor: "rgba(139,124,255,0.16)", borderRadius: 8 },
   headerTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
+  headerTitleWrap: { alignItems: "center", maxWidth: 230, gap: 2 },
+  headerThreadName: { color: colors.dim, fontSize: 11.5, fontWeight: "500", maxWidth: 220 },
   headerChan: { color: colors.dim },
   rootMsg: {
     borderBottomWidth: StyleSheet.hairlineWidth,
