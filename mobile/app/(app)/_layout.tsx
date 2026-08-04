@@ -54,7 +54,7 @@ function UnreadSync() {
 
 /** Tapping a banner lands in its channel (or thread). Covers warm taps and
     cold starts alike via the last-response hook. */
-function NotificationTapRouter() {
+export function NotificationTapRouter() {
   const response = Notifications.useLastNotificationResponse();
   const pathname = usePathname();
   const handled = useRef<string | null>(null);
