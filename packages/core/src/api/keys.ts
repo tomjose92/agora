@@ -16,6 +16,8 @@ export const keys = {
   templates: (groupId: string) => ["templates", groupId] as const,
   users: ["users"] as const,
   agents: ["agents"] as const,
+  dms: ["dms"] as const,
+  agentDmPolicy: (agentId: string) => ["agentDmPolicy", agentId] as const,
   search: (q: string, scope: string, file = "") => ["search", q, scope, file] as const,
   connections: ["connections"] as const,
   connectionsInfo: ["connectionsInfo"] as const,

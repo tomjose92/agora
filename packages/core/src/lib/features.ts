@@ -3,4 +3,5 @@
    a migration. */
 export const FEATURES = {
   stars: false,
+  dms: true,
 };

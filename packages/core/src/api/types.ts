@@ -45,6 +45,10 @@ export interface Channel {
   unread?: number;
   mentions?: number;
   last_read_id?: number;
+  kind?: "channel" | "agent_dm";
+  dm_user_id?: string | null;
+  dm_agent_id?: string | null;
+  dm_can_post?: boolean;
 }
 
 export interface Group {
@@ -59,6 +63,34 @@ export interface Group {
   hidden?: boolean;
   /** Open to every signed-in user, membership or not (admin toggle). */
   is_public?: boolean;
+  kind?: "agent_dms";
+}
+
+export interface AgentDmConversation {
+  channel_id: string;
+  agent_id: string;
+  agent_name: string;
+  last_seen: number;
+  unread: number;
+}
+
+export interface AgentDmCandidate {
+  id: string;
+  name: string;
+  live: boolean;
+  can_dm: boolean;
+  is_public: boolean;
+}
+
+export interface AgentDmList {
+  conversations: AgentDmConversation[];
+  agents: AgentDmCandidate[];
+}
+
+export interface AgentDmPolicy {
+  agent_id: string;
+  is_public: boolean;
+  grants: string[];
 }
 
 export interface MessageTemplate {

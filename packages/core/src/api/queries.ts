@@ -22,7 +22,10 @@ import {
 } from "../ws/reducer";
 import type {
   AgentInfo,
+  AgentDmList,
+  AgentDmPolicy,
   AskResponse,
+  Channel,
   ChannelActivity,
   ChannelAgent,
   Connection,
@@ -738,6 +741,48 @@ export function useAgents(staleTime?: number) {
     queryFn: async () =>
       (await api.get<{ agents: AgentInfo[] }>("/api/agents")).agents,
     staleTime,
+  });
+}
+
+export function useAgentDms() {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.dms,
+    queryFn: () => api.get<AgentDmList>("/api/dms"),
+  });
+}
+
+export function useOpenAgentDm() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (agentId: string) => api.post<Channel>(`/api/dms/${encodeURIComponent(agentId)}`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.dms });
+      void qc.invalidateQueries({ queryKey: keys.groups });
+    },
+  });
+}
+
+export function useAgentDmPolicy(agentId: string, enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.agentDmPolicy(agentId),
+    queryFn: () => api.get<AgentDmPolicy>(`/api/admin/agents/${encodeURIComponent(agentId)}/dm-policy`),
+    enabled: enabled && !!agentId,
+  });
+}
+
+export function useUpdateAgentDmPolicy(agentId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (policy: Pick<AgentDmPolicy, "is_public" | "grants">) =>
+      api.put<AgentDmPolicy>(`/api/admin/agents/${encodeURIComponent(agentId)}/dm-policy`, policy),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.agentDmPolicy(agentId) });
+      void qc.invalidateQueries({ queryKey: keys.dms });
+    },
   });
 }
 

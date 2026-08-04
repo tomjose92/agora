@@ -145,7 +145,7 @@ export default function ChannelScreen() {
   const pins = usePins(channelId);
   const stars = useStars(channelId);
   const channelAgents = useChannelAgents(channelId);
-  const members = useMembers(groupId ?? "");
+  const members = useMembers(groupId === "__dms" ? "" : (groupId ?? ""));
   useSeedActivity(channelId);
   const { typing, progress } = useChannelLive(channelId, null);
 
@@ -392,7 +392,7 @@ export default function ChannelScreen() {
               {FEATURES.stars ? <Pressable onPress={() => setSheet("stars")} hitSlop={8}>
                 <Icon icon={Star} size={20} color={colors.text} />
               </Pressable> : null}
-              {groupId ? (
+              {groupId && groupId !== "__dms" ? (
                 <Pressable onPress={openMembers} hitSlop={8}>
                   <Icon icon={Users} size={20} color={colors.text} />
                 </Pressable>
@@ -406,7 +406,7 @@ export default function ChannelScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={keyboardOffset}
       >
-        {noAgents && groupId ? (
+        {noAgents && groupId && groupId !== "__dms" ? (
           <Pressable style={styles.noAgents} onPress={openMembers}>
             <Text style={styles.noAgentsText}>
               No agents are listening in this channel yet — tap to add one under Members.
@@ -483,7 +483,9 @@ export default function ChannelScreen() {
         ) : null}
         <TypingRow typing={typing} />
         <ProgressBubbles progress={progress} />
-        <Composer
+        {channelMeta?.channel.kind === "agent_dm" && channelMeta.channel.dm_can_post === false ? (
+          <Text style={styles.noAgentsText}>Your access was removed. This conversation is read-only.</Text>
+        ) : <Composer
           key={channelId}
           placeholder={`Message # ${channelName}`}
           mentions={mentionCandidates}
@@ -504,7 +506,7 @@ export default function ChannelScreen() {
                 }
               : undefined
           }
-        />
+        />}
       </KeyboardAvoidingView>
       {actionsFor ? (
         <MessageActions
