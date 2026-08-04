@@ -32,6 +32,9 @@ import {
   useDeleteChannel,
   useDeleteGroup,
   useGroups,
+  FEATURES,
+  useAgentDms,
+  useOpenAgentDm,
   useSetGroupHidden,
   useThreads,
   useUpdateChannel,
@@ -327,6 +330,44 @@ function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean 
   );
 }
 
+function DmGroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean }) {
+  const [choosing, setChoosing] = useState(false);
+  const dms = useAgentDms();
+  const open = useOpenAgentDm();
+  const channels = unreadsOnly ? group.channels.filter(c => (c.unread ?? 0) > 0) : group.channels;
+  return (
+    <View style={styles.groupCard}>
+      <View style={styles.groupHead}>
+        <Icon icon={Bot} size={16} color={colors.a1} />
+        <Text style={styles.groupName}>Direct messages</Text>
+        <Pressable onPress={() => setChoosing(x => !x)} hitSlop={10} style={styles.plusBtn}>
+          <Text style={styles.plus}>＋</Text>
+        </Pressable>
+      </View>
+      {choosing ? <View style={styles.dmPicker}>
+        {(dms.data?.agents ?? []).filter(a => a.can_dm).map(agent => (
+          <Pressable key={agent.id} style={styles.channelRow} onPress={() => open.mutate(agent.id, {
+            onSuccess: channel => { setChoosing(false); router.push({ pathname: "/(app)/channel/[id]", params: { id: channel.id, name: channel.name, groupId: "__dms" } }); },
+            onError: e => toastErr("Couldn't open DM", e),
+          })}>
+            <Text style={styles.hash}>↔</Text><Text style={styles.channelName}>{agent.name}</Text>
+            <Text style={agent.live ? styles.dmOnline : styles.dmOffline}>{agent.live ? "online" : "offline"}</Text>
+          </Pressable>
+        ))}
+        {dms.isSuccess && !(dms.data?.agents ?? []).some(a => a.can_dm) ? <Text style={styles.emptyChannels}>No agents are available to you yet.</Text> : null}
+      </View> : null}
+      {channels.map(channel => (
+        <Pressable key={channel.id} style={styles.channelRow} onPress={() => router.push({
+          pathname: "/(app)/channel/[id]", params: { id: channel.id, name: channel.name, groupId: "__dms" },
+        })}>
+          <Text style={styles.hash}>↔</Text><Text style={styles.channelName}>{channel.name}</Text>
+          <UnreadBadge count={channel.unread ?? 0} />
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 /* Collapsed drawer of hidden groups/channels at the bottom of the home list:
    they stay reachable (tap to open) and restorable (tap the eye) without
    crowding the main list. */
@@ -499,7 +540,9 @@ export default function Home() {
         {(groups.data ?? [])
           .filter((g) => !g.hidden)
           .map((g) => (
-            <GroupCard key={g.id} group={g} unreadsOnly={unreadsOnly} />
+            FEATURES.dms && g.kind === "agent_dms"
+              ? <DmGroupCard key={g.id} group={g} unreadsOnly={unreadsOnly} />
+              : <GroupCard key={g.id} group={g} unreadsOnly={unreadsOnly} />
           ))}
         {groups.isSuccess && groups.data.length === 0 ? (
           <Text style={styles.empty}>No groups yet. Create one to get started.</Text>
@@ -592,6 +635,9 @@ const styles = StyleSheet.create({
   },
   hash: { color: colors.faint, fontSize: 14 },
   channelName: { color: colors.text, fontSize: 14.5, flex: 1 },
+  dmPicker: { borderTopWidth: 1, borderTopColor: colors.border, paddingVertical: 4 },
+  dmOnline: { color: colors.green, fontSize: 11.5 },
+  dmOffline: { color: colors.faint, fontSize: 11.5 },
   badge: {
     backgroundColor: "rgba(255,255,255,0.14)",
     borderRadius: 9,

@@ -149,8 +149,9 @@ export function ChannelPane() {
   const [starsOpen, setStarsOpen] = useState(false);
   const stars = useStars(channel?.id || "").data || [];
 
-  const members = useMembers(group?.id || "").data || [];
-  const isAdmin = !!(group && (group.role === "admin" || me?.instance_admin));
+  const isDm = channel?.kind === "agent_dm";
+  const members = useMembers(isDm ? "" : (group?.id || "")).data || [];
+  const isAdmin = !!(!isDm && group && (group.role === "admin" || me?.instance_admin));
   const mentions = useMemo(
     () => buildMentionIndex(
       agents.map(a => ({ id: a.id, name: a.name })),
@@ -221,8 +222,8 @@ export function ChannelPane() {
           </div>
         ) : (
           <div className="ago-head-text">
-            <span className="ago-chan-name"><span className="hash">#</span>{channel.name}</span>
-            <span className="dim" title={channel.topic || ""}>{channel.topic || group.name}</span>
+            <span className="ago-chan-name"><span className="hash">{isDm ? "↔" : "#"}</span>{channel.name}</span>
+            <span className="dim" title={channel.topic || ""}>{isDm ? "Private agent conversation" : (channel.topic || group.name)}</span>
             {isAdmin && (
               <button className="ago-edit-btn" title={`Rename #${channel.name} / edit topic`}
                 onClick={() => { setEditing(true); setEditName(channel.name); setEditTopic(channel.topic || ""); }}>
@@ -232,12 +233,12 @@ export function ChannelPane() {
           </div>
         )}
         <div className="ago-head-actions">
-          <button className="btn sm" title="Copy link to this channel"
+          {!isDm && <button className="btn sm" title="Copy link to this channel"
             onClick={() => void copyDeepLink({
               kind: "channel", groupId: group.id, channelId: channel.id,
             }, "Channel")}>
             <Icon name="link" /> Link
-          </button>
+          </button>}
           {me?.voice && <SpeakButton />}
           {me?.voice && <LiveButton channelId={channel.id} threadId={null} />}
           {FEATURES.stars && <button className={`btn sm ago-star-toggle ${starsOpen ? "active" : ""}`}
@@ -245,26 +246,29 @@ export function ChannelPane() {
             onClick={() => setStarsOpen(!starsOpen)}>
             {stars.length ? <><Icon name="star" cls="fill" /> {stars.length}</> : <Icon name="star" />}
           </button>}
-          <button className={`btn sm ${ui.membersOpen ? "active" : ""}`}
-            onClick={() => ui.setMembersOpen(!ui.membersOpen)}>Members</button>
+          {!isDm && <button className={`btn sm ${ui.membersOpen ? "active" : ""}`}
+            onClick={() => ui.setMembersOpen(!ui.membersOpen)}>Members</button>}
         </div>
       </div>
       <PinBar channelId={channel.id} />
       {FEATURES.stars && starsOpen && <StarPop channelId={channel.id} onClose={() => setStarsOpen(false)} />}
-      {!agents.length && (
+      {!agents.length && !isDm && (
         <div className="ago-hint-banner">
           No agents are listening in this channel yet.
           Open <b>Members</b> and add one — connect agents first via <b>Connections</b> (top right).
         </div>
       )}
+      {isDm && channel.dm_can_post === false && <div className="ago-hint-banner">
+        Your access to this agent has been removed. This conversation is a read-only archive.
+      </div>}
       <MessageLog channelId={channel.id} isAdmin={isAdmin} mentions={mentions}
         onOpenThread={rootId => ui.openThread(rootId)} />
       <LiveRows channelId={channel.id} threadId={null} />
       <LiveStrip channelId={channel.id} threadId={null} />
-      <Composer channelId={channel.id} channelName={channel.name} groupId={group.id} threadId={null}
-        agents={agents} candidates={candidates} voiceOK={!!me?.voice}
+      {(!isDm || channel.dm_can_post !== false) && <Composer channelId={channel.id} channelName={channel.name} groupId={group.id} threadId={null}
+        agents={agents} candidates={isDm ? [] : candidates} voiceOK={!!me?.voice}
         replyInThread={replyInThread}
-        onSetReplyInThread={setReplyInThread} />
+        onSetReplyInThread={setReplyInThread} />}
     </div>
   );
 }

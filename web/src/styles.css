@@ -1816,3 +1816,4 @@ a.btn { text-decoration: none; }
   .ago-map-preview { height: 165px; }
   .ago-map-region-chips { width: 100%; margin-left: 0; }
 }
+.ago-dm-popover{position:absolute;left:12px;bottom:48px;width:min(360px,calc(100vw - 24px));max-height:70vh;overflow:auto;background:var(--panel,#181a20);border:1px solid var(--border,#343741);border-radius:10px;padding:12px;z-index:80;box-shadow:0 14px 40px #0008}.ago-dm-popover-head,.ago-dm-policy-head,.ago-dm-agent{display:flex;align-items:center;justify-content:space-between;gap:10px}.ago-dm-agent-list,.ago-dm-grants{display:grid;gap:6px;margin-top:10px}.ago-dm-agent{width:100%;padding:9px;border:0;border-radius:7px;background:var(--surface,#242731);color:inherit;text-align:left}.ago-dm-policy-row{padding:10px 0;border-bottom:1px solid var(--border,#343741)}.ago-dm-grants label{font-size:12px}

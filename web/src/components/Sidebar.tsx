@@ -5,6 +5,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import {
+  FEATURES,
   useCreateChannel, useCreateGroup, useDeleteChannel, useGroups, useHideThread,
   useMe, useRenameThread, useReorderChannels, useReorderGroups, useSetGroupHidden,
   useThreads, useUpdateChannel,
@@ -14,6 +15,7 @@ import { Icon } from "../lib/icons";
 import { toast } from "../lib/toast";
 import { useConfirm } from "../state/confirm";
 import { useUiState } from "../state/ui";
+import { AgentDmPanel } from "./AgentDmPanel";
 
 const SEARCH_KEY = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl+K";
 
@@ -100,6 +102,7 @@ export function Sidebar() {
   const setGroupHidden = useSetGroupHidden();
   const [creating, setCreating] = useState<{ kind: "group" } | { kind: "channel"; g: string } | null>(null);
   const [createName, setCreateName] = useState("");
+  const [dmOpen, setDmOpen] = useState(false);
   const reorderGroups = useReorderGroups();
   const reorderChannels = useReorderChannels();
   /* Drag-to-reorder, mirroring agoDragStart/agoDragOverRow/agoDropRow:
@@ -216,12 +219,13 @@ export function Sidebar() {
         {groups.filter(g => !g.hidden).map(g => {
           const open = ui.isExpanded(g.id);
           const sel = g.id === ui.sel.g;
-          const admin = g.role === "admin" || isOwner;
+          const isDms = g.kind === "agent_dms";
+          const admin = !isDms && (g.role === "admin" || isOwner);
           return (
             <div key={g.id} className={`ago-group ${open ? "open" : ""} ${sel ? "sel" : ""}`}>
               <div className={`ago-group-head ${groupUnread(g) || groupMentions(g) ? "unread" : ""}`}
                 title={`Open ${g.name}`}
-                draggable
+                draggable={!isDms}
                 onDragStart={dragStart("group", g.id)}
                 onDragOver={dragOver("group")}
                 onDrop={dropOn("group", g.id)}
@@ -250,9 +254,9 @@ export function Sidebar() {
                       onDragOver={dragOver("chan", g.id)}
                       onDrop={dropOn("chan", c.id, g.id)}
                       onClick={() => ui.selectChannel(g.id, c.id)}>
-                      <span className="hash">#</span><span className="nm">{c.name}</span>
+                      <span className="hash">{isDms ? "↔" : "#"}</span><span className="nm">{c.name}</span>
                       <Badge n={unread} mentions={mentions} />
-                      <button className="ago-x hide" title={`Hide #${c.name} from your sidebar`}
+                      {!isDms && <button className="ago-x hide" title={`Hide #${c.name} from your sidebar`}
                         onClick={e => {
                           e.stopPropagation();
                           updateChannel.mutate({ groupId: g.id, channelId: c.id, hidden: true }, {
@@ -260,7 +264,7 @@ export function Sidebar() {
                           });
                         }}>
                         <Icon name="eye-off" />
-                      </button>
+                      </button>}
                       {admin && (
                         <button className={`ago-x ${chArmed ? "armed" : ""}`}
                           title={chArmed ? `Click again to delete #${c.name}` : "Delete channel"}
@@ -285,6 +289,7 @@ export function Sidebar() {
                   ? createRow
                   : <button className="ago-add" onClick={() => { setCreating({ kind: "channel", g: g.id }); setCreateName(""); }}>+ channel</button>
               )}
+              {open && isDms && FEATURES.dms && <button className="ago-add" onClick={() => setDmOpen(true)}>+ agent DM</button>}
             </div>
           );
         })}
@@ -331,6 +336,7 @@ export function Sidebar() {
           ? createRow
           : <button className="ago-add" onClick={() => { setCreating({ kind: "group" }); setCreateName(""); }}>+ New group</button>}
       </div>
+      {dmOpen && <AgentDmPanel onClose={() => setDmOpen(false)} />}
     </div>
   );
 }

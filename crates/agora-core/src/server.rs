@@ -262,7 +262,25 @@ fn require_channel_member(
     channel_id: &str,
 ) -> Result<Value, ApiError> {
     let channel = channel_or_404(state, channel_id)?;
+    if channel["kind"] == "agent_dm" {
+        if state.hub.store.user_owns_agent_dm(&user.username, channel_id) { return Ok(channel); }
+        return Err(err(StatusCode::FORBIDDEN, "This direct message is private"));
+    }
     require_member(state, user, channel["group_id"].as_str().unwrap_or_default())?;
+    Ok(channel)
+}
+
+fn require_channel_postable(state: &AppState, user: &AuthedUser, channel_id: &str) -> Result<Value, ApiError> {
+    let channel = require_channel_member(state, user, channel_id)?;
+    if channel["kind"] == "agent_dm" {
+        let agent_id = channel["dm_agent_id"].as_str().unwrap_or_default();
+        if !state.hub.store.user_can_start_agent_dm(&user.username, agent_id) {
+            return Err(err(StatusCode::FORBIDDEN, "Agent DM access has been revoked; history is read-only"));
+        }
+        if state.hub.store.agent(agent_id).is_none() {
+            return Err(err(StatusCode::CONFLICT, "This agent is no longer available; history is read-only"));
+        }
+    }
     Ok(channel)
 }
 
@@ -387,6 +405,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/agents", get(available_agents))
         .route("/api/agents/{agent_id}", delete(forget_agent))
         .route("/api/agents/{agent_id}/avatar", get(agent_avatar))
+        .route("/api/dms", get(list_agent_dms))
+        .route("/api/dms/{agent_id}", post(open_agent_dm))
+        .route("/api/admin/agents/{agent_id}/dm-policy", get(get_agent_dm_policy).put(update_agent_dm_policy))
         .route("/api/files/{file_id}", get(get_file))
         .route("/agent/files/{file_id}", get(get_agent_file))
         .route("/api/connections", get(list_connections).post(add_connection))
@@ -829,10 +850,30 @@ async fn list_groups(
         .collect();
     // The caller's personal order (their reorder drags), not the global one.
     let prefs = state.hub.store.user_prefs(&user.username, "group");
-    let groups: Vec<Value> = overlay_prefs(mine, &prefs)
+    let mut groups: Vec<Value> = overlay_prefs(mine, &prefs)
         .iter()
         .map(|g| group_payload(&state, g, &user))
         .collect();
+    let dm_channels = state.hub.store.agent_dms_for_user(&user.username).into_iter().filter_map(|dm| {
+        let mut channel = state.hub.store.channel(dm["channel_id"].as_str()?)?;
+        channel["unread"] = dm["unread"].clone(); channel["mentions"] = json!(0);
+        channel["dm_can_post"] = json!(state.hub.store.user_can_start_agent_dm(&user.username,
+            channel["dm_agent_id"].as_str().unwrap_or_default()));
+        Some(channel)
+    }).collect::<Vec<_>>();
+    // Only surface the DM section to users it means something to: existing
+    // conversations, or at least one agent they may DM. Anyone else (and any
+    // older client) never sees an empty "Direct messages" group.
+    let can_dm_any = dm_channels.is_empty()
+        && state.hub.store.known_agents().iter().any(|a| {
+            a["id"].as_str()
+                .is_some_and(|id| state.hub.store.user_can_start_agent_dm(&user.username, id))
+        });
+    if !dm_channels.is_empty() || can_dm_any {
+        groups.insert(0, json!({"id":"__dms","name":"Direct messages","description":"Private conversations with agents",
+            "created_by":Value::Null,"created_at":0.0,"channels":dm_channels,"role":"member","hidden":false,
+            "is_public":false,"kind":"agent_dms"}));
+    }
     Ok(Json(json!({"groups": groups})))
 }
 
@@ -1321,6 +1362,13 @@ async fn search(
             query, match_any, channel_id, group_id, author, None, scope_user, newest_first,
             has_files, file_type, limit + 1, offset,
         );
+        if user.instance_admin {
+            let owned = store.search_messages_ext(query, match_any, channel_id, group_id, author, None,
+                Some(&user.username), newest_first, has_files, file_type, limit + 1, offset);
+            for row in owned {
+                if row["group_id"].as_str() == Some("") && !rows.iter().any(|x| x["id"] == row["id"]) { rows.push(row); }
+            }
+        }
         let has_more = rows.len() > limit;
         rows.truncate(limit);
         out["messages"] = json!({"items": rows, "has_more": has_more, "offset": offset});
@@ -1379,7 +1427,7 @@ async fn search_ask(
     let group_id = payload["group_id"].as_str().filter(|s| !s.is_empty());
     // Recall-oriented retrieval: any-term match, bm25 ranks denser hits up.
     let retrieval = crate::ai::retrieval_keywords(&question).unwrap_or_else(|| question.clone());
-    let sources = state.hub.store.search_messages(
+    let mut sources = state.hub.store.search_messages(
         &retrieval,
         true,
         channel_id,
@@ -1391,6 +1439,14 @@ async fn search_ask(
         crate::ai::CONTEXT_MESSAGES,
         0,
     );
+    if user.instance_admin {
+        let owned = state.hub.store.search_messages(&retrieval, true, channel_id, group_id, None, None,
+            Some(&user.username), false, crate::ai::CONTEXT_MESSAGES, 0);
+        for row in owned {
+            if row["group_id"].as_str() == Some("") && !sources.iter().any(|x| x["id"] == row["id"]) { sources.push(row); }
+        }
+        sources.truncate(crate::ai::CONTEXT_MESSAGES);
+    }
     if sources.is_empty() {
         return Ok(Json(json!({
             "answer": Value::Null,
@@ -1417,7 +1473,7 @@ async fn post_message(
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let user = require_user(&state, &headers, &q)?;
-    require_channel_member(&state, &user, &channel_id)?;
+    require_channel_postable(&state, &user, &channel_id)?;
     let text = payload["text"].as_str().unwrap_or("").trim().to_string();
     if text.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "Message text required"));
@@ -1464,7 +1520,7 @@ async fn post_message_upload(
     if !state.upload_limiter.allow(&rate_key(&peer)) {
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
     }
-    require_channel_member(&state, &user, &channel_id)?;
+    require_channel_postable(&state, &user, &channel_id)?;
     let config = state.config.snapshot();
     let mut text = String::new();
     let mut thread_id: Option<i64> = None;
@@ -1557,7 +1613,7 @@ async fn post_voice_message(
     if !state.upload_limiter.allow(&rate_key(&peer)) {
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads — slow down"));
     }
-    require_channel_member(&state, &user, &channel_id)?;
+    require_channel_postable(&state, &user, &channel_id)?;
     let Some(key) = crate::voice::api_key() else {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -1745,7 +1801,9 @@ async fn get_agent_file(
         .file(&file_id)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "Unknown file"))?;
     let channel_id = meta["channel_id"].as_str().unwrap_or_default();
-    if !state.hub.store.agent_in_channel(agent_id, channel_id) {
+    if !state.hub.store.agent_in_channel(agent_id, channel_id)
+        || !state.hub.store.agent_dm_route_allowed(channel_id, agent_id)
+    {
         return Err(err(StatusCode::FORBIDDEN, "Agent is not a member of this channel"));
     }
     stream_file(&state, &file_id, &meta, &headers).await
@@ -2332,6 +2390,34 @@ async fn channel_activity(
     let user = require_user(&state, &headers, &q)?;
     require_channel_member(&state, &user, &channel_id)?;
     Ok(Json(state.hub.channel_activity(&channel_id)))
+}
+
+async fn list_agent_dms(State(state): State<AppState>, Query(q): Query<HashMap<String,String>>, headers: HeaderMap) -> Result<Json<Value>,ApiError> {
+    let user = require_user(&state,&headers,&q)?; let live = state.hub.live_agent_ids();
+    let agents = state.hub.store.known_agents().into_iter().map(|a| { let id=a["id"].as_str().unwrap_or_default(); let p=state.hub.store.agent_dm_policy(id);
+        json!({"id":id,"name":a["name"],"live":live.iter().any(|x|x==id),"can_dm":state.hub.store.user_can_start_agent_dm(&user.username,id),"is_public":p["is_public"]}) }).collect::<Vec<_>>();
+    Ok(Json(json!({"conversations":state.hub.store.agent_dms_for_user(&user.username),"agents":agents})))
+}
+
+async fn open_agent_dm(State(state): State<AppState>, Path(agent_id): Path<String>, Query(q): Query<HashMap<String,String>>, headers: HeaderMap) -> Result<Json<Value>,ApiError> {
+    let user=require_user(&state,&headers,&q)?;
+    if !state.hub.store.user_can_start_agent_dm(&user.username,&agent_id) { return Err(err(StatusCode::FORBIDDEN,"You do not have access to DM this agent")); }
+    let agent=state.hub.store.agent(&agent_id).ok_or_else(||err(StatusCode::NOT_FOUND,"Unknown agent"))?;
+    Ok(Json(state.hub.store.open_agent_dm(&user.username,&agent_id,agent["name"].as_str().unwrap_or(&agent_id))))
+}
+
+async fn get_agent_dm_policy(State(state): State<AppState>, Path(agent_id): Path<String>, Query(q): Query<HashMap<String,String>>, headers: HeaderMap) -> Result<Json<Value>,ApiError> {
+    let user=require_user(&state,&headers,&q)?; require_instance_admin(&user)?;
+    state.hub.store.agent(&agent_id).ok_or_else(||err(StatusCode::NOT_FOUND,"Unknown agent"))?;
+    Ok(Json(state.hub.store.agent_dm_policy(&agent_id)))
+}
+
+async fn update_agent_dm_policy(State(state): State<AppState>, Path(agent_id): Path<String>, Query(q): Query<HashMap<String,String>>, headers: HeaderMap, Json(payload): Json<Value>) -> Result<Json<Value>,ApiError> {
+    let user=require_user(&state,&headers,&q)?; require_instance_admin(&user)?;
+    state.hub.store.agent(&agent_id).ok_or_else(||err(StatusCode::NOT_FOUND,"Unknown agent"))?;
+    let grants=payload["grants"].as_array().ok_or_else(||err(StatusCode::BAD_REQUEST,"grants must be an array of usernames"))?.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>();
+    state.hub.store.set_agent_dm_policy(&agent_id,payload["is_public"].as_bool().unwrap_or(false),&grants);
+    Ok(Json(state.hub.store.agent_dm_policy(&agent_id)))
 }
 
 async fn available_agents(
@@ -3586,6 +3672,24 @@ mod tests {
         assert!(require_message_visible(&state, &mal, mid).is_ok());
         store.remove_member(gid, "user", "mal", None);
         assert!(require_message_visible(&state, &mal, mid).is_err());
+    }
+
+    #[test]
+    fn agent_dm_is_owner_only_even_for_instance_admin_and_revokes_to_read_only() {
+        let (state, _dir) = test_state(); let store=&state.hub.store;
+        store.create_user("alice","Alice",None,"member").unwrap();
+        store.create_user("operator","Operator",None,"admin").unwrap();
+        store.upsert_agent("codex","Codex","test",true,false,1);
+        store.set_agent_dm_policy("codex",false,&["alice".into()]);
+        let dm=store.open_agent_dm("alice","codex","Codex"); let cid=dm["id"].as_str().unwrap();
+        let alice=AuthedUser{username:"alice".into(),display_name:"Alice".into(),instance_admin:false};
+        let operator=AuthedUser{username:"operator".into(),display_name:"Operator".into(),instance_admin:true};
+        assert!(require_channel_member(&state,&alice,cid).is_ok());
+        assert!(require_channel_postable(&state,&alice,cid).is_ok());
+        assert!(require_channel_member(&state,&operator,cid).is_err());
+        store.set_agent_dm_policy("codex",false,&[]);
+        assert!(require_channel_member(&state,&alice,cid).is_ok());
+        assert!(require_channel_postable(&state,&alice,cid).is_err());
     }
 
     #[test]

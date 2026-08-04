@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS channels (
     name TEXT NOT NULL,
     topic TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
-    position INTEGER NOT NULL DEFAULT 0
+    position INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'channel',
+    dm_user_id TEXT,
+    dm_agent_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_channels_group ON channels(group_id);
 CREATE TABLE IF NOT EXISTS memberships (
@@ -144,6 +147,17 @@ CREATE TABLE IF NOT EXISTS agents (
     -- cache-busting stamp (file mtime there); the bytes are proxied on demand.
     has_avatar INTEGER NOT NULL DEFAULT 0,
     avatar_v INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS agent_dm_policies (
+    agent_id TEXT PRIMARY KEY,
+    is_public INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_dm_grants (
+    agent_id TEXT NOT NULL,
+    username TEXT NOT NULL,
+    granted_at REAL NOT NULL,
+    PRIMARY KEY (agent_id, username)
 );
 -- Expo push tokens from mobile clients (APNs/FCM via Expo), owned by the
 -- account that registered them so pushes follow channel visibility.
@@ -281,6 +295,19 @@ fn migrate(conn: &Connection) {
             .unwrap();
         }
     }
+    if !has_column("channels", "kind") {
+        conn.execute("ALTER TABLE channels ADD COLUMN kind TEXT NOT NULL DEFAULT 'channel'", []).unwrap();
+    }
+    if !has_column("channels", "dm_user_id") {
+        conn.execute("ALTER TABLE channels ADD COLUMN dm_user_id TEXT", []).unwrap();
+    }
+    if !has_column("channels", "dm_agent_id") {
+        conn.execute("ALTER TABLE channels ADD COLUMN dm_agent_id TEXT", []).unwrap();
+    }
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_dm_pair ON channels(dm_user_id, dm_agent_id) WHERE kind = 'agent_dm'",
+        [],
+    ).unwrap();
     // Public groups: every signed-in user gets member-level access without a
     // membership row.
     if !has_column("groups", "is_public") {
@@ -1045,7 +1072,7 @@ impl Store {
     pub fn channel(&self, channel_id: &str) -> Option<Value> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, group_id, name, topic, created_at, hidden FROM channels WHERE id = ?1",
+            "SELECT id, group_id, name, topic, created_at, hidden, kind, dm_user_id, dm_agent_id FROM channels WHERE id = ?1",
             params![channel_id],
             |r| {
                 Ok(json!({
@@ -1053,6 +1080,9 @@ impl Store {
                     "name": r.get::<_, String>(2)?, "topic": r.get::<_, String>(3)?,
                     "created_at": r.get::<_, f64>(4)?,
                     "hidden": r.get::<_, i64>(5)? != 0,
+                    "kind": r.get::<_, String>(6)?,
+                    "dm_user_id": r.get::<_, Option<String>>(7)?,
+                    "dm_agent_id": r.get::<_, Option<String>>(8)?,
                 }))
             },
         )
@@ -1078,6 +1108,83 @@ impl Store {
         .unwrap()
         .filter_map(Result::ok)
         .collect()
+    }
+
+    pub fn open_agent_dm(&self, username: &str, agent_id: &str, agent_name: &str) -> Value {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO channels (id, group_id, name, topic, created_at, kind, dm_user_id, dm_agent_id) \
+             VALUES (?1, '', ?2, '', ?3, 'agent_dm', ?4, ?5) \
+             ON CONFLICT(dm_user_id, dm_agent_id) WHERE kind = 'agent_dm' DO NOTHING",
+            params![new_id(agent_name), agent_name, now(), username, agent_id],
+        ).unwrap();
+        let id: String = conn.query_row(
+            "SELECT id FROM channels WHERE kind = 'agent_dm' AND dm_user_id = ?1 AND dm_agent_id = ?2",
+            params![username, agent_id], |r| r.get(0),
+        ).unwrap();
+        drop(conn);
+        self.channel(&id).unwrap_or(Value::Null)
+    }
+
+    pub fn agent_dms_for_user(&self, username: &str) -> Vec<Value> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.dm_agent_id, a.name, a.last_seen, \
+                    COALESCE((SELECT COUNT(*) FROM messages m WHERE m.channel_id = c.id AND m.thread_id IS NULL \
+                      AND m.id > COALESCE((SELECT last_read_id FROM reads WHERE username = ?1 AND channel_id = c.id), 0) \
+                      AND NOT (m.author_type = 'user' AND m.author_id = ?1)), 0) \
+             FROM channels c LEFT JOIN agents a ON a.id = c.dm_agent_id \
+             WHERE c.kind = 'agent_dm' AND c.dm_user_id = ?1 ORDER BY a.name"
+        ).unwrap();
+        stmt.query_map(params![username], |r| Ok(json!({
+            "channel_id": r.get::<_, String>(0)?, "agent_id": r.get::<_, String>(1)?,
+            "agent_name": r.get::<_, Option<String>>(2)?.unwrap_or_else(|| "Unknown agent".into()),
+            "last_seen": r.get::<_, Option<f64>>(3)?.unwrap_or(0.0), "unread": r.get::<_, i64>(4)?,
+        }))).unwrap().filter_map(Result::ok).collect()
+    }
+
+    pub fn agent_dm_policy(&self, agent_id: &str) -> Value {
+        let conn = self.conn.lock().unwrap();
+        let public = conn.query_row("SELECT is_public FROM agent_dm_policies WHERE agent_id = ?1",
+            params![agent_id], |r| r.get::<_, i64>(0)).unwrap_or(0) != 0;
+        let mut stmt = conn.prepare("SELECT username FROM agent_dm_grants WHERE agent_id = ?1 ORDER BY username").unwrap();
+        let grants: Vec<String> = stmt.query_map(params![agent_id], |r| r.get(0)).unwrap().filter_map(Result::ok).collect();
+        json!({"agent_id": agent_id, "is_public": public, "grants": grants})
+    }
+
+    pub fn set_agent_dm_policy(&self, agent_id: &str, public: bool, grants: &[String]) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("INSERT INTO agent_dm_policies(agent_id, is_public, updated_at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(agent_id) DO UPDATE SET is_public=excluded.is_public, updated_at=excluded.updated_at",
+            params![agent_id, public as i64, now()]).unwrap();
+        conn.execute("DELETE FROM agent_dm_grants WHERE agent_id = ?1", params![agent_id]).unwrap();
+        for user in grants {
+            conn.execute("INSERT INTO agent_dm_grants(agent_id, username, granted_at) \
+                 SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM users WHERE username = ?2 AND disabled = 0)",
+                params![agent_id, user, now()]).unwrap();
+        }
+    }
+
+    pub fn user_can_start_agent_dm(&self, username: &str, agent_id: &str) -> bool {
+        self.conn.lock().unwrap().query_row(
+            "SELECT 1 FROM agents a JOIN users u ON u.username = ?1 AND u.disabled = 0 WHERE a.id = ?2 AND ( \
+               u.instance_role = 'admin' OR \
+               EXISTS (SELECT 1 FROM agent_dm_policies p WHERE p.agent_id = a.id AND p.is_public = 1) OR \
+               EXISTS (SELECT 1 FROM agent_dm_grants g WHERE g.agent_id = a.id AND g.username = ?1)) LIMIT 1",
+            params![username, agent_id], |_| Ok(())).is_ok()
+    }
+
+    pub fn user_owns_agent_dm(&self, username: &str, channel_id: &str) -> bool {
+        self.conn.lock().unwrap().query_row(
+            "SELECT 1 FROM channels WHERE id = ?1 AND kind = 'agent_dm' AND dm_user_id = ?2",
+            params![channel_id, username], |_| Ok(())).is_ok()
+    }
+
+    pub fn agent_dm_route_allowed(&self, channel_id: &str, agent_id: &str) -> bool {
+        let Some(channel) = self.channel(channel_id) else { return false };
+        if channel["kind"] != "agent_dm" { return true; }
+        channel["dm_agent_id"].as_str() == Some(agent_id)
+            && channel["dm_user_id"].as_str().is_some_and(|user| self.user_can_start_agent_dm(user, agent_id))
     }
 
     pub fn delete_channel(&self, channel_id: &str) -> bool {
@@ -1120,6 +1227,11 @@ impl Store {
     /// created stay (they are shared spaces), only the `created_by`
     /// provenance is cleared.
     pub fn delete_user_data(&self, username: &str) {
+        let dm_channels: Vec<String> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare("SELECT id FROM channels WHERE kind = 'agent_dm' AND dm_user_id = ?1").unwrap();
+            stmt.query_map(params![username], |r| r.get(0)).unwrap().filter_map(Result::ok).collect()
+        };
         let file_ids: Vec<String>;
         {
             let conn = self.conn.lock().unwrap();
@@ -1179,6 +1291,7 @@ impl Store {
                 params![username],
             )
             .unwrap();
+            conn.execute("DELETE FROM agent_dm_grants WHERE username = ?1", params![username]).unwrap();
             conn.execute(
                 "UPDATE groups SET created_by = NULL WHERE created_by = ?1",
                 params![username],
@@ -1191,6 +1304,7 @@ impl Store {
         conn.execute("DELETE FROM push_tokens WHERE username = ?1", params![username]).unwrap();
         }
         self.unlink_files(&file_ids);
+        for channel_id in dm_channels { self.delete_channel(&channel_id); }
     }
 
     // ------------------------------------------------------------- members
@@ -1312,6 +1426,9 @@ impl Store {
     pub fn user_can_see_channel(&self, username: &str, channel_id: &str) -> bool {
         match self.channel(channel_id) {
             Some(chan) => {
+                if chan["kind"] == "agent_dm" {
+                    return chan["dm_user_id"].as_str() == Some(username);
+                }
                 self.user_can_access_group(username, chan["group_id"].as_str().unwrap_or_default())
             }
             None => false,
@@ -1324,6 +1441,9 @@ impl Store {
         let Some(chan) = self.channel(channel_id) else {
             return Vec::new();
         };
+        if chan["kind"] == "agent_dm" {
+            return chan["dm_agent_id"].as_str().map(|id| vec![id.to_string()]).unwrap_or_default();
+        }
         let group_id = chan["group_id"].as_str().unwrap_or_default().to_string();
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -1342,6 +1462,9 @@ impl Store {
     /// Whether one agent is a member of a channel, either through a
     /// group-wide membership or a row scoped to that exact channel.
     pub fn agent_in_channel(&self, agent_id: &str, channel_id: &str) -> bool {
+        if let Some(channel) = self.channel(channel_id).filter(|c| c["kind"] == "agent_dm") {
+            return channel["dm_agent_id"].as_str() == Some(agent_id);
+        }
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT 1 FROM channels c JOIN memberships m ON m.group_id = c.group_id \
@@ -2230,10 +2353,14 @@ impl Store {
             if let Some(agent) = agent_id {
                 let i = p.len() + 1;
                 sql.push_str(&format!(
-                    " AND EXISTS (SELECT 1 FROM memberships ms \
+                    " AND ((c.kind = 'agent_dm' AND c.dm_agent_id = ?{i} AND EXISTS ( \
+                         SELECT 1 FROM users du WHERE du.username = c.dm_user_id AND du.disabled = 0 AND ( \
+                           du.instance_role = 'admin' OR EXISTS (SELECT 1 FROM agent_dm_policies dp WHERE dp.agent_id = c.dm_agent_id AND dp.is_public = 1) OR \
+                           EXISTS (SELECT 1 FROM agent_dm_grants dg WHERE dg.agent_id = c.dm_agent_id AND dg.username = c.dm_user_id)))) \
+                       OR EXISTS (SELECT 1 FROM memberships ms \
                        WHERE ms.member_type = 'agent' AND ms.member_id = ?{i} \
                        AND ms.group_id = c.group_id \
-                       AND (ms.channel_id = '' OR ms.channel_id = m.channel_id))"
+                       AND (ms.channel_id = '' OR ms.channel_id = m.channel_id)))"
                 ));
                 p.push(Box::new(agent.to_string()));
             }
@@ -2243,11 +2370,13 @@ impl Store {
             if let Some(username) = user {
                 let i = p.len() + 1;
                 sql.push_str(&format!(
-                    " AND (g.is_public = 1 OR EXISTS (SELECT 1 FROM memberships mu \
+                    " AND ((c.kind = 'agent_dm' AND c.dm_user_id = ?{i}) OR (c.kind != 'agent_dm' AND (g.is_public = 1 OR EXISTS (SELECT 1 FROM memberships mu \
                        WHERE mu.member_type = 'user' AND mu.member_id = ?{i} \
-                       AND mu.group_id = c.group_id))"
+                       AND mu.group_id = c.group_id))))"
                 ));
                 p.push(Box::new(username.to_string()));
+            } else {
+                sql.push_str(" AND c.kind != 'agent_dm'");
             }
             // Text hits first (best bm25), then filename-only hits; newest_first
             // and browse mode both just order by recency.
@@ -2292,7 +2421,7 @@ impl Store {
             .prepare(&format!(
                 "SELECT c.id, c.group_id, c.name, c.topic, c.hidden, COALESCE(g.name, '') \
                  FROM channels c LEFT JOIN groups g ON g.id = c.group_id \
-                 WHERE (c.name LIKE ?1 ESCAPE '\\' OR c.topic LIKE ?1 ESCAPE '\\'){member_clause} \
+                 WHERE c.kind != 'agent_dm' AND (c.name LIKE ?1 ESCAPE '\\' OR c.topic LIKE ?1 ESCAPE '\\'){member_clause} \
                  ORDER BY c.name LIMIT ?2",
             ))
             .unwrap();
@@ -2926,6 +3055,8 @@ impl Store {
 
     pub fn remove_agent(&self, id: &str) -> bool {
         let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM agent_dm_grants WHERE agent_id = ?1", params![id]).unwrap();
+        conn.execute("DELETE FROM agent_dm_policies WHERE agent_id = ?1", params![id]).unwrap();
         conn.execute("DELETE FROM agents WHERE id = ?1", params![id]).unwrap() > 0
     }
 
@@ -2972,6 +3103,13 @@ impl Store {
         let Some(chan) = self.channel(channel_id) else {
             return Vec::new();
         };
+        if chan["kind"] == "agent_dm" {
+            let owner = chan["dm_user_id"].as_str().unwrap_or_default();
+            if exclude_user == Some(owner) { return Vec::new(); }
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare("SELECT pt.token FROM push_tokens pt JOIN users u ON u.username = pt.username WHERE pt.username = ?1 AND u.disabled = 0").unwrap();
+            return stmt.query_map(params![owner], |r| r.get::<_, String>(0)).unwrap().filter_map(Result::ok).collect();
+        }
         let group_id = chan["group_id"].as_str().unwrap_or_default().to_string();
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -3884,6 +4022,47 @@ mod tests {
         assert_eq!(agents[0]["avatar_v"], 1234);
         assert!(s.remove_agent("mimir"));
         assert!(s.known_agents().is_empty());
+    }
+
+    #[test]
+    fn agent_dm_policy_defaults_private_and_conversation_is_unique() {
+        let s = Store::open_in_memory().unwrap();
+        s.create_user("admin", "Admin", None, "admin");
+        s.create_user("alice", "Alice", None, "member");
+        s.create_user("bob", "Bob", None, "member");
+        s.upsert_agent("codex", "Codex", "test", true, false, 1);
+        assert!(!s.user_can_start_agent_dm("alice", "codex"));
+        assert!(s.user_can_start_agent_dm("admin", "codex"));
+        s.set_agent_dm_policy("codex", false, &["alice".into()]);
+        assert!(s.user_can_start_agent_dm("alice", "codex"));
+        assert!(!s.user_can_start_agent_dm("bob", "codex"));
+        s.set_user_disabled("alice", true);
+        assert!(!s.user_can_start_agent_dm("alice", "codex"));
+        s.set_user_disabled("alice", false);
+        let first = s.open_agent_dm("alice", "codex", "Codex");
+        let again = s.open_agent_dm("alice", "codex", "Codex");
+        assert_eq!(first["id"], again["id"]);
+        assert!(s.user_can_see_channel("alice", first["id"].as_str().unwrap()));
+        assert!(!s.user_can_see_channel("bob", first["id"].as_str().unwrap()));
+        assert_eq!(s.agents_for_channel(first["id"].as_str().unwrap()), vec!["codex"]);
+    }
+
+    #[test]
+    fn revoked_agent_dm_is_owner_readable_but_not_routable_or_searchable_by_others() {
+        let s = Store::open_in_memory().unwrap();
+        s.create_user("alice", "Alice", None, "member");
+        s.create_user("bob", "Bob", None, "member");
+        s.upsert_agent("codex", "Codex", "test", false, false, 1);
+        s.set_agent_dm_policy("codex", true, &[]);
+        let dm = s.open_agent_dm("alice", "codex", "Codex");
+        let cid = dm["id"].as_str().unwrap();
+        s.add_message(cid, "private launch phrase", "agent", "codex", Some("Codex"), None, &[]);
+        s.set_agent_dm_policy("codex", false, &[]);
+        assert!(s.user_owns_agent_dm("alice", cid));
+        assert!(!s.agent_dm_route_allowed(cid, "codex"));
+        assert_eq!(s.search_messages("launch", false, None, None, None, None, Some("alice"), false, 20, 0).len(), 1);
+        assert!(s.search_messages("launch", false, None, None, None, None, Some("bob"), false, 20, 0).is_empty());
+        assert!(s.search_messages("launch", false, None, None, None, None, None, false, 20, 0).is_empty());
     }
 
     #[test]

@@ -141,6 +141,38 @@ async function main() {
     await page.waitForSelector("#ago-log .bubble", { timeout: 5000 });
   });
 
+  await check("agent DMs: admin publishes an agent, opens a private conversation, and posts", async () => {
+    const pairing = await api("/api/pairing", { name: "parity-dm", kind: "codex" });
+    await page.evaluate(({ base, token }) => new Promise((resolve, reject) => {
+      const ws = new WebSocket(base.replace(/^http/, "ws") + `/agent/ws?token=${encodeURIComponent(token)}`);
+      window.__parityAgent = ws;
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: "hello", agents: [{ id: "parity-agent", name: "Parity Agent", requires_mention: true }] }));
+        resolve();
+      };
+      ws.onerror = () => reject(new Error("agent websocket failed"));
+    }), { base: BASE, token: pairing.token });
+    await page.waitForFunction(async () => {
+      const token = localStorage.getItem("agora_token");
+      const res = await fetch("/api/agents", { headers: { Authorization: `Bearer ${token}` } });
+      return res.ok && (await res.json()).agents.some(a => a.id === "parity-agent");
+    });
+    await api("/api/admin/agents/parity-agent/dm-policy", { is_public: true, grants: [] }, "PUT");
+    await page.reload();
+    const dmGroup = page.locator(".ago-group", { hasText: "Direct messages" }).first();
+    if (!(await dmGroup.locator(".ago-add").count())) await dmGroup.locator(".ago-caret").click();
+    await dmGroup.locator(".ago-add", { hasText: "agent DM" }).click();
+    await page.locator(".ago-dm-agent", { hasText: "Parity Agent" }).click();
+    await page.waitForSelector('.ago-chan.active:has-text("Parity Agent")');
+    await page.fill("#ago-msg", "private parity hello");
+    await page.keyboard.press("Enter");
+    await page.locator("#ago-log .bubble", { hasText: "private parity hello" }).waitFor();
+    await page.evaluate(() => window.__parityAgent?.close());
+    await api(`/api/pairing/${pairing.token}`, undefined, "DELETE");
+    await page.locator(".ago-chan", { hasText: "general" }).first().click();
+    await page.waitForSelector("#ago-log .bubble");
+  });
+
   await check("messages: seeded texts and markdown render", async () => {
     const log = page.locator("#ago-log");
     await log.locator(".bubble", { hasText: "seed plain message one" }).first().waitFor();

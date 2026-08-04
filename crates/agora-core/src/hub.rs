@@ -316,9 +316,10 @@ impl Hub {
     /// suspended while the desktop is focused. Throttled per channel so
     /// bursts collapse into one banner / push.
     fn maybe_notify(&self, message: &Value) {
-        let want_desktop = !self.ui_active.load(Ordering::Relaxed)
-            && self.notifier.lock().unwrap().is_some();
         let channel_id = message["channel_id"].as_str().unwrap_or_default();
+        let is_dm = self.store.channel(channel_id).is_some_and(|c| c["kind"] == "agent_dm");
+        let want_desktop = !is_dm && !self.ui_active.load(Ordering::Relaxed)
+            && self.notifier.lock().unwrap().is_some();
         let author = (message["author_type"] == "user")
             .then(|| message["author_id"].as_str().unwrap_or_default());
         let tokens = self.store.push_tokens_for_channel(channel_id, author);
@@ -338,10 +339,11 @@ impl Hub {
         let place = match self.store.channel(channel_id) {
             Some(channel) => {
                 let chan_name = channel["name"].as_str().unwrap_or("?").to_string();
-                match self.store.group(channel["group_id"].as_str().unwrap_or_default()) {
+                if channel["kind"] == "agent_dm" { format!("Direct message with {chan_name}") }
+                else { match self.store.group(channel["group_id"].as_str().unwrap_or_default()) {
                     Some(g) => format!("{} / #{}", g["name"].as_str().unwrap_or("?"), chan_name),
                     None => format!("#{chan_name}"),
-                }
+                }}
             }
             None => return,
         };
@@ -577,8 +579,11 @@ impl Hub {
                 .collect()
         };
         let mut dead = Vec::new();
+        // DMs are owner-only even for privileged sockets; resolve the channel
+        // kind once, not per socket.
+        let is_dm = self.store.channel(channel_id).is_some_and(|c| c["kind"] == "agent_dm");
         for (id, username, privileged, tx) in targets {
-            if !privileged && !self.store.user_can_see_channel(&username, channel_id) {
+            if (is_dm || !privileged) && !self.store.user_can_see_channel(&username, channel_id) {
                 continue;
             }
             if tx.send(event.clone()).is_err() {
@@ -1091,6 +1096,7 @@ impl Hub {
             return;
         };
         let tokens = mention_tokens(message["text"].as_str().unwrap_or_default());
+        let is_dm = channel["kind"] == "agent_dm";
         // Was any *member agent* @mentioned? This drives the CLI bridges' reply
         // policy: a human message that tags no agent is open to everyone, while
         // one that tags an agent is only for the tagged agent(s). Carried to the
@@ -1108,7 +1114,7 @@ impl Hub {
             let Some(handle) = self.agent_handle(&agent_id) else {
                 continue;
             };
-            let mentioned = tokens.contains(&agent_id.to_lowercase())
+            let mentioned = is_dm || tokens.contains(&agent_id.to_lowercase())
                 || tokens.contains(&slugify(&handle.agent_name));
             // Normally an unmentioned agent is skipped when the message is
             // agents-only (`mentioned_only`) or the agent opted into
@@ -1256,6 +1262,10 @@ impl Hub {
              (groups contain channels; messages can branch into threads)."
                 .to_string(),
         ];
+        if channel["kind"] == "agent_dm" {
+            lines.clear();
+            lines.push(format!("This is a private Agora direct message between you and {}. Treat its contents as private and reply directly without requiring an @mention.", channel["dm_user_id"].as_str().unwrap_or("the user")));
+        }
         if let Some(g) = group {
             let desc = g["description"].as_str().unwrap_or_default();
             lines.push(format!(
@@ -1436,6 +1446,10 @@ impl Hub {
             }
             return;
         }
+        if !self.store.agent_dm_route_allowed(&channel_id, &agent_id) {
+            if frame["type"] == "post" { let _=handle.tx.send(json!({"type":"error","frame_type":"post","agent_id":agent_id,"request_id":frame["request_id"],"error":"agent DM access has been revoked","channel_id":channel_id})); }
+            return;
+        }
         let thread_id = frame["thread_id"].as_i64();
         match frame["type"].as_str() {
             Some("post") => {
@@ -1573,7 +1587,7 @@ impl Hub {
         }
         // Membership is the read boundary: an agent can only read rooms it
         // is in, exactly like the inbound fan-out.
-        if !self.store.agent_in_channel(agent_id, channel_id) {
+        if !self.store.agent_in_channel(agent_id, channel_id) || !self.store.agent_dm_route_allowed(channel_id, agent_id) {
             response["error"] = json!("agent is not a member of this channel");
             let _ = handle.tx.send(response);
             return;
@@ -1647,7 +1661,7 @@ impl Hub {
                 let _ = handle.tx.send(response);
                 return;
             }
-            if !self.store.agent_in_channel(agent_id, channel_id) {
+            if !self.store.agent_in_channel(agent_id, channel_id) || !self.store.agent_dm_route_allowed(channel_id, agent_id) {
                 response["error"] = json!("agent is not a member of this channel");
                 let _ = handle.tx.send(response);
                 return;
@@ -2426,6 +2440,35 @@ mod tests {
         assert_eq!(rx_member.try_recv().unwrap()["type"], "pin");
         assert!(rx_out.try_recv().is_err());
         assert_eq!(rx_root.try_recv().unwrap()["type"], "pin");
+    }
+
+    #[test]
+    fn agent_dm_broadcast_and_routing_are_private_and_implicit() {
+        let h = hub();
+        h.store.create_user("alice", "Alice", None, "member");
+        h.store.create_user("root", "Root", None, "admin");
+        let mut agent_rx = add_agent(&h, "bot-a", "Bot A", true);
+        h.store.set_agent_dm_policy("bot-a", false, &["alice".into()]);
+        let dm = h.store.open_agent_dm("alice", "bot-a", "Bot A");
+        let cid = dm["id"].as_str().unwrap().to_string();
+        let (owner_tx, mut owner_rx) = unbounded_channel();
+        let (admin_tx, mut admin_rx) = unbounded_channel();
+        h.attach_socket("alice", false, owner_tx);
+        h.attach_socket("root", true, admin_tx);
+        h.post_user_message(&cid, "hello without a mention", "alice", Some("Alice"), None, vec![]);
+        assert_eq!(owner_rx.try_recv().unwrap()["type"], "message");
+        assert!(admin_rx.try_recv().is_err());
+        let inbound = last_frame(&mut agent_rx, "inbound").unwrap();
+        assert_eq!(inbound["mentioned"], true);
+        assert!(inbound["context_note"].as_str().unwrap().contains("private Agora direct message"));
+
+        h.store.set_agent_dm_policy("bot-a", false, &[]);
+        h.handle_agent_frame(&json!({
+            "type": "post", "agent_id": "bot-a", "channel_id": cid,
+            "request_id": "revoked", "text": "must not land",
+        }));
+        assert_eq!(last_frame(&mut agent_rx, "error").unwrap()["error"], "agent DM access has been revoked");
+        assert_eq!(h.store.messages(&cid, None, None, 50).len(), 1);
     }
 
     #[test]
