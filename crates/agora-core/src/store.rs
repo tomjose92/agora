@@ -2164,7 +2164,9 @@ impl Store {
     ) -> Vec<Value> {
         let mut rows: Vec<Value> = {
             let conn = self.conn.lock().unwrap();
-            let mut sql = format!("SELECT {MSG_COLS} FROM messages WHERE channel_id = ?1 AND ");
+            // `thread_alias` rides along so thread roots surface their rename
+            // in channel pages (replies carry NULL; the key just stays null).
+            let mut sql = format!("SELECT {MSG_COLS}, thread_alias FROM messages WHERE channel_id = ?1 AND ");
             sql.push_str(if thread_id.is_some() { "thread_id = ?2" } else { "thread_id IS NULL" });
             let mut p: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(channel_id.to_string())];
             if let Some(t) = thread_id {
@@ -2177,7 +2179,11 @@ impl Store {
             sql.push_str(&format!(" ORDER BY id DESC LIMIT ?{}", p.len() + 1));
             p.push(Box::new(limit as i64));
             let mut stmt = conn.prepare(&sql).unwrap();
-            stmt.query_map(params_from_iter(p.iter().map(|b| b.as_ref())), |r| message_row(r, 0))
+            stmt.query_map(params_from_iter(p.iter().map(|b| b.as_ref())), |r| {
+                let mut m = message_row(r, 0)?;
+                m["alias"] = json!(r.get::<_, Option<String>>(9)?);
+                Ok(m)
+            })
                 .unwrap()
                 .filter_map(Result::ok)
                 .collect()
@@ -3440,11 +3446,17 @@ mod tests {
         let reply = s.add_message(cid, "reply", "user", "tom", None, Some(root_id), &[]);
         let reply_id = reply["id"].as_i64().unwrap();
 
-        // Set an alias — it comes back on the message and in the inbox row.
+        // Set an alias — it comes back on the message, in the inbox row, and
+        // on the root's row in channel pages (which feed open thread headers).
         let updated = s.rename_thread(root_id, Some("Launch plan")).unwrap();
         assert_eq!(updated["alias"], "Launch plan");
         let rows = s.my_threads("tom", 50);
         assert_eq!(rows[0]["root"]["alias"], "Launch plan");
+        let page = s.messages(cid, None, None, 50);
+        assert_eq!(page[0]["alias"], "Launch plan");
+        assert_eq!(s.message(root_id).unwrap()["alias"], "Launch plan");
+        // Replies never carry an alias key value.
+        assert!(s.messages(cid, Some(root_id), None, 50)[0]["alias"].is_null());
 
         // Clearing it drops back to null.
         let cleared = s.rename_thread(root_id, None).unwrap();
