@@ -23,6 +23,7 @@ import {
 import { notificationTarget, totalThreadUnread, totalUnread } from "@agora/core";
 import { useGroups, useThreads } from "@agora/core";
 import { headerBack } from "../../src/lib/headerItems";
+import { notificationNavigationAction } from "../../src/lib/notificationRouting";
 import { colors } from "../../src/lib/theme";
 
 /** Ensure cold-start deep links still have Home beneath them in the stack. */
@@ -55,15 +56,30 @@ function UnreadSync() {
     cold starts alike via the last-response hook. */
 function NotificationTapRouter() {
   const response = Notifications.useLastNotificationResponse();
+  const pathname = usePathname();
   const handled = useRef<string | null>(null);
+  const lastNotificationTarget = useRef<string | null>(null);
   useEffect(() => {
     if (!response) return;
     const id = response.notification.request.identifier;
     if (handled.current === id) return;
     handled.current = id;
     const target = notificationTarget(response.notification.request.content.data);
-    if (target) router.push(target as Href);
-  }, [response]);
+    if (!target) return;
+
+    const action = notificationNavigationAction({
+      pathname,
+      lastNotificationTarget: lastNotificationTarget.current,
+      target,
+    });
+    if (action === "none") return;
+    if (action === "replace") {
+      router.replace(target as Href);
+    } else {
+      router.push(target as Href);
+    }
+    lastNotificationTarget.current = target;
+  }, [pathname, response]);
   return null;
 }
 
