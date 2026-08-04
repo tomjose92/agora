@@ -1846,11 +1846,12 @@ a.btn { text-decoration: none; }
 .ago-dm-agent:hover, .ago-dm-agent:focus-visible { border-color: var(--a1); background: rgba(139,124,255,.1); outline: none; }
 .ago-dm-agent:disabled { cursor: wait; opacity: .55; }
 
-.conn-access { display: grid; gap: 14px; width: min(600px, 100%); }
+.conn-access { display: grid; gap: 16px; width: 100%; }
 .conn-access .conn-back { margin: 0 0 2px; justify-self: start; }
 .conn-access h3 { margin: 0; font-size: 20px; line-height: 1.25; }
 .conn-access-title { display: flex; justify-content: space-between; align-items: center; }
-.conn-access-title p, .conn-access > p.dim { margin: -8px 0 2px; font-size: 12px; line-height: 1.45; }
+.conn-access-title > div { display: grid; gap: 6px; min-width: 0; }
+.conn-access-title p, .conn-access > p.dim { margin: 0; font-size: 12px; line-height: 1.45; }
 .conn-access h4 { margin: 4px 0 -8px; }
 .conn-access .conn-hint { margin: 0; }
 .conn-access > input { width: min(320px, 100%); box-sizing: border-box; }
