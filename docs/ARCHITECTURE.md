@@ -139,6 +139,14 @@ operator backup and therefore contains DMs; an operator with filesystem
 access can also read SQLite, so this is an application authorization boundary,
 not end-to-end encryption.
 
+Access policy is edited only from the instance-admin Connections surface.
+`GET /api/admin/sources` groups remembered agents by the Pantheo connection or
+stable, non-secret pairing-credential id where they last appeared; bearer
+tokens never ride that roster. Pairing ids are generated for new credentials
+and backfilled into legacy config at boot. Going offline does not revoke DM
+access or make a conversation read-only: users may keep posting, and the agent
+can catch up from history when its transport reconnects.
+
 **Presentation state is per-user, never shared.** Hiding and reordering
 groups/channels live in the `user_prefs` table and are overlaid onto payloads
 (`overlay_prefs` in `server.rs`); any member may write their own. The legacy

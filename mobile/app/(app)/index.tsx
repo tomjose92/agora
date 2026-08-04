@@ -335,17 +335,19 @@ function DmGroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolea
   const dms = useAgentDms();
   const open = useOpenAgentDm();
   const channels = unreadsOnly ? group.channels.filter(c => (c.unread ?? 0) > 0) : group.channels;
+  const existing = new Set((dms.data?.conversations ?? []).map(dm => dm.agent_id));
+  const available = (dms.data?.agents ?? []).filter(a => a.can_dm && !existing.has(a.id));
   return (
     <View style={styles.groupCard}>
       <View style={styles.groupHead}>
         <Icon icon={Bot} size={16} color={colors.a1} />
         <Text style={styles.groupName}>Direct messages</Text>
-        <Pressable onPress={() => setChoosing(x => !x)} hitSlop={10} style={styles.plusBtn}>
-          <Text style={styles.plus}>＋</Text>
+        <Pressable accessibilityLabel="Start a direct message with an agent" onPress={() => setChoosing(x => !x)} hitSlop={10} style={styles.plusBtn}>
+          <Text style={styles.plus}>＋ Agent</Text>
         </Pressable>
       </View>
       {choosing ? <View style={styles.dmPicker}>
-        {(dms.data?.agents ?? []).filter(a => a.can_dm).map(agent => (
+        {available.map(agent => (
           <Pressable key={agent.id} style={styles.channelRow} onPress={() => open.mutate(agent.id, {
             onSuccess: channel => { setChoosing(false); router.push({ pathname: "/(app)/channel/[id]", params: { id: channel.id, name: channel.name, groupId: "__dms" } }); },
             onError: e => toastErr("Couldn't open DM", e),
@@ -354,7 +356,9 @@ function DmGroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolea
             <Text style={agent.live ? styles.dmOnline : styles.dmOffline}>{agent.live ? "online" : "offline"}</Text>
           </Pressable>
         ))}
-        {dms.isSuccess && !(dms.data?.agents ?? []).some(a => a.can_dm) ? <Text style={styles.emptyChannels}>No agents are available to you yet.</Text> : null}
+        {dms.isLoading ? <Text style={styles.emptyChannels}>Loading agents…</Text> : null}
+        {dms.isError ? <Text style={styles.emptyChannels}>Couldn't load available agents.</Text> : null}
+        {dms.isSuccess && !available.length ? <Text style={styles.emptyChannels}>No new agents are available to message.</Text> : null}
       </View> : null}
       {channels.map(channel => (
         <Pressable key={channel.id} style={styles.channelRow} onPress={() => router.push({

@@ -485,6 +485,7 @@ export interface Connection {
 }
 
 export interface PairingToken {
+  id: string;
   token: string;
   name: string;
   kind?: PairingKind;
@@ -493,6 +494,20 @@ export interface PairingToken {
      this token is up, and the agents it registered (empty until its hello). */
   connected?: boolean;
   agents?: { id: string; name: string }[];
+}
+
+export interface AgentSourceAgent {
+  id: string;
+  name: string;
+  live: boolean;
+  last_seen: number;
+}
+
+export interface AgentSource {
+  kind: "pantheo" | "pairing";
+  id: string;
+  name: string;
+  agents: AgentSourceAgent[];
 }
 
 export const PAIRING_KINDS = ["claw", "hermes", "codex", "cursor", "claude"] as const;

@@ -289,7 +289,7 @@ export function Sidebar() {
                   ? createRow
                   : <button className="ago-add" onClick={() => { setCreating({ kind: "channel", g: g.id }); setCreateName(""); }}>+ channel</button>
               )}
-              {open && isDms && FEATURES.dms && <button className="ago-add" onClick={() => setDmOpen(true)}>+ agent DM</button>}
+              {open && isDms && FEATURES.dms && <button className="ago-add" aria-label="Start a direct message with an agent" onClick={() => setDmOpen(true)}>+ Agent</button>}
             </div>
           );
         })}

@@ -44,6 +44,7 @@ const routes = {
   "GET /api/pairing": {
     tokens: [
       {
+        id: "pair-codex",
         token: "codex_example_token_1234",
         name: "Codex laptop",
         kind: "codex",
@@ -52,6 +53,7 @@ const routes = {
         agents: [{ id: "codex", name: "Codex" }],
       },
       {
+        id: "pair-custom",
         token: "custom_example_token_5678",
         name: "Custom integration",
         created_at: 2,
@@ -60,6 +62,13 @@ const routes = {
       },
     ],
   },
+  "GET /api/admin/sources": { sources: [
+    { kind: "pantheo", id: "Home Pantheo", name: "Home Pantheo", agents: [{ id: "research", name: "Research", live: true, last_seen: 1 }] },
+    { kind: "pairing", id: "pair-codex", name: "Codex laptop", agents: [{ id: "codex", name: "Codex", live: true, last_seen: 1 }] },
+    { kind: "pairing", id: "pair-custom", name: "Custom integration", agents: [] },
+  ] },
+  "GET /api/admin/agents/codex/dm-policy": { agent_id: "codex", is_public: false, grants: ["alice"] },
+  "GET /api/users": { users: [{ username: "alice", display_name: "Alice", instance_role: "member", disabled: false }] },
   "POST /api/pairing": { token: "agora_pairing_example_please_keep_secret" },
 };
 

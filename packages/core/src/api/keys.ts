@@ -22,5 +22,6 @@ export const keys = {
   connections: ["connections"] as const,
   connectionsInfo: ["connectionsInfo"] as const,
   pairing: ["pairing"] as const,
+  agentSources: ["agent-sources"] as const,
   invites: ["invites"] as const,
 };
