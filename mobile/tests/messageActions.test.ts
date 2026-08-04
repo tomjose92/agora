@@ -67,6 +67,14 @@ test("Copy writes the entire raw multi-block message", async () => {
   act(() => tree.unmount());
 });
 
+test("keeps Pin visible while Star is hidden", () => {
+  const { tree } = render();
+  const labels = tree.root.findAllByType(Text).map((node) => node.props.children);
+  expect(labels).toContain("Pin");
+  expect(labels).not.toContain("Star");
+  act(() => tree.unmount());
+});
+
 test("Edit is author-gated and saves raw multiline text", async () => {
   const { tree, api } = render();
   await act(async () => { pressLabel(tree, "Edit"); await Promise.resolve(); });

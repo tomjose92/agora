@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import {
   fmtTs, tldrOf, useAgents, useDeleteMessage, useEditMessage, useMe, usePinMessage, usePins,
-  useStarMessage, useStars, useTldrView, type LinkPreview, type Message,
+  FEATURES, useStarMessage, useStars, useTldrView, type LinkPreview, type Message,
 } from "@agora/core";
 import { Icon } from "../lib/icons";
 import { withToken } from "../lib/files";
@@ -169,7 +169,7 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
           {(m.author_name || m.author_id)}{m.author_type === "agent" ? " · agent" : ""}
         </span>
         {pinned && <span className="ago-pinned-mark" title="Pinned"><Icon name="pin" /></span>}
-        {starred && <span className="ago-starred-mark" title="Starred by you"><Icon name="star" cls="fill" /></span>}
+        {FEATURES.stars && starred && <span className="ago-starred-mark" title="Starred by you"><Icon name="star" cls="fill" /></span>}
         {onTldr && <span className="ago-tldr-mark" title="Short version — the full message is one click away">TL;DR</span>}
         <span className="bubble-ts">{m.meta?.edited_at ? "edited · " : ""}{fmtTs(m.ts)}</span>
       </div>
@@ -234,11 +234,11 @@ export function MessageItem({ message: m, inThread, isAdmin, mentions, onOpenThr
             {pinned ? <><Icon name="pin-off" /> unpin</> : <><Icon name="pin" /> pin</>}
           </button>
         )}
-        <button className={`ago-thread-btn ago-star-btn ${starred ? "starred" : ""}`}
+        {FEATURES.stars && <button className={`ago-thread-btn ago-star-btn ${starred ? "starred" : ""}`}
           title={starred ? "Remove from your starred messages" : "Star this message"}
           onClick={() => starMut.mutate({ messageId: m.id, starred: !starred })}>
           {starred ? <><Icon name="star" cls="fill" /> starred</> : <><Icon name="star" /> star</>}
-        </button>
+        </button>}
         {tldr != null && (
           <button className={`ago-thread-btn ago-tldr-btn ${onTldr ? "on" : ""}`}
             title={onTldr ? "Show the full message" : "Show the short version"}

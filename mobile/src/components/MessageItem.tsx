@@ -6,7 +6,7 @@ import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Pin, Star } from "lucide-react-native";
 import type { Session } from "@agora/core";
-import { useSelectOption } from "@agora/core";
+import { FEATURES, useSelectOption } from "@agora/core";
 import type { Message } from "@agora/core";
 import { fmtTs } from "@agora/core";
 import { colors } from "../lib/theme";
@@ -117,7 +117,7 @@ export function MessageItem({
   const flags = (
     <>
       {pinned ? <Icon icon={Pin} size={11} color={colors.a1} /> : null}
-      {starred ? (
+      {FEATURES.stars && starred ? (
         <Icon icon={Star} size={11} color={colors.amber} fill={colors.amber} />
       ) : null}
       {showTldr ? <Text style={styles.tldrMark}>TL;DR</Text> : null}

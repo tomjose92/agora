@@ -25,6 +25,7 @@ import {
 } from "lucide-react-native";
 import {
   flattenMessages,
+  FEATURES,
   useChannelAgents,
   useGroups,
   useMarkRead,
@@ -388,9 +389,9 @@ export default function ChannelScreen() {
               <Pressable onPress={() => setSheet("pins")} hitSlop={8}>
                 <Icon icon={Pin} size={20} color={colors.text} />
               </Pressable>
-              <Pressable onPress={() => setSheet("stars")} hitSlop={8}>
+              {FEATURES.stars ? <Pressable onPress={() => setSheet("stars")} hitSlop={8}>
                 <Icon icon={Star} size={20} color={colors.text} />
-              </Pressable>
+              </Pressable> : null}
               {groupId ? (
                 <Pressable onPress={openMembers} hitSlop={8}>
                   <Icon icon={Users} size={20} color={colors.text} />
@@ -548,7 +549,7 @@ export default function ChannelScreen() {
           }}
         />
       ) : null}
-      {sheet === "stars" ? (
+      {FEATURES.stars && sheet === "stars" ? (
         <ListSheet<StarredMessage>
           title="Starred messages"
           items={stars.data ?? []}

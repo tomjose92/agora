@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  fmtTs, useAgents, useChannelAgents, useChannelLive, useGroups, useMe, useMembers,
+  FEATURES, fmtTs, useAgents, useChannelAgents, useChannelLive, useGroups, useMe, useMembers,
   usePinMessage, usePins, useSeedActivity, useStarMessage, useStars,
   useUpdateChannel, type Message,
 } from "@agora/core";
@@ -240,17 +240,17 @@ export function ChannelPane() {
           </button>
           {me?.voice && <SpeakButton />}
           {me?.voice && <LiveButton channelId={channel.id} threadId={null} />}
-          <button className={`btn sm ago-star-toggle ${starsOpen ? "active" : ""}`}
+          {FEATURES.stars && <button className={`btn sm ago-star-toggle ${starsOpen ? "active" : ""}`}
             title={`Starred messages in #${channel.name}`}
             onClick={() => setStarsOpen(!starsOpen)}>
             {stars.length ? <><Icon name="star" cls="fill" /> {stars.length}</> : <Icon name="star" />}
-          </button>
+          </button>}
           <button className={`btn sm ${ui.membersOpen ? "active" : ""}`}
             onClick={() => ui.setMembersOpen(!ui.membersOpen)}>Members</button>
         </div>
       </div>
       <PinBar channelId={channel.id} />
-      {starsOpen && <StarPop channelId={channel.id} onClose={() => setStarsOpen(false)} />}
+      {FEATURES.stars && starsOpen && <StarPop channelId={channel.id} onClose={() => setStarsOpen(false)} />}
       {!agents.length && (
         <div className="ago-hint-banner">
           No agents are listening in this channel yet.
