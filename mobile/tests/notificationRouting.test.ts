@@ -1,51 +1,99 @@
-import { notificationNavigationAction } from "../src/lib/notificationRouting";
+import {
+  notificationNavigationStep,
+  type NotificationNavigationState,
+} from "../src/lib/notificationRouting";
 
-describe("notificationNavigationAction", () => {
+const emptyState = (): NotificationNavigationState => ({ lastTarget: null });
+
+describe("notificationNavigationStep", () => {
   it("pushes the first notification over a non-notification screen", () => {
-    expect(notificationNavigationAction({
+    expect(notificationNavigationStep(emptyState(), {
+      type: "notification",
       pathname: "/threads",
-      lastNotificationTarget: null,
       target: "/thread/c1/42",
-    })).toBe("push");
+    })).toEqual({ action: "push", state: { lastTarget: "/thread/c1/42" } });
   });
 
   it("does nothing when already viewing the target channel", () => {
-    expect(notificationNavigationAction({
+    expect(notificationNavigationStep(emptyState(), {
+      type: "notification",
       pathname: "/channel/c1",
-      lastNotificationTarget: null,
       target: "/channel/c1",
-    })).toBe("none");
+    })).toEqual({ action: "none", state: { lastTarget: null } });
   });
 
   it("does nothing when already viewing the target thread", () => {
-    expect(notificationNavigationAction({
+    const state = { lastTarget: "/thread/c1/42" };
+    expect(notificationNavigationStep(state, {
+      type: "notification",
       pathname: "/thread/c1/42",
-      lastNotificationTarget: "/thread/c1/42",
       target: "/thread/c1/42",
-    })).toBe("none");
+    })).toEqual({ action: "none", state });
   });
 
   it("replaces a notification-opened thread when hopping to another thread", () => {
-    expect(notificationNavigationAction({
+    expect(notificationNavigationStep({ lastTarget: "/thread/c1/42" }, {
+      type: "notification",
       pathname: "/thread/c1/42",
-      lastNotificationTarget: "/thread/c1/42",
       target: "/thread/c1/43",
-    })).toBe("replace");
+    })).toEqual({ action: "replace", state: { lastTarget: "/thread/c1/43" } });
   });
 
   it("replaces a notification-opened channel when hopping to a thread", () => {
-    expect(notificationNavigationAction({
+    expect(notificationNavigationStep({ lastTarget: "/channel/c1" }, {
+      type: "notification",
       pathname: "/channel/c1",
-      lastNotificationTarget: "/channel/c1",
       target: "/thread/c1/42",
-    })).toBe("replace");
+    })).toEqual({ action: "replace", state: { lastTarget: "/thread/c1/42" } });
   });
 
   it("pushes over a manually reached detail screen", () => {
-    expect(notificationNavigationAction({
+    expect(notificationNavigationStep({ lastTarget: "/channel/c1" }, {
+      type: "notification",
       pathname: "/channel/c2",
-      lastNotificationTarget: "/channel/c1",
       target: "/thread/c1/42",
-    })).toBe("push");
+    }).action).toBe("push");
+  });
+
+  it("invalidates ownership after back so manually reopening the route is preserved", () => {
+    let state = emptyState();
+    ({ state } = notificationNavigationStep(state, {
+      type: "notification",
+      pathname: "/threads",
+      target: "/channel/c1",
+    }));
+    ({ state } = notificationNavigationStep(state, {
+      type: "pathname",
+      pathname: "/threads",
+    }));
+    ({ state } = notificationNavigationStep(state, {
+      type: "pathname",
+      pathname: "/channel/c1",
+    }));
+
+    expect(notificationNavigationStep(state, {
+      type: "notification",
+      pathname: "/channel/c1",
+      target: "/thread/c1/42",
+    }).action).toBe("push");
+  });
+
+  it("retains ownership across a normal notification hop", () => {
+    let state = emptyState();
+    ({ state } = notificationNavigationStep(state, {
+      type: "notification",
+      pathname: "/threads",
+      target: "/channel/c1",
+    }));
+    ({ state } = notificationNavigationStep(state, {
+      type: "pathname",
+      pathname: "/channel/c1",
+    }));
+
+    expect(notificationNavigationStep(state, {
+      type: "notification",
+      pathname: "/channel/c1",
+      target: "/thread/c1/42",
+    }).action).toBe("replace");
   });
 });

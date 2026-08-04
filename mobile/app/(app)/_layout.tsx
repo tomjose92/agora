@@ -23,7 +23,10 @@ import {
 import { notificationTarget, totalThreadUnread, totalUnread } from "@agora/core";
 import { useGroups, useThreads } from "@agora/core";
 import { headerBack } from "../../src/lib/headerItems";
-import { notificationNavigationAction } from "../../src/lib/notificationRouting";
+import {
+  notificationNavigationStep,
+  type NotificationNavigationState,
+} from "../../src/lib/notificationRouting";
 import { colors } from "../../src/lib/theme";
 
 /** Ensure cold-start deep links still have Home beneath them in the stack. */
@@ -58,8 +61,12 @@ function NotificationTapRouter() {
   const response = Notifications.useLastNotificationResponse();
   const pathname = usePathname();
   const handled = useRef<string | null>(null);
-  const lastNotificationTarget = useRef<string | null>(null);
+  const navigationState = useRef<NotificationNavigationState>({ lastTarget: null });
   useEffect(() => {
+    navigationState.current = notificationNavigationStep(
+      navigationState.current,
+      { type: "pathname", pathname },
+    ).state;
     if (!response) return;
     const id = response.notification.request.identifier;
     if (handled.current === id) return;
@@ -67,18 +74,19 @@ function NotificationTapRouter() {
     const target = notificationTarget(response.notification.request.content.data);
     if (!target) return;
 
-    const action = notificationNavigationAction({
+    const transition = notificationNavigationStep(navigationState.current, {
+      type: "notification",
       pathname,
-      lastNotificationTarget: lastNotificationTarget.current,
       target,
     });
+    navigationState.current = transition.state;
+    const { action } = transition;
     if (action === "none") return;
     if (action === "replace") {
       router.replace(target as Href);
     } else {
       router.push(target as Href);
     }
-    lastNotificationTarget.current = target;
   }, [pathname, response]);
   return null;
 }
