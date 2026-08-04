@@ -74,6 +74,8 @@ export const AgentRichContent: Story = {
     const canvas = within(canvasElement);
     await expect(canvas.findByText("Codex · agent")).resolves.toBeVisible();
     await expect(canvas.findByRole("button", { name: /tom, alice reacted with 👍/ })).resolves.toBeVisible();
+    await expect(canvas.findByTitle("Pin this thread for quick access")).resolves.toBeInTheDocument();
+    expect(canvas.queryByTitle("Star this message")).not.toBeInTheDocument();
   },
 };
 

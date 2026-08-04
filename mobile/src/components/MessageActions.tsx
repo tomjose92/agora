@@ -8,7 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import {
-  tldrOf, useDeleteMessage, useEditMessage, usePinMessage, useStarMessage, useTldrView,
+  FEATURES, tldrOf, useDeleteMessage, useEditMessage, usePinMessage, useStarMessage, useTldrView,
   type Message,
 } from "@agora/core";
 import { colors } from "../lib/theme";
@@ -118,10 +118,10 @@ export function MessageActions({
           {Platform.OS === "ios" && hasText ? <Row icon={Volume2} label="Speak" onPress={() => act(() => {
             void speakMessage(message, (e) => toastErr("Speak failed", e)).catch((e) => toastErr("Speak failed", e));
           })} /> : null}
-          <Row icon={Star} label={starred ? "Unstar" : "Star"} color={starred ? colors.amber : colors.text}
+          {FEATURES.stars ? <Row icon={Star} label={starred ? "Unstar" : "Star"} color={starred ? colors.amber : colors.text}
             fill={starred ? colors.amber : "none"} onPress={() => act(() => star.mutate(
               { messageId: message.id, starred: !starred }, { onError: (e) => toastErr("Star failed", e) },
-            ))} />
+            ))} /> : null}
           {isRoot && canPin ? <Row icon={Pin} label={pinned ? "Unpin" : "Pin"} color={pinned ? colors.a1 : colors.text}
             onPress={() => act(() => pin.mutate(
               { messageId: message.id, pinned: !pinned }, { onError: (e) => toastErr("Pin failed", e) },

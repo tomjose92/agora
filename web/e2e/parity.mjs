@@ -408,21 +408,13 @@ async function main() {
     await page.locator("#conn-panel .conn-head button").last().click();
   });
 
-  await check("stars: star a message, jump-flash from the dropdown", async () => {
+  await check("stars: hidden while pins remain available", async () => {
     await page.locator(".ago-chan", { hasText: "general" }).first().click();
     const bubble = page.locator("#ago-log .bubble", { hasText: "seed plain message one" }).first();
     await bubble.hover();
-    await bubble.locator(".ago-star-btn").click();
-    await page.locator(".ago-head-actions .ago-star-toggle", { hasText: "1" }).waitFor({ timeout: 8000 });
-    // scroll away so the jump is observable
-    await page.$eval("#ago-log", el => { el.scrollTop = el.scrollHeight; });
-    await page.locator(".ago-head-actions .ago-star-toggle").click();
-    await page.locator(".ago-pin-pop .ago-pin-row", { hasText: "seed plain message one" }).click();
-    await page.waitForSelector("#ago-log .bubble.ago-flash", { timeout: 8000 });
-    // clean up: unstar
-    const b2 = page.locator("#ago-log .bubble", { hasText: "seed plain message one" }).first();
-    await b2.hover();
-    await b2.locator(".ago-star-btn").click();
+    if (await bubble.locator(".ago-star-btn").count()) throw new Error("star action should be hidden");
+    if (await page.locator(".ago-head-actions .ago-star-toggle").count()) throw new Error("star list should be hidden");
+    if (!(await bubble.locator(".ago-pin-btn").count())) throw new Error("pin action should remain visible");
   });
 
   await check("search: message hit jump-flashes the exact message", async () => {
