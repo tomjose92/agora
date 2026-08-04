@@ -66,6 +66,7 @@ const MAX_FILES = 5;
 
 /** Keep-awake tag for voice notes: the screen must not auto-lock mid-take. */
 const REC_KEEP_AWAKE = "composer-voice-note";
+const COMPOSER_INPUT_MIN_HEIGHT = 40;
 
 /** Longest edge for uploads; keeps photos comfortably under server caps. */
 const MAX_IMAGE_EDGE = 2048;
@@ -202,6 +203,7 @@ export function Composer({
   const filesRef = useRef<LocalFile[]>(initialFiles);
   const [preview, setPreview] = useState<LocalFile | null>(null);
   const [focused, setFocused] = useState(false);
+  const [inputHeight, setInputHeight] = useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [attachSheet, setAttachSheet] = useState(false);
   const [pasteOps, setPasteOps] = useState(0);
   const pasteGeneration = useRef(0);
@@ -229,6 +231,13 @@ export function Composer({
   const selection = useRef({ start: 0, end: 0 });
   const hasSelection = useRef(false);
   const inputRef = useRef<TextInput>(null);
+
+  /* iOS multiline inputs do not reliably shrink after a controlled clear.
+     Track their content height explicitly and restore the one-line baseline
+     whenever the actual draft becomes empty. */
+  useEffect(() => {
+    if (!text) setInputHeight(COMPOSER_INPUT_MIN_HEIGHT);
+  }, [text]);
 
   /* A native paste finishes asynchronously. Invalidate in-flight work when
      this composer changes conversation or unmounts so an old image can never
@@ -684,9 +693,13 @@ export function Composer({
             style={[
               focused ? styles.inputFocused : styles.input,
               nativePasteInput && !focused ? styles.inputWrapped : null,
+              { height: inputHeight },
             ]}
             value={text}
             onChangeText={setText}
+            onContentSizeChange={(e) => {
+              setInputHeight(Math.max(COMPOSER_INPUT_MIN_HEIGHT, e.nativeEvent.contentSize.height));
+            }}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onSelectionChange={(e) => {
