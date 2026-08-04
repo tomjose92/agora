@@ -1759,6 +1759,11 @@ a.btn { text-decoration: none; }
 /* ---------- thread header channel link ---------- */
 .ago-thread-chan { cursor: pointer; }
 .ago-thread-chan:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.ago-thread-name {
+  min-width: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 2px 7px; border: 1px solid rgba(139,124,255,.24); border-radius: 999px;
+  color: #c8c1ff; background: rgba(139,124,255,.09); font-size: 11px; font-weight: 600;
+}
 
 /* ---------- agent profile card ---------- */
 .ago-av.clickable { cursor: pointer; }
@@ -1816,5 +1821,60 @@ a.btn { text-decoration: none; }
   .ago-map-preview { height: 165px; }
   .ago-map-region-chips { width: 100%; margin-left: 0; }
 }
-.ago-dm-popover{position:absolute;left:12px;bottom:48px;width:min(360px,calc(100vw - 24px));max-height:70vh;overflow:auto;background:var(--panel,#181a20);border:1px solid var(--border,#343741);border-radius:10px;padding:12px;z-index:80;box-shadow:0 14px 40px #0008}.ago-dm-popover-head,.ago-dm-policy-head,.ago-dm-agent{display:flex;align-items:center;justify-content:space-between;gap:10px}.ago-dm-agent-list,.ago-dm-grants{display:grid;gap:6px;margin-top:10px}.ago-dm-agent{width:100%;padding:9px;border:0;border-radius:7px;background:var(--surface,#242731);color:inherit;text-align:left}.ago-dm-policy-row{padding:10px 0;border-bottom:1px solid var(--border,#343741)}.ago-dm-grants label{font-size:12px}
-.conn-access h3{margin:10px 0 3px}.conn-access-title{display:flex;justify-content:space-between;align-items:center}.conn-access-public,.conn-access-users label{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px;border:1px solid var(--border);border-radius:10px}.conn-access-public span,.conn-access-users label span,.conn-access-agent-list .conn-row-main{display:grid;gap:3px}.conn-access small{display:block;color:var(--dim);font-size:11px;font-weight:400}.conn-access-users,.conn-access-agent-list{display:grid;gap:8px}.conn-access-agent-list button{width:100%;color:inherit;text-align:left;cursor:pointer}.conn-access-agent-list button:hover{border-color:var(--a1)}
+.ago-dm-overlay {
+  position: fixed; inset: 0; z-index: 80; padding: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(4,6,10,.7); backdrop-filter: blur(6px);
+}
+.ago-dm-popover {
+  width: min(420px, 100%); max-height: min(560px, calc(100vh - 48px)); overflow-y: auto;
+  padding: 18px; color: var(--text); background: #0d1018;
+  border: 1px solid var(--border-strong); border-radius: 20px;
+  box-shadow: 0 30px 80px rgba(0,0,0,.6); animation: rise .2s ease; outline: none;
+}
+.ago-dm-popover-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.ago-dm-popover-head > div { display: grid; gap: 3px; min-width: 0; }
+.ago-dm-popover-head strong { font-size: 17px; }
+.ago-dm-popover-head span { color: var(--dim); font-size: 11.5px; line-height: 1.4; }
+.ago-dm-agent-list { display: grid; gap: 7px; margin-top: 16px; }
+.ago-dm-agent-list > .dim { padding: 14px; border: 1px solid var(--border); border-radius: 10px; line-height: 1.45; }
+.ago-dm-agent {
+  appearance: none; display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  width: 100%; min-height: 46px; padding: 10px 12px; color: var(--text); background: var(--panel-strong);
+  border: 1px solid transparent; border-radius: 10px; font: inherit; text-align: left; cursor: pointer;
+}
+.ago-dm-agent:hover, .ago-dm-agent:focus-visible { border-color: var(--a1); background: rgba(139,124,255,.1); outline: none; }
+.ago-dm-agent:disabled { cursor: wait; opacity: .55; }
+
+.conn-access { display: grid; gap: 14px; width: min(600px, 100%); }
+.conn-access .conn-back { margin: 0 0 2px; justify-self: start; }
+.conn-access h3 { margin: 0; font-size: 20px; line-height: 1.25; }
+.conn-access-title { display: flex; justify-content: space-between; align-items: center; }
+.conn-access-title p, .conn-access > p.dim { margin: -8px 0 2px; font-size: 12px; line-height: 1.45; }
+.conn-access h4 { margin: 4px 0 -8px; }
+.conn-access .conn-hint { margin: 0; }
+.conn-access > input { width: min(320px, 100%); box-sizing: border-box; }
+.conn-access-public, .conn-access-users label {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  min-height: 58px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 11px;
+  background: rgba(255,255,255,.018);
+}
+.conn-access-public span, .conn-access-users label span, .conn-access-agent-list .conn-row-main { display: grid; gap: 3px; }
+.conn-access input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--a1); }
+.conn-access small { display: block; color: var(--dim); font-size: 11px; font-weight: 400; }
+.conn-access-users, .conn-access-agent-list { display: grid; gap: 8px; }
+.conn-access-users label { cursor: pointer; }
+.conn-access-users label:hover { border-color: var(--border-strong); background: rgba(255,255,255,.035); }
+.conn-access-agent {
+  appearance: none; width: 100%; min-height: 58px; margin: 0; color: var(--text);
+  background: rgba(255,255,255,.025); font: inherit; text-align: left; cursor: pointer;
+}
+.conn-access-agent:hover, .conn-access-agent:focus-visible { border-color: var(--a1); background: rgba(139,124,255,.08); outline: none; }
+.conn-access-agent .conn-row-main { text-align: left; }
+.conn-access-agent-list + .conn-empty {
+  margin: 0; padding: 16px; border: 1px dashed var(--border-strong); border-radius: 11px; text-align: center;
+}
+@media (max-width: 620px) {
+  .ago-dm-overlay { align-items: flex-end; padding: 12px; }
+  .ago-dm-popover { width: 100%; max-height: calc(100vh - 24px); border-radius: 18px; }
+}

@@ -23,7 +23,17 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 export const EligibleAgents: Story = { play: async ({canvasElement}) => {
-  const canvas=within(canvasElement);
+  const canvas=within(canvasElement.ownerDocument.body);
+  await expect(canvas.findByRole("dialog")).resolves.toHaveAttribute("aria-modal","true");
   await expect(canvas.findByText("Claude")).resolves.toBeVisible();
   expect(canvas.queryByText("Codex")).not.toBeInTheDocument();
 } };
+
+export const NoNewAgents: Story = {
+  parameters: { apiRoutes: { "GET /api/dms": { conversations: dms.agents.map(agent => ({
+    channel_id: `dm-${agent.id}`, agent_id: agent.id, agent_name: agent.name, last_seen: 1, unread: 0,
+  })), agents: dms.agents } } },
+  play: async ({canvasElement}) => {
+    await expect(within(canvasElement.ownerDocument.body).findByText("No new agents are available to message.")).resolves.toBeVisible();
+  },
+};
