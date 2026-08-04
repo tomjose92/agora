@@ -1,19 +1,18 @@
 /* Known agents: live status dots and forget-offline-agent, same rules as
    the desktop (the server refuses to forget a connected agent). */
 
-import React, { useState } from "react";
+import React from "react";
 import {
   Pressable,
   RefreshControl,
   ScrollView,
-  Switch,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { Link, Stack } from "expo-router";
 import { Plus } from "lucide-react-native";
-import { useAgentDmPolicy, useAgents, useForgetAgent, useUpdateAgentDmPolicy, useUsers } from "@agora/core";
+import { useAgents, useForgetAgent } from "@agora/core";
 import { AgentAvatar } from "../../src/components/AgentAvatar";
 import { ArmedButton } from "../../src/components/ArmedButton";
 import { toastErr } from "../../src/components/Toast";
@@ -21,34 +20,11 @@ import { fmtTs } from "@agora/core";
 import { colors } from "../../src/lib/theme";
 import { useSession } from "../../src/state/session";
 
-function DmAccess({ agentId }: { agentId: string }) {
-  const policy = useAgentDmPolicy(agentId);
-  const users = useUsers();
-  const update = useUpdateAgentDmPolicy(agentId);
-  if (!policy.data) return <Text style={styles.meta}>Loading access…</Text>;
-  const save = (is_public: boolean, grants: string[]) => update.mutate(
-    { is_public, grants }, { onError: e => toastErr("DM access update failed", e) },
-  );
-  return <View style={styles.accessBox}>
-    <View style={styles.accessLine}><Text style={styles.accessTitle}>Available to everyone</Text>
-      <Switch value={policy.data.is_public} onValueChange={v => save(v, policy.data!.grants)} /></View>
-    {!policy.data.is_public ? (users.data ?? []).filter(u => !u.disabled && u.instance_role !== "admin").map(user => {
-      const on = policy.data!.grants.includes(user.username);
-      return <Pressable key={user.username} style={styles.accessLine} onPress={() => save(false, on
-        ? policy.data!.grants.filter(x => x !== user.username)
-        : [...policy.data!.grants, user.username])}>
-        <Text style={styles.meta}>{user.display_name || user.username}</Text><Text style={styles.accessCheck}>{on ? "✓" : "○"}</Text>
-      </Pressable>;
-    }) : null}
-  </View>;
-}
-
 export default function AgentsScreen() {
   const agents = useAgents();
   const forget = useForgetAgent();
   const admin = useSession((s) => s.instanceAdmin);
   const adminKnown = useSession((s) => s.instanceAdminKnown);
-  const [accessAgent, setAccessAgent] = useState<string | null>(null);
 
   return (
     <>
@@ -107,9 +83,7 @@ export default function AgentsScreen() {
                 }
               />
             ) : null}
-            {admin ? <Pressable onPress={() => setAccessAgent(accessAgent === a.id ? null : a.id)}><Text style={styles.accessButton}>DM access</Text></Pressable> : null}
           </View>
-          {admin && accessAgent === a.id ? <DmAccess agentId={a.id} /> : null}
           </View>
         ))}
         {agents.isSuccess && agents.data.length === 0 ? (
@@ -154,11 +128,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   rowWrap: { backgroundColor: colors.panel, borderRadius: 12 },
-  accessButton: { color: colors.a1, fontSize: 12, fontWeight: "700" },
-  accessBox: { borderTopWidth: 1, borderTopColor: colors.border, padding: 12, gap: 8 },
-  accessLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 34 },
-  accessTitle: { color: colors.text, fontSize: 13, fontWeight: "700" },
-  accessCheck: { color: colors.a1, fontSize: 18 },
   dot: { width: 9, height: 9, borderRadius: 5 },
   dotOn: { backgroundColor: colors.green },
   dotOff: { backgroundColor: colors.faint },

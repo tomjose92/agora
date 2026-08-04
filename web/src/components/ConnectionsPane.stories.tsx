@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 import { useUiState } from "../state/ui";
 import { ConnectionsPane } from "./ConnectionsPane";
+import { fixtureUsers } from "@agora/core/testing/fixtures";
 
 const meta = {
   title: "Web/Connected/Connections",
@@ -14,6 +15,7 @@ const meta = {
       },
       "GET /api/pairing": {
         tokens: [{
+          id: "pair-codex",
           token: "storybook-codex-token",
           name: "Codex",
           kind: "codex",
@@ -22,6 +24,16 @@ const meta = {
           agents: [{ id: "codex", name: "Codex" }],
         }],
       },
+      "GET /api/admin/sources": { sources: [
+        { kind: "pantheo", id: "Home Pantheo", name: "Home Pantheo", agents: [
+          { id: "research", name: "Research", live: true, last_seen: 1_750_000_000 },
+        ] },
+        { kind: "pairing", id: "pair-codex", name: "Codex", agents: [
+          { id: "codex", name: "Codex", live: true, last_seen: 1_750_000_000 },
+        ] },
+      ] },
+      "GET /api/admin/agents/codex/dm-policy": { agent_id: "codex", is_public: false, grants: ["alice"] },
+      "GET /api/users": { users: fixtureUsers },
     },
     setup: () => useUiState.setState({ panel: "connections" }),
   },
@@ -39,5 +51,13 @@ export const ConnectedAgentAndCatalog: Story = {
     await expect(canvas.findByText("What would you like to connect?")).resolves.toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: /Coding agents/ }));
     await expect(canvas.findByText("Choose a coding agent")).resolves.toBeVisible();
+  },
+};
+
+export const BridgeAccessPolicy: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas=within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button",{name:"Manage access"}));
+    await expect(canvas.findByText("Everyone on this Agora can start a direct message")).resolves.toBeVisible();
   },
 };

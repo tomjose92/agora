@@ -408,6 +408,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/dms", get(list_agent_dms))
         .route("/api/dms/{agent_id}", post(open_agent_dm))
         .route("/api/admin/agents/{agent_id}/dm-policy", get(get_agent_dm_policy).put(update_agent_dm_policy))
+        .route("/api/admin/sources", get(list_agent_sources))
         .route("/api/files/{file_id}", get(get_file))
         .route("/agent/files/{file_id}", get(get_agent_file))
         .route("/api/connections", get(list_connections).post(add_connection))
@@ -2420,6 +2421,65 @@ async fn update_agent_dm_policy(State(state): State<AppState>, Path(agent_id): P
     Ok(Json(state.hub.store.agent_dm_policy(&agent_id)))
 }
 
+async fn list_agent_sources(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let user = require_user(&state, &headers, &q)?;
+    require_instance_admin(&user)?;
+    let live = state.hub.live_agent_ids();
+    let agents = state.hub.store.known_agents();
+    let snapshot = state.config.snapshot();
+    let make_agents = |source: &str, legacy: Option<&str>| {
+        agents
+            .iter()
+            .filter(|agent| {
+                let seen = agent["source"].as_str().unwrap_or_default();
+                seen == source || legacy.is_some_and(|name| seen == format!("pairing:{name}"))
+            })
+            .map(|agent| {
+                let id = agent["id"].as_str().unwrap_or_default();
+                json!({
+                    "id": id,
+                    "name": agent["name"],
+                    "live": live.iter().any(|live_id| live_id == id),
+                    "last_seen": agent["last_seen"],
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut sources = snapshot
+        .connections
+        .iter()
+        .map(|connection| {
+            json!({
+                "kind": "pantheo",
+                "id": connection.name,
+                "name": connection.name,
+                "agents": make_agents(&connection.name, None),
+            })
+        })
+        .collect::<Vec<_>>();
+    sources.extend(snapshot.pairing_tokens.iter().map(|pairing| {
+        let source = format!("pairing:{}", pairing.id);
+        let unique_legacy_name = (snapshot
+            .pairing_tokens
+            .iter()
+            .filter(|other| other.name == pairing.name)
+            .count()
+            == 1)
+            .then_some(pairing.name.as_str());
+        json!({
+            "kind": "pairing",
+            "id": pairing.id,
+            "name": pairing.name,
+            "agents": make_agents(&source, unique_legacy_name),
+        })
+    }));
+    Ok(Json(json!({"sources": sources})))
+}
+
 async fn available_agents(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
@@ -2911,6 +2971,7 @@ async fn create_pairing(
     let token = new_token();
     state.config.update(|c| {
         c.pairing_tokens.push(PairingToken {
+            id: new_token(),
             token: token.clone(),
             name,
             kind,
@@ -3369,15 +3430,15 @@ async fn agent_ws(
     ws: WebSocketUpgrade,
 ) -> Response {
     let token = q.get("token").cloned().unwrap_or_default();
-    let Some(source) = state.config.valid_pairing_token(&token) else {
+    let Some(source_id) = state.config.valid_pairing_id(&token) else {
         return (StatusCode::UNAUTHORIZED, "bad pairing token").into_response();
     };
     let per_file = state.config.snapshot().max_file_mb as usize * 1024 * 1024;
     let wire_limit = agent_wire_limit(per_file);
-    let upload_key = format!("agent:{source}");
+    let upload_key = format!("agent:{source_id}");
     ws.max_frame_size(wire_limit)
         .max_message_size(wire_limit)
-        .on_upgrade(move |socket| handle_agent_socket(state, socket, source, token, upload_key))
+        .on_upgrade(move |socket| handle_agent_socket(state, socket, source_id, token, upload_key))
 }
 
 fn register_pairing_socket(
@@ -3398,7 +3459,7 @@ fn register_pairing_socket(
 /// Dial-in bridge: the agent speaks first with `hello {agents: [...]}`,
 /// then the same frame protocol as an outbound connection.
 async fn handle_agent_socket(
-    state: AppState, socket: WebSocket, source: String, token: String, upload_key: String,
+    state: AppState, socket: WebSocket, source_id: String, token: String, upload_key: String,
 ) {
     let (sink, mut stream) = socket.split();
     let (tx, rx) = unbounded_channel::<Value>();
@@ -3428,7 +3489,7 @@ async fn handle_agent_socket(
                                     wants_context_feed: a["wants_context_feed"].as_bool().unwrap_or(false),
                                     has_avatar: avatar_v.is_some(),
                                     avatar_v: avatar_v.unwrap_or(0),
-                                    source: format!("pairing:{source}"),
+                                    source: format!("pairing:{source_id}"),
                                     conn_id,
                                     tx: tx.clone(),
                                 });
@@ -3860,9 +3921,11 @@ mod tests {
         let (state, _dir) = test_state();
         state.config.update(|config| {
             config.pairing_tokens.push(PairingToken {
+                id: "pair-a".into(),
                 token: "token-a".into(), name: "duplicate".into(), kind: None, created_at: now(),
             });
             config.pairing_tokens.push(PairingToken {
+                id: "pair-b".into(),
                 token: "token-b".into(), name: "duplicate".into(), kind: None, created_at: now(),
             });
         });
@@ -4243,12 +4306,14 @@ mod tests {
             .unwrap();
         state.config.update(|c| {
             c.pairing_tokens.push(PairingToken {
+                id: "pair-a".into(),
                 token: "tok-a".into(),
                 name: "duplicate".into(),
                 kind: Some("codex".into()),
                 created_at: 123.0,
             });
             c.pairing_tokens.push(PairingToken {
+                id: "pair-b".into(),
                 token: "tok-b".into(),
                 name: "duplicate".into(),
                 kind: None,
@@ -4265,6 +4330,7 @@ mod tests {
         assert_eq!(
             initial["tokens"][0],
             json!({
+                "id": "pair-a",
                 "token": "tok-a",
                 "name": "duplicate",
                 "kind": "codex",
@@ -4333,6 +4399,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn admin_source_roster_is_transport_scoped_and_keeps_offline_agents() {
+        let (state,_dir)=test_state();
+        state.hub.store.create_user("boss","Boss",None,"admin").unwrap();
+        state.hub.store.create_user("ana","Ana",None,"member").unwrap();
+        state.config.update(|c| {
+            c.connections.push(Connection{name:"Home".into(),url:"wss://example.test/agora/connect".into(),token:"remote".into(),enabled:true});
+            c.pairing_tokens.push(PairingToken{id:"pair-a".into(),token:"secret-a".into(),name:"duplicate".into(),kind:None,created_at:1.0});
+            c.pairing_tokens.push(PairingToken{id:"pair-b".into(),token:"secret-b".into(),name:"duplicate".into(),kind:None,created_at:2.0});
+        });
+        state.hub.store.upsert_agent("research","Research","Home",false,false,0);
+        state.hub.store.upsert_agent("codex","Codex","pairing:pair-a",false,false,0);
+        state.hub.store.upsert_agent("legacy","Legacy","pairing:duplicate",false,false,0);
+        let roster=list_agent_sources(State(state.clone()),Query(HashMap::new()),session_headers(&state,"boss")).await.unwrap().0;
+        assert_eq!(roster["sources"][0]["agents"][0]["id"],"research");
+        assert_eq!(roster["sources"][1]["agents"][0]["id"],"codex");
+        assert!(roster["sources"][2]["agents"].as_array().unwrap().is_empty());
+        assert!(!roster.to_string().contains("secret-a"));
+        assert!(list_agent_sources(State(state.clone()),Query(HashMap::new()),session_headers(&state,"ana")).await.is_err());
+    }
+
+    #[tokio::test]
     async fn pairing_creation_persists_a_known_agent_kind_only() {
         let (state, _dir) = test_state();
         state
@@ -4383,6 +4470,7 @@ mod tests {
             .unwrap();
         state.config.update(|c| {
             c.pairing_tokens.push(PairingToken {
+                id: "pair-socket".into(),
                 token: "socket-token".into(),
                 name: "socket-test".into(),
                 kind: None,

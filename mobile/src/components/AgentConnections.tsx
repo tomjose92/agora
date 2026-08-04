@@ -32,6 +32,11 @@ import {
   originOf,
   type PairingKind,
   type PairingToken,
+  type AgentSource,
+  useAgentDmPolicy,
+  useAgentSources,
+  useUpdateAgentDmPolicy,
+  useUsers,
   useConnectionMutations,
   useConnections,
   usePairingMutations,
@@ -614,6 +619,28 @@ export function AddAgentFlow({
   );
 }
 
+function NativeAgentAccess({ agent, onBack }: { agent: AgentSource["agents"][number]; onBack: () => void }) {
+  const policy=useAgentDmPolicy(agent.id);
+  const users=useUsers();
+  const update=useUpdateAgentDmPolicy(agent.id);
+  const [filter,setFilter]=useState("");
+  const save=(is_public:boolean,grants:string[])=>update.mutate({is_public,grants},{onError:error=>toastErr("DM access update failed",error)});
+  return <View style={styles.flow}>
+    <Pressable style={styles.backRow} onPress={onBack}><ChevronLeft size={18} color={colors.a1}/><Text style={styles.accessBackText}>Back</Text></Pressable>
+    <Text style={styles.accessHeading}>{agent.name}</Text><Text style={styles.rowMeta}>{agent.live?"Online":"Offline · messages remain available in history"}</Text>
+    {!policy.data?<Text style={styles.empty}>Loading access…</Text>:<>
+      <View style={styles.accessSwitch}><View style={styles.rowMain}><Text style={styles.rowName}>Public</Text><Text style={styles.rowMeta}>Everyone on this Agora can start a direct message</Text></View><Switch value={policy.data.is_public} disabled={update.isPending} onValueChange={value=>save(value,policy.data!.grants)}/></View>
+      <Text style={styles.sectionTitle}>People with access</Text><Text style={styles.rowMeta}>Instance admins always have access. Select additional members below.</Text>
+      {!policy.data.is_public?<><TextInput accessibilityLabel="Search people" placeholder="Search people" placeholderTextColor={colors.faint} style={styles.input} value={filter} onChangeText={setFilter}/>{(users.data??[]).filter(user=>!user.disabled&&user.instance_role!=="admin"&&`${user.display_name} ${user.username}`.toLowerCase().includes(filter.toLowerCase())).map(user=>{
+        const checked=policy.data!.grants.includes(user.username);
+        return <Pressable key={user.username} disabled={update.isPending} style={styles.accessUser} onPress={()=>save(false,checked?policy.data!.grants.filter(x=>x!==user.username):[...policy.data!.grants,user.username])}>
+          <View style={styles.rowMain}><Text style={styles.rowName}>{user.display_name||user.username}</Text><Text style={styles.rowMeta}>@{user.username}</Text></View><Text style={styles.checkText}>{checked?"✓":"○"}</Text>
+        </Pressable>;
+      })}</>:null}
+    </>}
+  </View>;
+}
+
 export function AgentConnectionsList() {
   const admin = useSession((s) => s.instanceAdmin);
   const connections = useConnections(true, admin);
@@ -621,10 +648,32 @@ export function AgentConnectionsList() {
   const pairing = usePairingTokens(admin, true);
   const connectionMutations = useConnectionMutations();
   const pairingMutations = usePairingMutations();
+  const sources = useAgentSources(admin, true);
+  const [accessSource, setAccessSource] = useState<AgentSource | null>(null);
+  const [accessAgent, setAccessAgent] = useState<AgentSource["agents"][number] | null>(null);
   const definitionFor = (token: PairingToken) => {
     const kind = inferPairingKind(token);
     return kind ? byKind[kind] : undefined;
   };
+  const manageSource = (kind: AgentSource["kind"], id: string) => {
+    const source=(sources.data??[]).find(item=>item.kind===kind&&item.id===id);
+    if (!source) { toast("Agent roster is still loading"); return; }
+    setAccessSource(source);
+    if (kind === "pairing" && source.agents.length === 1) setAccessAgent(source.agents[0]);
+  };
+  if (accessAgent) return <NativeAgentAccess agent={accessAgent} onBack={() => {
+    setAccessAgent(null);
+    if (accessSource?.kind === "pairing" && accessSource.agents.length === 1) setAccessSource(null);
+  }} />;
+  if (accessSource) return <View style={styles.flow}>
+    <Pressable style={styles.backRow} onPress={()=>setAccessSource(null)}><ChevronLeft size={18} color={colors.a1}/><Text style={styles.accessBackText}>Connections</Text></Pressable>
+    <Text style={styles.sectionTitle}>{accessSource.name}</Text>
+    <Text style={styles.empty}>Choose an agent to manage who can start a direct message.</Text>
+    {accessSource.agents.map(agent=><Pressable key={agent.id} style={styles.accessAgentRow} onPress={()=>setAccessAgent(agent)}>
+      <View style={[styles.accessDot,{backgroundColor:agent.live?colors.green:colors.faint}]}/><View style={styles.rowMain}><Text style={styles.rowName}>{agent.name}</Text><Text style={styles.rowMeta}>{agent.live?"Online":"Offline"}</Text></View><ChevronRight size={18} color={colors.dim}/>
+    </Pressable>)}
+    {!accessSource.agents.length?<Text style={styles.empty}>No agents have registered through this connection yet.</Text>:null}
+  </View>;
   return (
     <View style={styles.flow}>
       <Text style={styles.sectionTitle}>Pantheo instances</Text>
@@ -682,6 +731,7 @@ export function AgentConnectionsList() {
             />
           </View>
           <View style={styles.rowFooterEnd}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Manage DM access for ${connection.name}`} style={styles.manageButton} onPress={()=>manageSource("pantheo",connection.name)}><Text style={styles.manageText}>Manage access</Text></Pressable>
             <ArmedButton
               label="Remove"
               accessibilityLabel={`Remove ${connection.name}`}
@@ -774,6 +824,7 @@ export function AgentConnectionsList() {
                   })
                 }
               />
+              <Pressable accessibilityRole="button" accessibilityLabel={`Manage DM access for ${token.name}`} style={styles.manageButton} onPress={()=>manageSource("pairing",token.id)}><Text style={styles.manageText}>Manage access</Text></Pressable>
             </View>
           </View>
         );
@@ -789,6 +840,16 @@ export function AgentConnectionsList() {
 
 const styles = StyleSheet.create({
   flow: { gap: 14 },
+  backRow:{minHeight:44,flexDirection:"row",alignItems:"center",gap:4},
+  accessBackText:{color:colors.a1,fontSize:14,fontWeight:"700"},
+  accessHeading:{color:colors.text,fontSize:21,fontWeight:"800",marginTop:4},
+  accessSwitch:{flexDirection:"row",alignItems:"center",gap:12,padding:14,borderWidth:1,borderColor:colors.border,borderRadius:12,backgroundColor:colors.panel},
+  accessUser:{minHeight:54,flexDirection:"row",alignItems:"center",gap:12,paddingHorizontal:14,borderBottomWidth:1,borderBottomColor:colors.border},
+  checkText:{color:colors.a1,fontSize:20,fontWeight:"700"},
+  accessAgentRow:{minHeight:58,flexDirection:"row",alignItems:"center",gap:12,padding:14,borderWidth:1,borderColor:colors.border,borderRadius:12,backgroundColor:colors.panel},
+  accessDot:{width:10,height:10,borderRadius:5},
+  manageButton:{minHeight:44,justifyContent:"center",paddingHorizontal:10},
+  manageText:{color:colors.a1,fontSize:12.5,fontWeight:"700"},
   intro: { gap: 5 },
   kicker: {
     color: colors.a2,

@@ -24,6 +24,10 @@ pub struct Connection {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PairingToken {
+    /// Stable non-secret identity used to associate remembered agents with
+    /// this credential. The bearer token remains authentication-only.
+    #[serde(default)]
+    pub id: String,
     pub token: String,
     pub name: String,
     /// UI hint for the CLI/integration this credential was created for.
@@ -221,6 +225,11 @@ impl Config {
         if data.instance_name.trim().is_empty() {
             data.instance_name = default_instance_name();
         }
+        for pairing in &mut data.pairing_tokens {
+            if pairing.id.is_empty() {
+                pairing.id = new_token();
+            }
+        }
         let cfg = Self {
             path,
             data: Mutex::new(data),
@@ -267,6 +276,14 @@ impl Config {
             .iter()
             .find(|t| constant_time_eq(&t.token, token))
             .map(|t| t.name.clone())
+    }
+
+    pub fn valid_pairing_id(&self, token: &str) -> Option<String> {
+        let data = self.data.lock().unwrap();
+        data.pairing_tokens
+            .iter()
+            .find(|t| constant_time_eq(&t.token, token))
+            .map(|t| t.id.clone())
     }
 
     pub fn is_admin_key(&self, token: &str) -> bool {
@@ -492,9 +509,17 @@ mod tests {
         let token: PairingToken =
             serde_json::from_str(r#"{"token":"tok","name":"Old agent","created_at":123}"#).unwrap();
         assert!(token.kind.is_none());
-        assert_eq!(
-            serde_json::to_value(token).unwrap(),
-            serde_json::json!({"token":"tok","name":"Old agent","created_at":123.0})
-        );
+        assert!(token.id.is_empty());
+    }
+
+    #[test]
+    fn legacy_pairing_tokens_gain_stable_non_secret_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.json"),
+            r#"{"admin_key":"key","pairing_tokens":[{"token":"secret","name":"Codex","created_at":1}]}"#).unwrap();
+        let first=Config::load(dir.path()).unwrap().snapshot().pairing_tokens[0].id.clone();
+        assert!(!first.is_empty()); assert_ne!(first,"secret");
+        let second=Config::load(dir.path()).unwrap().snapshot().pairing_tokens[0].id.clone();
+        assert_eq!(first,second);
     }
 }

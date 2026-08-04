@@ -5,8 +5,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   type PairingKind,
   type PairingToken,
+  type AgentSource,
   agentWsUrl,
   inferPairingKind,
+  useAgentDmPolicy, useAgentSources, useUpdateAgentDmPolicy, useUsers,
   useConnectionMutations, useConnectionsInfo, usePairingMutations, usePairingTokens,
   useRenameInstance,
 } from "@agora/core";
@@ -23,6 +25,43 @@ import { useUiState } from "../state/ui";
 type Tab = "list" | "add";
 type AddKind = "pantheo" | "coding" | PairingKind;
 type ConnectableKind = Exclude<AddKind, "coding">;
+
+function AgentAccessPolicy({ agent, onBack }: { agent: AgentSource["agents"][number]; onBack: () => void }) {
+  const policy = useAgentDmPolicy(agent.id).data;
+  const users = useUsers().data || [];
+  const update = useUpdateAgentDmPolicy(agent.id);
+  const [filter,setFilter]=useState("");
+  const save = (is_public: boolean, grants: string[]) => update.mutate({ is_public, grants }, {
+    onError: error => toast(`Couldn't update access: ${(error as Error).message}`, { variant: "warn" }),
+  });
+  return <div className="conn-access">
+    <BackButton onClick={onBack} label="Back" />
+    <div className="conn-access-title"><div><h3>{agent.name}</h3><p className="dim">{agent.live ? "Online" : "Offline · messages remain available in history"}</p></div></div>
+    {!policy ? <p className="dim">Loading access…</p> : <>
+      <label className="conn-access-public"><span><strong>Public</strong><small>Everyone on this Agora can start a direct message</small></span>
+        <input type="checkbox" checked={policy.is_public} disabled={update.isPending}
+          onChange={event => save(event.target.checked, policy.grants)} /></label>
+      <h4>People with access</h4>
+      <p className="conn-hint">Instance admins always have access. Select additional members below.</p>
+      {!policy.is_public && <><input aria-label="Search people" placeholder="Search people" value={filter} onChange={event=>setFilter(event.target.value)}/><div className="conn-access-users">{users.filter(user => !user.disabled && user.instance_role !== "admin" && `${user.display_name} ${user.username}`.toLowerCase().includes(filter.toLowerCase())).map(user => {
+        const checked=policy.grants.includes(user.username);
+        return <label key={user.username}><input type="checkbox" checked={checked} disabled={update.isPending}
+          onChange={event => save(false,event.target.checked?[...policy.grants,user.username]:policy.grants.filter(x=>x!==user.username))}/>
+          <span>{user.display_name || user.username}<small>@{user.username}</small></span></label>;
+      })}</div></>}
+    </>}
+  </div>;
+}
+
+function SourceAgentAccess({ source, onBack, onSelect }: { source: AgentSource; onBack: () => void; onSelect: (agent: AgentSource["agents"][number]) => void }) {
+  return <div className="conn-access"><BackButton onClick={onBack} label="Connections" />
+    <h3>{source.name}</h3><p className="dim">Choose an agent to manage who can start a direct message.</p>
+    <div className="conn-access-agent-list">{source.agents.map(agent => <button className="conn-row" key={agent.id} onClick={()=>onSelect(agent)}>
+      <span className={`conn-dot ${agent.live?"on":"off"}`}/><span className="conn-row-main"><strong>{agent.name}</strong><small>{agent.live?"Online":"Offline"}</small></span><Icon name="chevron-right"/>
+    </button>)}</div>
+    {!source.agents.length && <p className="dim conn-empty">No agents have registered through this connection yet.</p>}
+  </div>;
+}
 
 interface AddDefinition {
   kind: ConnectableKind;
@@ -145,6 +184,7 @@ export function ConnectionsPane() {
   const tokens = usePairingTokens(open, open).data || [];
   const connMut = useConnectionMutations();
   const pairMut = usePairingMutations();
+  const sources = useAgentSources(open, open).data || [];
   const [tab, setTab] = useState<Tab>("list");
   const [addKind, setAddKind] = useState<AddKind | null>(null);
   const [issued, setIssued] = useState<{ token: string } | null>(null);
@@ -153,6 +193,8 @@ export function ConnectionsPane() {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [pairName, setPairName] = useState("");
+  const [accessSource, setAccessSource] = useState<AgentSource | null>(null);
+  const [accessAgent, setAccessAgent] = useState<AgentSource["agents"][number] | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const renameInstance = useRenameInstanceLocal();
 
@@ -160,6 +202,7 @@ export function ConnectionsPane() {
     if (!open) {
       setTab("list"); setAddKind(null); setIssued(null);
       setInstName(null); setName(""); setUrl(""); setToken(""); setPairName("");
+      setAccessSource(null); setAccessAgent(null);
     }
   }, [open]);
 
@@ -212,10 +255,17 @@ export function ConnectionsPane() {
     toast(`${message}: ${(error as Error).message || error}`, { variant: "warn" });
 
   const goAdd = (kind?: AddKind) => {
+    setAccessSource(null); setAccessAgent(null);
     setAddKind(kind ?? null); setIssued(null); setTab("add");
     setPairName(kind && kind !== "pantheo" && kind !== "coding"
       ? DEFINITION_BY_KIND[kind].defaultLabel
       : "");
+  };
+  const manageSource = (kind: AgentSource["kind"], id: string) => {
+    const source=sources.find(item=>item.kind===kind&&item.id===id);
+    if (!source) { toast("Agent roster is still loading", { variant: "warn" }); return; }
+    setAccessSource(source);
+    if (kind==="pairing" && source.agents.length===1) setAccessAgent(source.agents[0]);
   };
 
   const listTab = (
@@ -255,6 +305,8 @@ export function ConnectionsPane() {
               <div className="conn-url">{detail}</div>
             </div>
             <button className="btn sm"
+              onClick={() => manageSource("pantheo", connection.name)}>Manage access</button>
+            <button className="btn sm"
               onClick={() => connMut.update.mutate(
                 { name: connection.name, enabled: !connection.enabled },
                 { onError: err("Couldn't update connection") },
@@ -292,6 +344,7 @@ export function ConnectionsPane() {
               <div className="conn-url">{detail}</div>
             </div>
             <button className="btn sm" onClick={() => copyText(pairing.token, "Token copied")}>Copy</button>
+            <button className="btn sm" onClick={() => manageSource("pairing", pairing.id)}>Manage access</button>
             <button className="btn sm danger"
               onClick={() => pairMut.revoke.mutate(pairing.token, { onError: err("Revoke failed") })}>
               Revoke
@@ -471,13 +524,15 @@ export function ConnectionsPane() {
         <div className="conn-tabs" role="tablist">
           <button role="tab" aria-selected={tab === "list"}
             className={`conn-tab${tab === "list" ? " active" : ""}`}
-            onClick={() => setTab("list")}>Connections</button>
+            onClick={() => { setTab("list"); setAccessSource(null); setAccessAgent(null); }}>Connections</button>
           <button role="tab" aria-selected={tab === "add"}
             className={`conn-tab${tab === "add" ? " active" : ""}`}
             onClick={() => goAdd()}>Add agent</button>
         </div>
         <div className="conn-body">
-          {tab === "list" ? listTab
+          {accessAgent ? <AgentAccessPolicy agent={accessAgent} onBack={() => accessSource?.kind==="pairing"&&accessSource.agents.length===1 ? (setAccessAgent(null),setAccessSource(null)) : setAccessAgent(null)} />
+            : accessSource ? <SourceAgentAccess source={accessSource} onBack={()=>setAccessSource(null)} onSelect={setAccessAgent}/>
+            : tab === "list" ? listTab
             : addKind === null ? addPicker
             : addKind === "coding" ? codingPicker
             : addKind === "pantheo" ? addPantheo

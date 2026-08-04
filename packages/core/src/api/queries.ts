@@ -24,6 +24,7 @@ import type {
   AgentInfo,
   AgentDmList,
   AgentDmPolicy,
+  AgentSource,
   AskResponse,
   Channel,
   ChannelActivity,
@@ -827,7 +828,11 @@ export function useConnectionsInfo(poll = false, enabled = true) {
 export function useConnectionMutations() {
   const api = useApi();
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: keys.connections });
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: keys.connections });
+    void qc.invalidateQueries({ queryKey: keys.connectionsInfo });
+    void qc.invalidateQueries({ queryKey: keys.agentSources });
+  };
   return {
     add: useMutation({
       mutationFn: (v: { name: string; url: string; token: string }) =>
@@ -858,10 +863,24 @@ export function usePairingTokens(enabled = true, poll = false) {
   });
 }
 
+export function useAgentSources(enabled = true, poll = false) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.agentSources,
+    queryFn: async () =>
+      (await api.get<{ sources: AgentSource[] }>("/api/admin/sources")).sources,
+    enabled,
+    refetchInterval: poll ? 4000 : false,
+  });
+}
+
 export function usePairingMutations() {
   const api = useApi();
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: keys.pairing });
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: keys.pairing });
+    void qc.invalidateQueries({ queryKey: keys.agentSources });
+  };
   return {
     create: useMutation({
       mutationFn: (v: { name: string; kind?: PairingToken["kind"] }) =>

@@ -71,12 +71,14 @@ class RecordingApi extends ApiClient {
       return {
         tokens: [
           {
+            id: "pair-laptop",
             token: "codex-token",
             name: "Laptop",
             kind: "codex",
             created_at: 1,
           },
           {
+            id: "pair-custom",
             token: "custom-token",
             name: "Custom integration",
             created_at: 2,
@@ -84,6 +86,13 @@ class RecordingApi extends ApiClient {
         ],
       } as T;
     }
+    if (path === "/api/admin/sources") return { sources: [
+      { kind: "pantheo", id: "Home", name: "Home", agents: [{ id: "research", name: "Research", live: false, last_seen: 1 }] },
+      { kind: "pairing", id: "pair-laptop", name: "Laptop", agents: [{ id: "codex", name: "Codex", live: true, last_seen: 1 }] },
+      { kind: "pairing", id: "pair-custom", name: "Custom integration", agents: [] },
+    ] } as T;
+    if (path === "/api/admin/agents/codex/dm-policy") return { agent_id: "codex", is_public: false, grants: [] } as T;
+    if (path === "/api/users") return { users: [{ username: "alice", display_name: "Alice", instance_role: "member", disabled: false }] } as T;
     throw new Error(`Unexpected GET ${path}`);
   }
 
@@ -127,17 +136,26 @@ function renderFlow(
     ]);
     queryClient.setQueryData(keys.pairing, [
       {
+        id: "pair-laptop",
         token: "codex-token",
         name: "Laptop",
         kind: "codex",
         created_at: 1,
       },
       {
+        id: "pair-custom",
         token: "custom-token",
         name: "Custom integration",
         created_at: 2,
       },
     ]);
+    queryClient.setQueryData(keys.agentSources, [
+      { kind: "pantheo", id: "Home", name: "Home", agents: [{ id: "research", name: "Research", live: false, last_seen: 1 }] },
+      { kind: "pairing", id: "pair-laptop", name: "Laptop", agents: [{ id: "codex", name: "Codex", live: true, last_seen: 1 }] },
+      { kind: "pairing", id: "pair-custom", name: "Custom integration", agents: [] },
+    ]);
+    queryClient.setQueryData(keys.agentDmPolicy("codex"), { agent_id: "codex", is_public: false, grants: [] });
+    queryClient.setQueryData(keys.users, [{ username: "alice", display_name: "Alice", instance_role: "member", disabled: false }]);
   } else if (seedList === "error") {
     for (const queryKey of [keys.connections, keys.pairing]) {
       const query = queryClient.getQueryCache().build(queryClient, {
@@ -400,6 +418,16 @@ test("connection token actions use the full token", async () => {
   copy.mockRestore();
   share.mockRestore();
   act(() => tree.unmount());
+});
+
+test("bridge manage access opens its single agent policy directly", async () => {
+  const tree=renderFlow(new RecordingApi(),React.createElement(AgentConnectionsList),"data");
+  await act(async()=>labelled(tree.root,"Manage DM access for Laptop").props.onPress());
+  await act(async()=>{});
+  const rendered=JSON.stringify(tree.toJSON());
+  expect(rendered).toContain("Everyone on this Agora can start a direct message");
+  expect(rendered).toContain("Alice");
+  act(()=>tree.unmount());
 });
 
 test("non-admins see the route denial instead of the management flow", () => {
