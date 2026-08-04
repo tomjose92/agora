@@ -118,6 +118,10 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { hasCaret.current = false; }, [draftKey]);
+  /* Controlled draft changes commit after event handlers run. Resize from the
+     committed value so clears after sends (including async attachment sends)
+     and conversation switches can shrink a previously tall textarea. */
+  useEffect(() => { autoGrow(taRef.current); }, [text]);
 
   const inThread = threadId != null;
   const readyAttachments = attachments.filter(
@@ -319,7 +323,7 @@ export function Composer({ channelId, channelName, groupId, threadId, agents = [
       setText(draftKey, "");
       if (replyInThread && onSetReplyInThread) onSetReplyInThread(false);
     }
-    if (taRef.current) { autoGrow(taRef.current); taRef.current.focus(); }
+    taRef.current?.focus();
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

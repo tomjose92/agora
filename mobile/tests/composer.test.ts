@@ -95,12 +95,17 @@ test("successful send clears its draft while a failed send retains it", async ()
       }),
     ));
   });
-  act(() => tree.root.findByType(TextInput).props.onChangeText("keep me"));
+  const input = () => tree.root.findByType(TextInput);
+  act(() => input().props.onChangeText("keep me"));
+  act(() => input().props.onContentSizeChange({ nativeEvent: { contentSize: { width: 300, height: 120 } } }));
+  expect(StyleSheet.flatten(input().props.style).height).toBe(120);
   await act(async () => { await labelled(tree.root, "Send message").props.onPress(); });
   expect(useMessageDrafts.getState().byConvo["channel-a"]).toBe("keep me");
+  expect(StyleSheet.flatten(input().props.style).height).toBe(120);
   await act(async () => { await labelled(tree.root, "Send message").props.onPress(); });
   expect(useMessageDrafts.getState().byConvo["channel-a"]).toBeUndefined();
-  expect(tree.root.findByType(TextInput).props.value).toBe("");
+  expect(input().props.value).toBe("");
+  expect(StyleSheet.flatten(input().props.style).height).toBe(40);
   act(() => tree.unmount());
 });
 

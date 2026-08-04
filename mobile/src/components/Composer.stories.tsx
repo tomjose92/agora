@@ -44,6 +44,16 @@ export const RestoredDraft: Story = {
   },
 };
 
+export const LongDraft: Story = {
+  parameters: {
+    setup: () => useMessageDrafts.setState({
+      byConvo: {
+        general: "A long draft that demonstrates how the composer expands while typing and returns to its compact height after it is sent. ".repeat(5),
+      },
+    }),
+  },
+};
+
 export const ImageAndDocuments: Story = {
   args: {
     initialFiles: [

@@ -59,6 +59,24 @@ type Story = StoryObj<typeof meta>;
 
 export const Empty: Story = {};
 
+export const HeightResetsAfterSend: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const input = await canvas.findByPlaceholderText("Message #general") as HTMLTextAreaElement;
+    await waitFor(() => expect(input.style.height).not.toBe(""));
+    const baseline = input.getBoundingClientRect().height;
+
+    await userEvent.type(input, "A long message that wraps across several lines in the composer. ".repeat(12));
+    await waitFor(() => expect(input.getBoundingClientRect().height).toBeGreaterThan(baseline));
+    await userEvent.click(canvas.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(input).toHaveValue("");
+      expect(input.getBoundingClientRect().height).toBe(baseline);
+    });
+  },
+};
+
 const withTemplateRoutes = {
   "GET /api/me": me,
   "GET /api/agents": { agents },
