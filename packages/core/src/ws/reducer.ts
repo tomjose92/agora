@@ -223,6 +223,26 @@ export function applyThreadRename(
   );
 }
 
+/** The rename also lands on the root wherever message caches hold it: the
+    channel's top-level pages and the single-message cache both feed open
+    thread headers, so patching only the inbox row would leave them stale. */
+export function applyAliasToPages(
+  data: MessagePages | undefined,
+  threadId: number,
+  alias: string | null,
+): MessagePages | undefined {
+  if (!data) return undefined;
+  let found = false;
+  const pages = data.pages.map((p) =>
+    p.map((m) => {
+      if (m.id !== threadId) return m;
+      found = true;
+      return { ...m, alias };
+    }),
+  );
+  return found ? { ...data, pages } : data;
+}
+
 /** Scrub a deleted message from every cache that may hold it. Shared by the
     WS case and useDeleteMessage's onSuccess (the echo then no-ops). A root
     takes its whole thread with it server-side, so its reply page set and
@@ -320,6 +340,12 @@ export function applyWsEvent(
     case "thread_renamed": {
       qc.setQueryData<ThreadRow[]>(keys.threads, (threads) =>
         applyThreadRename(threads, ev),
+      );
+      qc.setQueryData<MessagePages>(keys.messages(ev.channel_id, null), (data) =>
+        applyAliasToPages(data, ev.thread_id, ev.alias),
+      );
+      qc.setQueryData<Message>(keys.message(ev.thread_id), (old) =>
+        old ? { ...old, alias: ev.alias } : old,
       );
       break;
     }

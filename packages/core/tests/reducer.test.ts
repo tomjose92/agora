@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
-import { appendMessage, applyMessageUpdate, replaceMessage, type MessagePages } from "../src/ws/reducer";
+import { appendMessage, applyAliasToPages, applyMessageUpdate, replaceMessage, type MessagePages } from "../src/ws/reducer";
 import { keys } from "../src/api/keys";
 import type { Message, PinnedMessage, StarredMessage, ThreadRow } from "../src/api/types";
 
@@ -41,6 +41,21 @@ describe("replaceMessage", () => {
     const before = pages([1, 2]);
     const next = replaceMessage(before, msg(9));
     expect(next!.pages[0].map(m => m.id)).toEqual([1, 2]);
+  });
+});
+
+describe("applyAliasToPages", () => {
+  it("patches the renamed root's alias in place", () => {
+    const next = applyAliasToPages(pages([1, 2, 3]), 2, "Launch plan");
+    expect(next!.pages[0].find(m => m.id === 2)!.alias).toBe("Launch plan");
+    expect(next!.pages[0].find(m => m.id === 1)!.alias).toBeNull();
+  });
+  it("clears back to null and ignores absent ids", () => {
+    const cleared = applyAliasToPages(applyAliasToPages(pages([1]), 1, "x"), 1, null);
+    expect(cleared!.pages[0][0].alias).toBeNull();
+    const untouched = pages([1, 2]);
+    expect(applyAliasToPages(untouched, 9, "x")).toBe(untouched);
+    expect(applyAliasToPages(undefined, 1, "x")).toBeUndefined();
   });
 });
 
