@@ -9,11 +9,14 @@
 
 #![cfg(target_os = "macos")]
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
+use agora_core::hub::{NotifyEvent, ReadNotifyEvent};
 use block2::RcBlock;
 use objc2::runtime::Bool;
-use objc2_foundation::{NSBundle, NSError, NSString};
+use objc2_foundation::{NSArray, NSBundle, NSError, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest,
     UNNotificationSound, UNUserNotificationCenter,
@@ -49,10 +52,42 @@ pub fn request_authorization() {
     }
 }
 
-/// Post a banner notification.
-pub fn notify(title: &str, body: &str) {
-    if !in_bundle() {
+#[derive(Clone)]
+struct Delivered {
+    identifier: String,
+    message_id: i64,
+}
+
+static DELIVERED: OnceLock<Mutex<HashMap<String, Vec<Delivered>>>> = OnceLock::new();
+
+fn conversation_key(channel_id: &str, thread_id: Option<i64>) -> String {
+    thread_id.map_or_else(
+        || format!("channel:{channel_id}"),
+        |id| format!("thread:{id}"),
+    )
+}
+
+/// Post a banner notification and remember enough identity to clear it when read.
+pub fn notify(event: &NotifyEvent) {
+    let Some(id) = post(&event.title, &event.body) else {
         return;
+    };
+    let key = conversation_key(&event.channel_id, event.thread_id);
+    DELIVERED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry(key)
+        .or_default()
+        .push(Delivered {
+            identifier: id,
+            message_id: event.message_id,
+        });
+}
+
+fn post(title: &str, body: &str) -> Option<String> {
+    if !in_bundle() {
+        return None;
     }
     // Unique per request or the new one silently replaces the previous.
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -75,4 +110,43 @@ pub fn notify(title: &str, body: &str) {
         });
         center.addNotificationRequest_withCompletionHandler(&request, Some(&handler));
     }
+    Some(id)
+}
+
+/// Post a shell-level notification (updates, lifecycle notices) that is not
+/// associated with chat read state.
+pub fn notify_untracked(title: &str, body: &str) {
+    let _ = post(title, body);
+}
+
+/// Remove cards for this exact conversation at or below its read marker.
+/// The registry is intentionally process-local; restart recovery is deferred.
+pub fn clear_read(event: &ReadNotifyEvent) {
+    if !in_bundle() {
+        return;
+    }
+    let key = conversation_key(&event.channel_id, event.thread_id);
+    let mut registry = DELIVERED.get_or_init(Default::default).lock().unwrap();
+    let Some(entries) = registry.get_mut(&key) else {
+        return;
+    };
+    let mut ids = Vec::new();
+    entries.retain(|entry| {
+        if entry.message_id <= event.last_read_id {
+            ids.push(NSString::from_str(&entry.identifier));
+            false
+        } else {
+            true
+        }
+    });
+    if entries.is_empty() {
+        registry.remove(&key);
+    }
+    drop(registry);
+    if ids.is_empty() {
+        return;
+    }
+    let ids = NSArray::from_retained_slice(&ids);
+    UNUserNotificationCenter::currentNotificationCenter()
+        .removeDeliveredNotificationsWithIdentifiers(&ids);
 }

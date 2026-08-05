@@ -2,6 +2,7 @@
    stays covered separately in notificationRouting.test.ts. */
 
 const mockPush = jest.fn();
+const mockDismiss = jest.fn().mockResolvedValue(undefined);
 let mockPathname = "/threads";
 let mockResponse: ReturnType<typeof response> | null = null;
 
@@ -19,6 +20,7 @@ jest.mock("expo-router", () => ({
 
 jest.mock("expo-notifications", () => ({
   useLastNotificationResponse: () => mockResponse,
+  dismissNotificationAsync: (...args: unknown[]) => mockDismiss(...args),
 }));
 
 import React from "react";
@@ -48,6 +50,7 @@ function renderRouter() {
 
 beforeEach(() => {
   mockPush.mockClear();
+  mockDismiss.mockClear();
   mockPathname = "/threads";
   mockResponse = null;
 });
@@ -57,6 +60,7 @@ test("does not push when the notification target is already on top", () => {
   mockResponse = response("n1", "c1");
   renderRouter();
   expect(mockPush).not.toHaveBeenCalled();
+  expect(mockDismiss).toHaveBeenCalledWith("n1");
 });
 
 test("pushes exactly once for a different notification target", () => {

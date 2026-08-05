@@ -16,6 +16,36 @@ pub struct PushMessage {
     pub body: String,
     pub channel_id: String,
     pub thread_id: Option<i64>,
+    pub message_id: i64,
+}
+
+impl PushMessage {
+    pub fn conversation_key(&self) -> String {
+        match self.thread_id {
+            Some(thread_id) => format!("thread:{thread_id}"),
+            None => format!("channel:{}", self.channel_id),
+        }
+    }
+}
+
+fn payload(message: &PushMessage, token: &str) -> Value {
+    let mut data = json!({
+        "channel_id": message.channel_id,
+        "message_id": message.message_id,
+    });
+    if let Some(tid) = message.thread_id {
+        data["thread_id"] = json!(tid);
+    }
+    let conversation = message.conversation_key();
+    json!({
+        "to": token,
+        "title": message.title,
+        "body": message.body,
+        "data": data,
+        "sound": "default",
+        "collapseId": conversation,
+        "tag": conversation,
+    })
 }
 
 /// POST `message` to each `token` via Expo. Returns tokens Expo says are dead
@@ -25,23 +55,9 @@ pub fn send(message: &PushMessage, tokens: &[String]) -> Vec<String> {
     if tokens.is_empty() {
         return Vec::new();
     }
-    let mut data = json!({
-        "channel_id": message.channel_id,
-    });
-    if let Some(tid) = message.thread_id {
-        data["thread_id"] = json!(tid);
-    }
     let messages: Vec<Value> = tokens
         .iter()
-        .map(|token| {
-            json!({
-                "to": token,
-                "title": message.title,
-                "body": message.body,
-                "data": data,
-                "sound": "default",
-            })
-        })
+        .map(|token| payload(message, token))
         .collect();
 
     let response = match ureq::post(EXPO_PUSH_URL)
@@ -99,6 +115,30 @@ pub fn dead_tokens_from_tickets(body: &Value, tokens: &[String]) -> Vec<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn message(thread_id: Option<i64>) -> PushMessage {
+        PushMessage {
+            title: "Agent".into(),
+            body: "Hello".into(),
+            channel_id: "channel-1".into(),
+            thread_id,
+            message_id: 91,
+        }
+    }
+
+    #[test]
+    fn payload_replaces_notifications_per_conversation() {
+        let thread = payload(&message(Some(42)), "ExponentPushToken[x]");
+        assert_eq!(thread["collapseId"], "thread:42");
+        assert_eq!(thread["tag"], "thread:42");
+        assert_eq!(thread["data"]["thread_id"], 42);
+        assert_eq!(thread["data"]["message_id"], 91);
+
+        let channel = payload(&message(None), "ExponentPushToken[x]");
+        assert_eq!(channel["collapseId"], "channel:channel-1");
+        assert_eq!(channel["tag"], "channel:channel-1");
+        assert!(channel["data"].get("thread_id").is_none());
+    }
 
     #[test]
     fn prunes_device_not_registered_by_index() {

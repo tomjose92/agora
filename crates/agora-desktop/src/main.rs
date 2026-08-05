@@ -400,8 +400,10 @@ async fn ensure_embedded(handle: &AppHandle) -> anyhow::Result<&'static Embedded
             let _ = HUB.set(Arc::clone(&core.state.hub));
             #[cfg(target_os = "macos")]
             core.state.hub.set_notifier(|ev| {
-                notify::notify(&ev.title, &ev.body);
+                notify::notify(&ev);
             });
+            #[cfg(target_os = "macos")]
+            core.state.hub.set_read_notifier(|ev| notify::clear_read(&ev));
             #[cfg(not(target_os = "macos"))]
             {
                 let notify_handle = handle.clone();
@@ -655,7 +657,7 @@ async fn validate_remote(settings: &DesktopSettings) -> Result<(), String> {
 #[cfg_attr(target_os = "macos", allow(unused_variables))]
 fn deliver_notification(handle: &AppHandle, title: &str, body: &str) {
     #[cfg(target_os = "macos")]
-    notify::notify(title, body);
+    notify::notify_untracked(title, body);
     #[cfg(not(target_os = "macos"))]
     {
         let result = handle
@@ -673,7 +675,7 @@ fn deliver_notification(handle: &AppHandle, title: &str, body: &str) {
 /// Reconcile the remote-notifier task with the given settings: the old task
 /// (if any) is aborted, and a fresh one starts iff we're in remote mode with
 /// a full URL + token. Embedded mode keeps using the in-process hub notifier.
-fn sync_remote_notifier(handle: &AppHandle, settings: &DesktopSettings) {
+fn sync_remote_notifier(_handle: &AppHandle, settings: &DesktopSettings) {
     let mut guard = REMOTE_NOTIFIER.lock().unwrap();
     if let Some(task) = guard.take() {
         task.abort();
@@ -690,11 +692,28 @@ fn sync_remote_notifier(handle: &AppHandle, settings: &DesktopSettings) {
             .to_string(),
         settings.token.clone().unwrap_or_default(),
     );
-    let handle = handle.clone();
-    let deliver: remote_notify::Deliver =
-        Arc::new(move |title, body| deliver_notification(&handle, title, body));
+    #[cfg(not(target_os = "macos"))]
+    let notify_handle = _handle.clone();
+    let deliver: remote_notify::Deliver = Arc::new(move |event| {
+        #[cfg(target_os = "macos")]
+        notify::notify(&agora_core::hub::NotifyEvent {
+            channel_id: event.channel_id,
+            thread_id: event.thread_id,
+            message_id: event.message_id,
+            title: event.title,
+            body: event.body,
+        });
+        #[cfg(not(target_os = "macos"))]
+        deliver_notification(&notify_handle, &event.title, &event.body);
+    });
+    let clear: remote_notify::Clear = Arc::new(move |event| {
+        #[cfg(target_os = "macos")]
+        notify::clear_read(&event);
+        #[cfg(not(target_os = "macos"))]
+        let _ = event;
+    });
     *guard = Some(tauri::async_runtime::spawn(remote_notify::run(
-        deliver, url, token,
+        deliver, clear, url, token,
     )));
 }
 

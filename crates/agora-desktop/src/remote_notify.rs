@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use agora_core::hub::ReadNotifyEvent;
 use futures_util::StreamExt;
 use serde_json::Value;
 
@@ -31,10 +32,14 @@ pub static UI_FOCUSED: AtomicBool = AtomicBool::new(true);
 
 /// Platform delivery (macOS UNUserNotificationCenter or the Tauri plugin);
 /// the shell hands one in so this module stays platform-agnostic.
-pub type Deliver = Arc<dyn Fn(&str, &str) + Send + Sync>;
+pub type Deliver = Arc<dyn Fn(Notification) + Send + Sync>;
+pub type Clear = Arc<dyn Fn(ReadNotifyEvent) + Send + Sync>;
 
+#[derive(Clone)]
 pub struct Notification {
     pub channel_id: String,
+    pub thread_id: Option<i64>,
+    pub message_id: i64,
     pub title: String,
     pub body: String,
 }
@@ -68,7 +73,29 @@ fn notification_for(frame: &Value, focused: bool, place: Option<&str>) -> Option
     } else if text.chars().count() > BODY_MAX_CHARS {
         body.push('…');
     }
-    Some(Notification { channel_id: channel_id.to_string(), title, body })
+    Some(Notification {
+        channel_id: channel_id.to_string(),
+        thread_id: message["thread_id"].as_i64(),
+        message_id: message["id"].as_i64().unwrap_or_default(),
+        title,
+        body,
+    })
+}
+
+fn read_event_for(frame: &Value) -> Option<ReadNotifyEvent> {
+    match frame["type"].as_str()? {
+        "read" => Some(ReadNotifyEvent {
+            channel_id: frame["channel_id"].as_str()?.to_string(),
+            thread_id: None,
+            last_read_id: frame["last_read_id"].as_i64()?,
+        }),
+        "thread_read" => Some(ReadNotifyEvent {
+            channel_id: frame["channel_id"].as_str()?.to_string(),
+            thread_id: Some(frame["thread_id"].as_i64()?),
+            last_read_id: frame["last_read_id"].as_i64()?,
+        }),
+        _ => None,
+    }
 }
 
 /// Per-channel throttle; records the notification time when it passes.
@@ -121,7 +148,7 @@ fn ws_url(base: &str, token: &str) -> String {
 
 /// Run until aborted: connect, notify on agent messages, reconnect with
 /// backoff. Never touches the webview — banners only.
-pub async fn run(deliver: Deliver, base: String, token: String) {
+pub async fn run(deliver: Deliver, clear: Clear, base: String, token: String) {
     let mut backoff = BACKOFF_MIN;
     let mut last_notified: HashMap<String, Instant> = HashMap::new();
     // Lazily filled; refreshed once per unknown channel id (new channels).
@@ -138,7 +165,7 @@ pub async fn run(deliver: Deliver, base: String, token: String) {
                         Err(_) => break,
                     };
                     let Ok(frame) = serde_json::from_str::<Value>(&text) else { continue };
-                    on_frame(&frame, &deliver, &base, &token, &mut last_notified, &mut names)
+                    on_frame(&frame, &deliver, &clear, &base, &token, &mut last_notified, &mut names)
                         .await;
                 }
                 tracing::info!("remote notifier disconnected");
@@ -153,11 +180,16 @@ pub async fn run(deliver: Deliver, base: String, token: String) {
 async fn on_frame(
     frame: &Value,
     deliver: &Deliver,
+    clear: &Clear,
     base: &str,
     token: &str,
     last_notified: &mut HashMap<String, Instant>,
     names: &mut HashMap<String, String>,
 ) {
+    if let Some(read) = read_event_for(frame) {
+        clear(read);
+        return;
+    }
     let focused = UI_FOCUSED.load(Ordering::Relaxed);
     // Cheap pre-pass (no name yet) to decide whether a lookup is even needed.
     let Some(probe) = notification_for(frame, focused, None) else { return };
@@ -174,7 +206,7 @@ async fn on_frame(
     }
     let place = names.get(&probe.channel_id).map(String::as_str);
     if let Some(n) = notification_for(frame, focused, place) {
-        deliver(&n.title, &n.body);
+        deliver(n);
     }
 }
 
@@ -186,7 +218,7 @@ mod tests {
     fn agent_frame(text: &str) -> Value {
         json!({"type": "message", "message": {
             "channel_id": "ch1", "author_type": "agent",
-            "author_id": "bot", "author_name": "Bot", "text": text,
+            "author_id": "bot", "author_name": "Bot", "text": text, "id": 9,
         }})
     }
 
@@ -197,6 +229,23 @@ mod tests {
         assert_eq!(n.channel_id, "ch1");
         assert_eq!(n.title, "Bot — Home / #general");
         assert_eq!(n.body, "hi there");
+        assert_eq!(n.message_id, 9);
+    }
+
+    #[test]
+    fn parses_channel_and_thread_read_events() {
+        let channel = read_event_for(&json!({
+            "type": "read", "channel_id": "c1", "last_read_id": 8,
+        })).unwrap();
+        assert_eq!(channel.thread_id, None);
+        assert_eq!(channel.last_read_id, 8);
+
+        let thread = read_event_for(&json!({
+            "type": "thread_read", "channel_id": "c1", "thread_id": 42,
+            "last_read_id": 11,
+        })).unwrap();
+        assert_eq!(thread.thread_id, Some(42));
+        assert_eq!(thread.last_read_id, 11);
     }
 
     #[test]

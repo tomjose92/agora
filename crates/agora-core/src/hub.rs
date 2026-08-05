@@ -148,6 +148,7 @@ const NOTIFY_BODY_MAX_CHARS: usize = 180;
 pub struct NotifyEvent {
     pub channel_id: String,
     pub thread_id: Option<i64>,
+    pub message_id: i64,
     /// "Author — Group / #channel"
     pub title: String,
     /// Message snippet.
@@ -155,6 +156,15 @@ pub struct NotifyEvent {
 }
 
 type Notifier = Box<dyn Fn(NotifyEvent) + Send + Sync>;
+
+#[derive(Clone, Debug)]
+pub struct ReadNotifyEvent {
+    pub channel_id: String,
+    pub thread_id: Option<i64>,
+    pub last_read_id: i64,
+}
+
+type ReadNotifier = Box<dyn Fn(ReadNotifyEvent) + Send + Sync>;
 
 pub fn mention_tokens(text: &str) -> Vec<String> {
     // @name tokens: alnum start, then word chars / dots / dashes.
@@ -247,6 +257,8 @@ pub struct Hub {
     ui_active: AtomicBool,
     /// Platform notification callback (desktop shell only).
     notifier: Mutex<Option<Notifier>>,
+    /// Desktop-only hook for removing delivered notifications after a read.
+    read_notifier: Mutex<Option<ReadNotifier>>,
     /// Queue to the link-unfurl worker (installed at boot; unit tests leave
     /// it empty so posting never touches the network).
     unfurl_tx: Mutex<Option<UnboundedSender<i64>>>,
@@ -267,6 +279,7 @@ impl Hub {
             state: Mutex::new(HubState::default()),
             ui_active: AtomicBool::new(true),
             notifier: Mutex::new(None),
+            read_notifier: Mutex::new(None),
             unfurl_tx: Mutex::new(None),
             max_attachment_bytes,
         }
@@ -299,6 +312,10 @@ impl Hub {
 
     pub fn set_notifier(&self, f: impl Fn(NotifyEvent) + Send + Sync + 'static) {
         *self.notifier.lock().unwrap() = Some(Box::new(f));
+    }
+
+    pub fn set_read_notifier(&self, f: impl Fn(ReadNotifyEvent) + Send + Sync + 'static) {
+        *self.read_notifier.lock().unwrap() = Some(Box::new(f));
     }
 
     /// The shell reports window focus; while inactive, new messages the user
@@ -367,6 +384,7 @@ impl Hub {
         let event = NotifyEvent {
             channel_id: channel_id.to_string(),
             thread_id: message["thread_id"].as_i64(),
+            message_id: message["id"].as_i64().unwrap_or_default(),
             title: format!("{author} — {place}"),
             body,
         };
@@ -383,6 +401,7 @@ impl Hub {
                 body: event.body,
                 channel_id: event.channel_id,
                 thread_id: event.thread_id,
+                message_id: event.message_id,
             };
             std::thread::spawn(move || {
                 let dead = crate::push::send(&push, &tokens);
@@ -621,6 +640,13 @@ impl Hub {
             username,
             &json!({"type": "read", "channel_id": channel_id, "last_read_id": last}),
         );
+        if let Some(notify) = self.read_notifier.lock().unwrap().as_ref() {
+            notify(ReadNotifyEvent {
+                channel_id: channel_id.to_string(),
+                thread_id: None,
+                last_read_id: last,
+            });
+        }
         last
     }
 
@@ -644,6 +670,13 @@ impl Hub {
                 "channel_id": channel_id, "last_read_id": last,
             }),
         );
+        if let Some(notify) = self.read_notifier.lock().unwrap().as_ref() {
+            notify(ReadNotifyEvent {
+                channel_id,
+                thread_id: Some(thread_id),
+                last_read_id: last,
+            });
+        }
         last
     }
 
@@ -2541,12 +2574,20 @@ mod tests {
         let (tx_alice, mut rx_alice) = unbounded_channel();
         h.attach_socket("tom", false, tx_tom);
         h.attach_socket("alice", false, tx_alice);
+        let reads: Arc<Mutex<Vec<ReadNotifyEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let read_sink = Arc::clone(&reads);
+        h.set_read_notifier(move |ev| read_sink.lock().unwrap().push(ev));
         h.mark_thread_read("alice", root_id, None);
         let ev = rx_alice.try_recv().unwrap();
         assert_eq!(ev["type"], "thread_read");
         assert_eq!(ev["thread_id"], root_id);
         assert_eq!(ev["channel_id"], cid);
         assert!(rx_tom.try_recv().is_err());
+        let reads = reads.lock().unwrap();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].channel_id, cid);
+        assert_eq!(reads[0].thread_id, Some(root_id));
+        assert!(reads[0].last_read_id > root_id);
     }
 
     #[test]

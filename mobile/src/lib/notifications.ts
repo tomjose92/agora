@@ -10,6 +10,11 @@ import * as SecureStore from "expo-secure-store";
 import { ApiClient, type Session } from "@agora/core";
 import type { Message } from "@agora/core";
 import type { ChannelUnread } from "@agora/core";
+import type { Group, ThreadRow } from "@agora/core";
+import {
+  conversationKey,
+  obsoleteNotificationIds,
+} from "./notificationCleanup";
 
 const KEY_PUSH_TOKEN = "agora_push_token";
 
@@ -71,6 +76,10 @@ export async function registerPushToken(session: Session): Promise<boolean> {
 export async function unregisterPushToken(session: Session | null): Promise<void> {
   const token = await SecureStore.getItemAsync(KEY_PUSH_TOKEN);
   pushActive = false;
+  await Promise.allSettled([
+    Notifications.dismissAllNotificationsAsync(),
+    Notifications.setBadgeCountAsync(0),
+  ]);
   if (token) {
     await SecureStore.deleteItemAsync(KEY_PUSH_TOKEN).catch(() => {});
   }
@@ -90,11 +99,16 @@ export function notifyAgentMessage(message: Message): void {
   const body =
     message.text.length > 140 ? `${message.text.slice(0, 140)}…` : message.text || "(attachment)";
   void Notifications.scheduleNotificationAsync({
+    identifier: conversationKey(message.channel_id, message.thread_id),
     content: {
       title,
       body,
       // Tap routing (see notificationTarget in unread.ts).
-      data: { channel_id: message.channel_id, thread_id: message.thread_id },
+      data: {
+        channel_id: message.channel_id,
+        thread_id: message.thread_id,
+        message_id: message.id,
+      },
     },
     trigger: null, // now
   });
@@ -116,6 +130,7 @@ export function notifyUnreadChannel(
         ? "1 new message"
         : `${newCount} new messages`;
   void Notifications.scheduleNotificationAsync({
+    identifier: conversationKey(channel.id),
     content: {
       title: `${channel.group} / #${channel.name}`,
       body,
@@ -123,6 +138,24 @@ export function notifyUnreadChannel(
     },
     trigger: null,
   });
+}
+
+export async function reconcileNotifications(groups: Group[], threads: ThreadRow[]): Promise<void> {
+  try {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    const obsolete = obsoleteNotificationIds(
+      presented.map((notification) => ({
+        identifier: notification.request.identifier,
+        data: notification.request.content.data,
+      })),
+      groups,
+      threads,
+    );
+    await Promise.all(obsolete.map((identifier) =>
+      Notifications.dismissNotificationAsync(identifier)));
+  } catch {
+    /* Notification Center access is best-effort. */
+  }
 }
 
 /** App-icon badge = total unread; reads (anywhere) bring it back down. */
