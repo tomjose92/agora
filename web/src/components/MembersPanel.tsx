@@ -7,25 +7,9 @@ import {
   useUsers, type Member,
 } from "@agora/core";
 import { Icon } from "../lib/icons";
-import { withToken } from "../lib/files";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
-
-/* Agent avatar for the roster row: the picture from /api/agents with the bot
-   icon as fallback. The `has-avatar` span must hold only the <img> (no sibling
-   icon) — .ago-av is an inline-flex circle, so a second child would shrink the
-   image out of shape. Mirrors the avatar markup in MessageItem/Composer. */
-function AgentAvatar({ avatar }: { avatar?: string | null }) {
-  const [failed, setFailed] = useState(false);
-  if (avatar && !failed) {
-    return (
-      <span className="ago-av sm has-avatar">
-        <img src={withToken(avatar)} alt="" onError={() => setFailed(true)} />
-      </span>
-    );
-  }
-  return <span className="ago-av sm"><Icon name="bot" /></span>;
-}
+import { AgentAvatar } from "./AgentAvatar";
 
 export function MembersPanel() {
   const ui = useUiState();
@@ -90,7 +74,7 @@ export function MembersPanel() {
               const scopes = agentScopes.get(m.member_id) || [m];
               return (
                 <div key={`a-${m.member_id}`} className="ago-member ago-agent">
-                  <AgentAvatar avatar={agent?.avatar} />
+                  <AgentAvatar avatar={agent?.avatar} small />
                   <span className="mname">{m.name || m.member_id}</span>
                   <span className="mmeta short">
                     {m.role}{off ? <> · <span className="ago-off" title="Offline — won’t reply">offline</span></> : null}

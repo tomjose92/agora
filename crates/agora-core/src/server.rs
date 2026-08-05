@@ -871,7 +871,7 @@ async fn list_groups(
                 .is_some_and(|id| state.hub.store.user_can_start_agent_dm(&user.username, id))
         });
     if !dm_channels.is_empty() || can_dm_any {
-        groups.insert(0, json!({"id":"__dms","name":"Direct messages","description":"Private conversations with agents",
+        groups.push(json!({"id":"__dms","name":"Direct messages","description":"Private conversations with agents",
             "created_by":Value::Null,"created_at":0.0,"channels":dm_channels,"role":"member","hidden":false,
             "is_public":false,"kind":"agent_dms"}));
     }
@@ -3751,6 +3751,23 @@ mod tests {
         store.set_agent_dm_policy("codex",false,&[]);
         assert!(require_channel_member(&state,&alice,cid).is_ok());
         assert!(require_channel_postable(&state,&alice,cid).is_err());
+    }
+
+    #[tokio::test]
+    async fn direct_messages_group_is_always_last() {
+        let (state, _dir) = test_state();
+        let store = &state.hub.store;
+        store.create_user("alice", "Alice", None, "member").unwrap();
+        store.create_group("First", "", Some("alice"));
+        store.create_group("Second", "", Some("alice"));
+        store.upsert_agent("codex", "Codex", "test", true, false, 1);
+        store.set_agent_dm_policy("codex", false, &["alice".into()]);
+        let response = list_groups(
+            State(state.clone()), Query(HashMap::new()), session_headers(&state, "alice"),
+        ).await.unwrap().0;
+        let groups = response["groups"].as_array().unwrap();
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups.last().unwrap()["id"], "__dms");
     }
 
     #[test]

@@ -16,6 +16,7 @@ import { toast } from "../lib/toast";
 import { useConfirm } from "../state/confirm";
 import { useUiState } from "../state/ui";
 import { AgentDmPanel } from "./AgentDmPanel";
+import { AgentAvatar } from "./AgentAvatar";
 
 const SEARCH_KEY = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl+K";
 
@@ -90,6 +91,7 @@ function SideThread({ t, g, c }: { t: ThreadRow; g: Group; c: Channel }) {
 export function Sidebar() {
   const me = useMe().data;
   const groups = useGroups().data || [];
+  const orderedGroups = [...groups.filter(g => g.kind !== "agent_dms"), ...groups.filter(g => g.kind === "agent_dms")];
   const threads = useThreads().data || [];
   const ui = useUiState();
   const armedKey = useConfirm(s => s.armed);
@@ -140,7 +142,7 @@ export function Sidebar() {
         ids.splice(at < 0 ? ids.length : at, 0, drag.id);
         reorderChannels.mutate({ groupId: gid, ids }, { onError: err });
       } else {
-        const ids = groups.map(x => x.id).filter(x => x !== drag.id);
+        const ids = groups.filter(x => x.kind !== "agent_dms").map(x => x.id).filter(x => x !== drag.id);
         const at = ids.indexOf(id);
         ids.splice(at < 0 ? ids.length : at, 0, drag.id);
         reorderGroups.mutate(ids, { onError: err });
@@ -216,7 +218,7 @@ export function Sidebar() {
         <Badge n={threadTotal} mentions={0} />
       </div>
       <div className="ago-groups">
-        {groups.filter(g => !g.hidden).map(g => {
+        {orderedGroups.filter(g => !g.hidden).map(g => {
           const open = ui.isExpanded(g.id);
           const sel = g.id === ui.sel.g;
           const isDms = g.kind === "agent_dms";
@@ -227,8 +229,8 @@ export function Sidebar() {
                 title={`Open ${g.name}`}
                 draggable={!isDms}
                 onDragStart={dragStart("group", g.id)}
-                onDragOver={dragOver("group")}
-                onDrop={dropOn("group", g.id)}
+                onDragOver={isDms ? undefined : dragOver("group")}
+                onDrop={isDms ? undefined : dropOn("group", g.id)}
                 onClick={() => ui.openGroupPage(g.id)}>
                 <span className={`ago-caret ${open ? "open" : ""}`}
                   title={`${open ? "Collapse" : "Expand"} ${g.name}`}
@@ -249,12 +251,12 @@ export function Sidebar() {
                 return (
                   <div key={c.id}>
                     <div className={`ago-chan ${active ? "active" : ""} ${unread || mentions ? "unread" : ""}`}
-                      draggable
-                      onDragStart={dragStart("chan", c.id, g.id)}
-                      onDragOver={dragOver("chan", g.id)}
-                      onDrop={dropOn("chan", c.id, g.id)}
+                      draggable={!isDms}
+                      onDragStart={isDms ? undefined : dragStart("chan", c.id, g.id)}
+                      onDragOver={isDms ? undefined : dragOver("chan", g.id)}
+                      onDrop={isDms ? undefined : dropOn("chan", c.id, g.id)}
                       onClick={() => ui.selectChannel(g.id, c.id)}>
-                      <span className="hash">{isDms ? "↔" : "#"}</span><span className="nm">{c.name}</span>
+                      {isDms ? <AgentAvatar agentId={c.dm_agent_id || undefined} small /> : <span className="hash">#</span>}<span className="nm">{c.name}</span>
                       <Badge n={unread} mentions={mentions} />
                       {!isDms && <button className="ago-x hide" title={`Hide #${c.name} from your sidebar`}
                         onClick={e => {
@@ -293,7 +295,7 @@ export function Sidebar() {
             </div>
           );
         })}
-        {!groups.filter(g => !g.hidden).length && (
+        {!orderedGroups.filter(g => !g.hidden).length && (
           <div className="dim" style={{ padding: "10px 12px", fontSize: 12 }}>
             No groups yet — create one to start chatting.
           </div>

@@ -34,6 +34,10 @@ const meta = {
       ] },
       "GET /api/admin/agents/codex/dm-policy": { agent_id: "codex", is_public: false, grants: ["alice"] },
       "GET /api/users": { users: fixtureUsers },
+      "GET /api/agents": { agents: [
+        { id: "research", name: "Research", live: true, avatar: null },
+        { id: "codex", name: "Codex", live: true, avatar: null },
+      ] },
     },
     setup: () => useUiState.setState({ panel: "connections" }),
   },
@@ -59,5 +63,6 @@ export const BridgeAccessPolicy: Story = {
     const canvas=within(canvasElement);
     await userEvent.click(await canvas.findByRole("button",{name:"Manage access"}));
     await expect(canvas.findByText("Everyone on this Agora can start a direct message")).resolves.toBeVisible();
+    await expect(canvas.findByRole("switch", { name: "Public agent direct messages" })).resolves.toHaveAttribute("aria-checked", "false");
   },
 };

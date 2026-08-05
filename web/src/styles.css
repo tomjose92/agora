@@ -1850,13 +1850,14 @@ a.btn { text-decoration: none; }
   width: 100%; min-height: 46px; padding: 10px 12px; color: var(--text); background: var(--panel-strong);
   border: 1px solid transparent; border-radius: 10px; font: inherit; text-align: left; cursor: pointer;
 }
+.ago-dm-agent-name { flex: 1; min-width: 0; }
 .ago-dm-agent:hover, .ago-dm-agent:focus-visible { border-color: var(--a1); background: rgba(139,124,255,.1); outline: none; }
 .ago-dm-agent:disabled { cursor: wait; opacity: .55; }
 
 .conn-access { display: grid; gap: 16px; width: 100%; }
 .conn-access .conn-back { margin: 0 0 2px; justify-self: start; }
 .conn-access h3 { margin: 0; font-size: 20px; line-height: 1.25; }
-.conn-access-title { display: flex; justify-content: space-between; align-items: center; }
+.conn-access-title { display: flex; justify-content: flex-start; align-items: center; gap: 12px; }
 .conn-access-title > div { display: grid; gap: 6px; min-width: 0; }
 .conn-access-title p, .conn-access > p.dim { margin: 0; font-size: 12px; line-height: 1.45; }
 .conn-access h4 { margin: 4px 0 -8px; }
@@ -1869,6 +1870,15 @@ a.btn { text-decoration: none; }
 }
 .conn-access-public span, .conn-access-users label span, .conn-access-agent-list .conn-row-main { display: grid; gap: 3px; }
 .conn-access input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--a1); }
+.conn-switch {
+  appearance: none; position: relative; width: 42px; height: 24px; flex: 0 0 auto; padding: 0;
+  border: 1px solid var(--border-strong); border-radius: 999px; background: rgba(255,255,255,.08); cursor: pointer;
+}
+.conn-switch > span { position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; border-radius: 50%; background: var(--dim); transition: transform .16s ease, background .16s ease; }
+.conn-switch[aria-checked="true"] { background: rgba(139,124,255,.38); border-color: var(--a1); }
+.conn-switch[aria-checked="true"] > span { transform: translateX(18px); background: #fff; }
+.conn-switch:focus-visible { outline: 2px solid var(--a1); outline-offset: 2px; }
+.conn-switch:disabled { opacity: .55; cursor: wait; }
 .conn-access small { display: block; color: var(--dim); font-size: 11px; font-weight: 400; }
 .conn-access-users, .conn-access-agent-list { display: grid; gap: 8px; }
 .conn-access-users label { cursor: pointer; }

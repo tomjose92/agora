@@ -7,6 +7,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -41,6 +42,7 @@ import {
 } from "@agora/core";
 import type { Channel, Group } from "@agora/core";
 import { Icon } from "../../src/components/Icon";
+import { AgentAvatar } from "../../src/components/AgentAvatar";
 import { toastErr } from "../../src/components/Toast";
 import { headerActions } from "../../src/lib/headerItems";
 import { totalThreadUnread } from "@agora/core";
@@ -330,8 +332,8 @@ function GroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean 
   );
 }
 
-function DmGroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolean }) {
-  const [choosing, setChoosing] = useState(false);
+export function DmGroupCard({ group, unreadsOnly, initialChoosing = false }: { group: Group; unreadsOnly: boolean; initialChoosing?: boolean }) {
+  const [choosing, setChoosing] = useState(initialChoosing);
   const dms = useAgentDms();
   const open = useOpenAgentDm();
   const channels = unreadsOnly ? group.channels.filter(c => (c.unread ?? 0) > 0) : group.channels;
@@ -342,29 +344,32 @@ function DmGroupCard({ group, unreadsOnly }: { group: Group; unreadsOnly: boolea
       <View style={styles.groupHead}>
         <Icon icon={Bot} size={16} color={colors.a1} />
         <Text style={styles.groupName}>Direct messages</Text>
-        <Pressable accessibilityLabel="Start a direct message with an agent" onPress={() => setChoosing(x => !x)} hitSlop={10} style={styles.plusBtn}>
+        <Pressable accessibilityLabel="Start a direct message with an agent" onPress={() => setChoosing(true)} hitSlop={10} style={styles.plusBtn}>
           <Text style={styles.plus}>＋ Agent</Text>
         </Pressable>
       </View>
-      {choosing ? <View style={styles.dmPicker}>
-        {available.map(agent => (
-          <Pressable key={agent.id} style={styles.channelRow} onPress={() => open.mutate(agent.id, {
-            onSuccess: channel => { setChoosing(false); router.push({ pathname: "/(app)/channel/[id]", params: { id: channel.id, name: channel.name, groupId: "__dms" } }); },
-            onError: e => toastErr("Couldn't open DM", e),
-          })}>
-            <Text style={styles.hash}>↔</Text><Text style={styles.channelName}>{agent.name}</Text>
-            <Text style={agent.live ? styles.dmOnline : styles.dmOffline}>{agent.live ? "online" : "offline"}</Text>
+      <Modal transparent visible={choosing} animationType="fade" onRequestClose={() => setChoosing(false)}>
+        <Pressable style={styles.dmModalScrim} onPress={() => setChoosing(false)}>
+          <Pressable style={styles.dmModalCard} accessibilityViewIsModal onPress={() => undefined}>
+            <View style={styles.dmModalHead}><View style={styles.dmModalTitleBlock}><Text style={styles.dmModalTitle}>New direct message</Text><Text style={styles.dmModalHint}>Choose an agent to message privately</Text></View>
+              <Pressable accessibilityLabel="Close agent picker" onPress={() => setChoosing(false)} style={styles.dmModalClose}><Text style={styles.dmModalCloseText}>Close</Text></Pressable></View>
+            <ScrollView style={styles.dmModalList} contentContainerStyle={styles.dmModalListContent}>
+              {available.map(agent => <Pressable key={agent.id} disabled={open.isPending} style={({pressed}) => [styles.dmAgentRow, pressed && styles.dmAgentRowPressed]} onPress={() => open.mutate(agent.id, {
+                onSuccess: channel => { setChoosing(false); router.push({ pathname: "/(app)/channel/[id]", params: { id: channel.id, name: channel.name, groupId: "__dms" } }); },
+                onError: e => toastErr("Couldn't open DM", e),
+              })}><AgentAvatar agentId={agent.id} size={30}/><Text style={styles.channelName}>{agent.name}</Text><Text style={agent.live ? styles.dmOnline : styles.dmOffline}>{agent.live ? "online" : "offline"}</Text></Pressable>)}
+              {dms.isLoading ? <Text style={styles.dmModalEmpty}>Loading agents…</Text> : null}
+              {dms.isError ? <Text style={styles.dmModalEmpty}>Couldn't load available agents.</Text> : null}
+              {dms.isSuccess && !available.length ? <Text style={styles.dmModalEmpty}>No new agents are available to message.</Text> : null}
+            </ScrollView>
           </Pressable>
-        ))}
-        {dms.isLoading ? <Text style={styles.emptyChannels}>Loading agents…</Text> : null}
-        {dms.isError ? <Text style={styles.emptyChannels}>Couldn't load available agents.</Text> : null}
-        {dms.isSuccess && !available.length ? <Text style={styles.emptyChannels}>No new agents are available to message.</Text> : null}
-      </View> : null}
+        </Pressable>
+      </Modal>
       {channels.map(channel => (
         <Pressable key={channel.id} style={styles.channelRow} onPress={() => router.push({
           pathname: "/(app)/channel/[id]", params: { id: channel.id, name: channel.name, groupId: "__dms" },
         })}>
-          <Text style={styles.hash}>↔</Text><Text style={styles.channelName}>{channel.name}</Text>
+          <AgentAvatar agentId={channel.dm_agent_id || ""} size={26}/><Text style={styles.channelName}>{channel.name}</Text>
           <UnreadBadge count={channel.unread ?? 0} />
         </Pressable>
       ))}
@@ -541,7 +546,7 @@ export default function Home() {
             </Text>
           </Pressable>
         </View>
-        {(groups.data ?? [])
+        {[...(groups.data ?? []).filter(g => g.kind !== "agent_dms"), ...(groups.data ?? []).filter(g => g.kind === "agent_dms")]
           .filter((g) => !g.hidden)
           .map((g) => (
             FEATURES.dms && g.kind === "agent_dms"
@@ -639,7 +644,19 @@ const styles = StyleSheet.create({
   },
   hash: { color: colors.faint, fontSize: 14 },
   channelName: { color: colors.text, fontSize: 14.5, flex: 1 },
-  dmPicker: { borderTopWidth: 1, borderTopColor: colors.border, paddingVertical: 4 },
+  dmModalScrim: { flex: 1, justifyContent: "center", padding: 20, backgroundColor: "rgba(4,6,10,0.78)" },
+  dmModalCard: { width: "100%", maxWidth: 440, maxHeight: "78%", alignSelf: "center", padding: 18, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 18, backgroundColor: colors.panelStrong },
+  dmModalHead: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 14 },
+  dmModalTitleBlock: { flex: 1, gap: 3 },
+  dmModalTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
+  dmModalHint: { color: colors.dim, fontSize: 12.5 },
+  dmModalClose: { borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 6 },
+  dmModalCloseText: { color: colors.text, fontSize: 12.5, fontWeight: "700" },
+  dmModalList: { marginTop: 16 },
+  dmModalListContent: { gap: 8 },
+  dmAgentRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 11, backgroundColor: colors.panel },
+  dmAgentRowPressed: { backgroundColor: "rgba(139,124,255,0.12)" },
+  dmModalEmpty: { color: colors.dim, padding: 14, textAlign: "center", lineHeight: 19 },
   dmOnline: { color: colors.green, fontSize: 11.5 },
   dmOffline: { color: colors.faint, fontSize: 11.5 },
   badge: {

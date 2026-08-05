@@ -17,6 +17,10 @@ const meta = {
   args: { onClose: () => undefined },
   parameters: { apiRoutes: {
     "GET /api/me": fixtureMe,
+    "GET /api/agents": { agents: [
+      { id: "codex", name: "Codex", live: true, avatar: null },
+      { id: "claude", name: "Claude", live: false, avatar: null },
+    ] },
     "GET /api/dms": dms,
   } },
 } satisfies Meta<typeof AgentDmPanel>;
@@ -26,6 +30,8 @@ export const EligibleAgents: Story = { play: async ({canvasElement}) => {
   const canvas=within(canvasElement.ownerDocument.body);
   await expect(canvas.findByRole("dialog")).resolves.toHaveAttribute("aria-modal","true");
   await expect(canvas.findByText("Claude")).resolves.toBeVisible();
+  await expect(canvas.findByText("Claude")).resolves.toHaveClass("ago-dm-agent-name");
+  expect(canvas.getByRole("button", { name: /Claude/ }).querySelector(".ago-av")).toBeTruthy();
   expect(canvas.queryByText("Codex")).not.toBeInTheDocument();
 } };
 

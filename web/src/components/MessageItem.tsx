@@ -9,7 +9,6 @@ import {
   FEATURES, useStarMessage, useStars, useTldrView, type LinkPreview, type Message,
 } from "@agora/core";
 import { Icon } from "../lib/icons";
-import { withToken } from "../lib/files";
 import { toast } from "../lib/toast";
 import { useConfirm } from "../state/confirm";
 import { type MentionIndex } from "../lib/mentions";
@@ -23,6 +22,7 @@ import { useEmojiPicker } from "./EmojiPicker";
 import { ArtifactList } from "./artifacts/ArtifactList";
 import { useUiState } from "../state/ui";
 import { copyDeepLink } from "../lib/deepLinks";
+import { AgentAvatar as SharedAgentAvatar } from "./AgentAvatar";
 
 /* Source viewer state (the overlay itself mounts app-level). */
 interface SourcesView {
@@ -51,26 +51,9 @@ function visibleText(m: Message): string {
 function AgentAvatar({ agentId }: { agentId: string }) {
   const agents = useAgents().data || [];
   const meta = agents.find(a => a.id === agentId);
-  const av = (meta as { avatar?: string } | undefined)?.avatar;
   const title = `View ${meta?.name || agentId}'s profile`;
   const onClick = () => useAgentProfile.getState().show(agentId);
-  if (av) {
-    return (
-      <span className="ago-av clickable has-avatar" role="button" title={title} onClick={onClick}>
-        <img src={withToken(av)} alt=""
-          onError={e => {
-            const wrap = (e.target as HTMLImageElement).parentElement;
-            if (wrap) wrap.classList.remove("has-avatar");
-            (e.target as HTMLImageElement).style.display = "none";
-          }} />
-      </span>
-    );
-  }
-  return (
-    <span className="ago-av clickable" role="button" title={title} onClick={onClick}>
-      <Icon name="bot" />
-    </span>
-  );
+  return <SharedAgentAvatar agentId={agentId} className="clickable" title={title} onClick={onClick} />;
 }
 
 /* Agent profile card state (overlay mounts app-level, Phase 5). */
