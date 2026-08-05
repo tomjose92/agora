@@ -22,6 +22,7 @@ import { Icon } from "../lib/icons";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
 import { AgentAvatar } from "./AgentAvatar";
+import { AgentStatus } from "./AgentStatus";
 
 type Tab = "list" | "add";
 type AddKind = "pantheo" | "coding" | PairingKind;
@@ -37,7 +38,7 @@ function AgentAccessPolicy({ agent, onBack }: { agent: AgentSource["agents"][num
   });
   return <div className="conn-access">
     <BackButton onClick={onBack} label="Back" />
-    <div className="conn-access-title"><AgentAvatar agentId={agent.id} /><div><h3>{agent.name}</h3><p className="dim">{agent.live ? "Online" : "Offline · messages remain available in history"}</p></div></div>
+    <div className="conn-access-title"><AgentAvatar agentId={agent.id} /><div><h3>{agent.name}</h3><AgentStatus live={agent.live} />{!agent.live && <p className="dim">Messages remain available in history</p>}</div></div>
     {!policy ? <p className="dim">Loading access…</p> : <>
       <div className="conn-access-public"><span><strong>Public</strong><small>Everyone on this Agora can start a direct message</small></span>
         <button type="button" className="conn-switch" role="switch" aria-checked={policy.is_public}
@@ -59,7 +60,7 @@ function SourceAgentAccess({ source, onBack, onSelect }: { source: AgentSource; 
   return <div className="conn-access"><BackButton onClick={onBack} label="Connections" />
     <h3>{source.name}</h3><p className="dim">Choose an agent to manage who can start a direct message.</p>
     <div className="conn-access-agent-list">{source.agents.map(agent => <button className="conn-row conn-access-agent" key={agent.id} onClick={()=>onSelect(agent)}>
-      <AgentAvatar agentId={agent.id} small /><span className="conn-row-main"><strong>{agent.name}</strong><small>{agent.live?"Online":"Offline"}</small></span><Icon name="chevron-right"/>
+      <AgentAvatar agentId={agent.id} small /><span className="conn-row-main"><strong>{agent.name}</strong><AgentStatus live={agent.live}/></span><Icon name="chevron-right"/>
     </button>)}</div>
     {!source.agents.length && <p className="dim conn-empty">No agents have registered through this connection yet.</p>}
   </div>;
