@@ -11,6 +11,7 @@ import { useAgoraSocket } from "../../src/ws/useAgoraSocket";
 import { emitAgentMessage } from "../../src/lib/agentBus";
 import {
   notifyAgentMessage,
+  reconcileNotifications,
   registerPushToken,
   setBadge,
   setupNotifications,
@@ -48,6 +49,7 @@ function UnreadSync() {
     if (!groups) return;
     setBadge(totalUnread(groups) + totalThreadUnread(threads ?? []));
     saveUnreadSnapshot(groups);
+    void reconcileNotifications(groups, threads ?? []);
   }, [groups, threads]);
   return null;
 }
@@ -65,6 +67,9 @@ export function NotificationTapRouter() {
     handled.current = id;
     const target = notificationTarget(response.notification.request.content.data);
     if (!target) return;
+    // The tapped card normally auto-dismisses; make that deterministic. Other
+    // cards wait for the read marker so a newer racing message is preserved.
+    void Notifications.dismissNotificationAsync(id);
 
     const action = notificationNavigationAction({ pathname, target });
     if (action === "none") return;
