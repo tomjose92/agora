@@ -16,7 +16,6 @@ import { toast } from "../lib/toast";
 import { useConfirm } from "../state/confirm";
 import { useUiState } from "../state/ui";
 import { AgentDmPanel } from "./AgentDmPanel";
-import { AgentAvatar } from "./AgentAvatar";
 
 const SEARCH_KEY = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl+K";
 
@@ -256,7 +255,7 @@ export function Sidebar() {
                       onDragOver={isDms ? undefined : dragOver("chan", g.id)}
                       onDrop={isDms ? undefined : dropOn("chan", c.id, g.id)}
                       onClick={() => ui.selectChannel(g.id, c.id)}>
-                      {isDms ? <AgentAvatar agentId={c.dm_agent_id || undefined} small /> : <span className="hash">#</span>}<span className="nm">{c.name}</span>
+                      <span className="hash">{isDms ? "↔" : "#"}</span><span className="nm">{c.name}</span>
                       <Badge n={unread} mentions={mentions} />
                       {!isDms && <button className="ago-x hide" title={`Hide #${c.name} from your sidebar`}
                         onClick={e => {
@@ -291,7 +290,7 @@ export function Sidebar() {
                   ? createRow
                   : <button className="ago-add" onClick={() => { setCreating({ kind: "channel", g: g.id }); setCreateName(""); }}>+ channel</button>
               )}
-              {open && isDms && FEATURES.dms && <button className="ago-add" aria-label="Start a direct message with an agent" onClick={() => setDmOpen(true)}>+ Agent</button>}
+              {open && isDms && FEATURES.dms && <button className="ago-add" aria-label="Start a direct message with an agent" onClick={() => setDmOpen(true)}>+ agent</button>}
             </div>
           );
         })}

@@ -3,6 +3,8 @@ export const colors = {
   bg: "#07090f",
   panel: "rgba(255,255,255,0.028)",
   panelStrong: "rgba(255,255,255,0.05)",
+  /** Opaque foreground for sheets/modals rendered over a translucent scrim. */
+  sheet: "#14161d",
   border: "rgba(255,255,255,0.07)",
   borderStrong: "rgba(255,255,255,0.13)",
   text: "#eceef4",

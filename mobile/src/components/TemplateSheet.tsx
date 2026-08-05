@@ -203,7 +203,7 @@ const s = StyleSheet.create({
   keyboard: { flex: 1 },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,.58)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: "#14161d",
+    backgroundColor: colors.sheet,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 18,
