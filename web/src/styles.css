@@ -1265,7 +1265,10 @@ a.btn { text-decoration: none; }
 
 /* ---------- connections overlay ---------- */
 .conn-overlay {
-  position: fixed; inset: 0; background: rgba(4,6,10,.7); backdrop-filter: blur(6px);
+  /* This pane polls live connection state. A viewport-sized backdrop-filter
+     forces Chromium to recompose the whole page on each row update and can
+     visibly flash; a stronger static scrim keeps focus without that repaint. */
+  position: fixed; inset: 0; background: rgba(4,6,10,.84);
   display: flex; align-items: center; justify-content: center; z-index: 55; padding: 30px;
 }
 .conn-panel {
@@ -1829,9 +1832,12 @@ a.btn { text-decoration: none; }
   .ago-map-region-chips { width: 100%; margin-left: 0; }
 }
 .ago-dm-overlay {
+  /* Same treatment as .conn-overlay: the sidebar behind this modal re-renders
+     on live WS events, and a viewport-sized backdrop-filter would flash the
+     whole page on each of those repaints. */
   position: fixed; inset: 0; z-index: 80; padding: 24px;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(4,6,10,.7); backdrop-filter: blur(6px);
+  background: rgba(4,6,10,.84);
 }
 .ago-dm-popover {
   width: min(420px, 100%); max-height: min(560px, calc(100vh - 48px)); overflow-y: auto;
