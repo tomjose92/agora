@@ -215,7 +215,7 @@ const styles = StyleSheet.create({
   },
   quickEmoji: { fontSize: 22 },
   backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.55)" },
-  sheet: { maxHeight: "72%", backgroundColor: "#14161d", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 20, paddingBottom: 36 },
+  sheet: { maxHeight: "72%", backgroundColor: colors.sheet, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 20, paddingBottom: 36 },
   handle: { alignSelf: "center", width: 42, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: 16 },
   tabBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   tabs: { flexDirection: "row", gap: 8 },

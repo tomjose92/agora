@@ -145,10 +145,10 @@ function Row({ icon, label, onPress, color = colors.text, fill, danger = false }
 const styles = StyleSheet.create({
   keyboard: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
-  sheet: { backgroundColor: "#14161d", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, gap: 4, paddingBottom: 34 },
+  sheet: { backgroundColor: colors.sheet, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, gap: 4, paddingBottom: 34 },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
   text: { color: colors.text, fontSize: 15.5 }, danger: { color: colors.red },
-  editor: { backgroundColor: "#14161d", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, paddingBottom: 34, gap: 12 },
+  editor: { backgroundColor: colors.sheet, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, paddingBottom: 34, gap: 12 },
   title: { color: colors.text, fontSize: 17, fontWeight: "800" },
   input: { minHeight: 150, maxHeight: 360, borderWidth: 1, borderColor: colors.a1, borderRadius: 10, padding: 12, color: colors.text, backgroundColor: colors.bg, fontSize: 15, lineHeight: 21 },
   editorActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },

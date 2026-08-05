@@ -345,12 +345,12 @@ export function DmGroupCard({ group, unreadsOnly, initialChoosing = false }: { g
         <Icon icon={Bot} size={16} color={colors.a1} />
         <Text style={styles.groupName}>Direct messages</Text>
         <Pressable accessibilityLabel="Start a direct message with an agent" onPress={() => setChoosing(true)} hitSlop={10} style={styles.plusBtn}>
-          <Text style={styles.plus}>＋ Agent</Text>
+          <Text style={styles.plus}>＋</Text>
         </Pressable>
       </View>
       <Modal transparent visible={choosing} animationType="fade" onRequestClose={() => setChoosing(false)}>
         <Pressable style={styles.dmModalScrim} onPress={() => setChoosing(false)}>
-          <Pressable style={styles.dmModalCard} accessibilityViewIsModal onPress={() => undefined}>
+          <Pressable testID="agent-dm-modal-card" style={styles.dmModalCard} accessibilityViewIsModal onPress={() => undefined}>
             <View style={styles.dmModalHead}><View style={styles.dmModalTitleBlock}><Text style={styles.dmModalTitle}>New direct message</Text><Text style={styles.dmModalHint}>Choose an agent to message privately</Text></View>
               <Pressable accessibilityLabel="Close agent picker" onPress={() => setChoosing(false)} style={styles.dmModalClose}><Text style={styles.dmModalCloseText}>Close</Text></Pressable></View>
             <ScrollView style={styles.dmModalList} contentContainerStyle={styles.dmModalListContent}>
@@ -369,7 +369,7 @@ export function DmGroupCard({ group, unreadsOnly, initialChoosing = false }: { g
         <Pressable key={channel.id} style={styles.channelRow} onPress={() => router.push({
           pathname: "/(app)/channel/[id]", params: { id: channel.id, name: channel.name, groupId: "__dms" },
         })}>
-          <AgentAvatar agentId={channel.dm_agent_id || ""} size={26}/><Text style={styles.channelName}>{channel.name}</Text>
+          <Text style={styles.hash}>↔</Text><Text style={styles.channelName}>{channel.name}</Text>
           <UnreadBadge count={channel.unread ?? 0} />
         </Pressable>
       ))}
@@ -645,7 +645,7 @@ const styles = StyleSheet.create({
   hash: { color: colors.faint, fontSize: 14 },
   channelName: { color: colors.text, fontSize: 14.5, flex: 1 },
   dmModalScrim: { flex: 1, justifyContent: "center", padding: 20, backgroundColor: "rgba(4,6,10,0.78)" },
-  dmModalCard: { width: "100%", maxWidth: 440, maxHeight: "78%", alignSelf: "center", padding: 18, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 18, backgroundColor: colors.panelStrong },
+  dmModalCard: { width: "100%", maxWidth: 440, maxHeight: "78%", alignSelf: "center", padding: 18, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 18, backgroundColor: colors.sheet },
   dmModalHead: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 14 },
   dmModalTitleBlock: { flex: 1, gap: 3 },
   dmModalTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },

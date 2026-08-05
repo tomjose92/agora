@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   chipLabel: { color: colors.dim, fontSize: 11.5, flexShrink: 1 },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: "#14161d",
+    backgroundColor: colors.sheet,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     padding: 18,
