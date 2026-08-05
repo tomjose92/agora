@@ -43,6 +43,7 @@ import {
 import type { Channel, Group } from "@agora/core";
 import { Icon } from "../../src/components/Icon";
 import { AgentAvatar } from "../../src/components/AgentAvatar";
+import { AgentStatus } from "../../src/components/AgentStatus";
 import { toastErr } from "../../src/components/Toast";
 import { headerActions } from "../../src/lib/headerItems";
 import { totalThreadUnread } from "@agora/core";
@@ -357,7 +358,7 @@ export function DmGroupCard({ group, unreadsOnly, initialChoosing = false }: { g
               {available.map(agent => <Pressable key={agent.id} disabled={open.isPending} style={({pressed}) => [styles.dmAgentRow, pressed && styles.dmAgentRowPressed]} onPress={() => open.mutate(agent.id, {
                 onSuccess: channel => { setChoosing(false); router.push({ pathname: "/(app)/channel/[id]", params: { id: channel.id, name: channel.name, groupId: "__dms" } }); },
                 onError: e => toastErr("Couldn't open DM", e),
-              })}><AgentAvatar agentId={agent.id} size={30}/><Text style={styles.channelName}>{agent.name}</Text><Text style={agent.live ? styles.dmOnline : styles.dmOffline}>{agent.live ? "online" : "offline"}</Text></Pressable>)}
+              })}><AgentAvatar agentId={agent.id} size={30}/><Text numberOfLines={1} style={styles.channelName}>{agent.name}</Text><AgentStatus live={agent.live}/></Pressable>)}
               {dms.isLoading ? <Text style={styles.dmModalEmpty}>Loading agents…</Text> : null}
               {dms.isError ? <Text style={styles.dmModalEmpty}>Couldn't load available agents.</Text> : null}
               {dms.isSuccess && !available.length ? <Text style={styles.dmModalEmpty}>No new agents are available to message.</Text> : null}
@@ -657,8 +658,6 @@ const styles = StyleSheet.create({
   dmAgentRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 11, backgroundColor: colors.panel },
   dmAgentRowPressed: { backgroundColor: "rgba(139,124,255,0.12)" },
   dmModalEmpty: { color: colors.dim, padding: 14, textAlign: "center", lineHeight: 19 },
-  dmOnline: { color: colors.green, fontSize: 11.5 },
-  dmOffline: { color: colors.faint, fontSize: 11.5 },
   badge: {
     backgroundColor: "rgba(255,255,255,0.14)",
     borderRadius: 9,

@@ -44,6 +44,7 @@ import {
 } from "@agora/core";
 import { ArmedButton } from "./ArmedButton";
 import { AgentAvatar } from "./AgentAvatar";
+import { AgentStatus } from "./AgentStatus";
 import { toast, toastErr } from "./Toast";
 import { colors, mono } from "../lib/theme";
 import { useSession } from "../state/session";
@@ -628,7 +629,7 @@ function NativeAgentAccess({ agent, onBack }: { agent: AgentSource["agents"][num
   const save=(is_public:boolean,grants:string[])=>update.mutate({is_public,grants},{onError:error=>toastErr("DM access update failed",error)});
   return <View style={styles.flow}>
     <Pressable style={styles.backRow} onPress={onBack}><ChevronLeft size={18} color={colors.a1}/><Text style={styles.accessBackText}>Back</Text></Pressable>
-    <View style={styles.accessHeader}><AgentAvatar agentId={agent.id} size={38}/><View style={styles.rowMain}><Text style={styles.accessHeading}>{agent.name}</Text><Text style={styles.accessStatus}>{agent.live?"Online":"Offline · messages remain available in history"}</Text></View></View>
+    <View style={styles.accessHeader}><AgentAvatar agentId={agent.id} size={38}/><View style={styles.rowMain}><Text numberOfLines={1} style={styles.accessHeading}>{agent.name}</Text><AgentStatus live={agent.live}/>{!agent.live?<Text style={styles.accessStatus}>Messages remain available in history</Text>:null}</View></View>
     {!policy.data?<Text style={styles.empty}>Loading access…</Text>:<>
       <View style={styles.accessSwitch}><View style={styles.rowMain}><Text style={styles.rowName}>Public</Text><Text style={styles.rowMeta}>Everyone on this Agora can start a direct message</Text></View><Switch value={policy.data.is_public} disabled={update.isPending} onValueChange={value=>save(value,policy.data!.grants)}/></View>
       <View style={styles.accessSectionHead}><Text style={styles.sectionTitle}>People with access</Text><Text style={styles.accessHint}>Instance admins always have access. Select additional members below.</Text></View>
@@ -671,7 +672,7 @@ export function AgentConnectionsList() {
     <Text style={styles.sectionTitle}>{accessSource.name}</Text>
     <Text style={styles.empty}>Choose an agent to manage who can start a direct message.</Text>
     {accessSource.agents.map(agent=><Pressable key={agent.id} style={styles.accessAgentRow} onPress={()=>setAccessAgent(agent)}>
-      <AgentAvatar agentId={agent.id} size={34}/><View style={styles.rowMain}><Text style={styles.rowName}>{agent.name}</Text><Text style={styles.rowMeta}>{agent.live?"Online":"Offline"}</Text></View><ChevronRight size={18} color={colors.dim}/>
+      <AgentAvatar agentId={agent.id} size={34}/><View style={styles.rowMain}><Text numberOfLines={1} style={styles.rowName}>{agent.name}</Text><AgentStatus live={agent.live}/></View><ChevronRight size={18} color={colors.dim}/>
     </Pressable>)}
     {!accessSource.agents.length?<Text style={styles.empty}>No agents have registered through this connection yet.</Text>:null}
   </View>;
