@@ -15,6 +15,10 @@ const meta = {
   parameters: { apiRoutes: {
     "GET /api/groups": { groups: [dmGroup, ...fixtureGroups] },
     "GET /api/threads?limit=100": { threads: [] },
+    "GET /api/agents": { agents: [
+      { id: "codex", name: "Codex", live: true, avatar: null },
+      { id: "claude", name: "Claude", live: false, avatar: null },
+    ] },
     "GET /api/dms": { conversations: [{ channel_id: "dm-codex", agent_id: "codex", agent_name: "Codex", last_seen: 1, unread: 2 }], agents: [
       { id: "codex", name: "Codex", live: true, can_dm: true, is_public: true },
       { id: "claude", name: "Claude", live: false, can_dm: true, is_public: false },

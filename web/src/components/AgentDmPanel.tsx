@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useAgentDms, useOpenAgentDm } from "@agora/core";
 import { toast } from "../lib/toast";
 import { useUiState } from "../state/ui";
+import { AgentAvatar } from "./AgentAvatar";
 
 export function AgentDmPanel({ onClose }: { onClose: () => void }) {
   const data = useAgentDms();
@@ -47,7 +48,7 @@ export function AgentDmPanel({ onClose }: { onClose: () => void }) {
           onClick={() => openDm.mutate(agent.id, { onSuccess: channel => {
             ui.selectChannel("__dms", channel.id); onClose();
           }, onError: e => toast(`Couldn't open DM: ${(e as Error).message}`, { variant: "warn" }) })}>
-          <span>{agent.name}</span><span className={agent.live ? "ok" : "dim"}>{agent.live ? "online" : "offline"}</span>
+          <AgentAvatar agentId={agent.id} small /><span className="ago-dm-agent-name">{agent.name}</span><span className={agent.live ? "ok" : "dim"}>{agent.live ? "online" : "offline"}</span>
         </button>)}
         {data.isLoading && <div className="dim">Loading agents…</div>}
         {data.isError && <div className="dim">Couldn't load available agents.</div>}

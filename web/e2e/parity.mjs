@@ -160,6 +160,8 @@ async function main() {
     await api("/api/admin/agents/parity-agent/dm-policy", { is_public: true, grants: [] }, "PUT");
     await page.reload();
     const dmGroup = page.locator(".ago-group", { hasText: "Direct messages" }).first();
+    const visibleGroups = page.locator(".ago-groups > .ago-group");
+    if ((await visibleGroups.last().innerText()).includes("Direct messages") === false) throw new Error("Direct messages was not pinned as the last group");
     if (!(await dmGroup.locator(".ago-add").count())) await dmGroup.locator(".ago-caret").click();
     await dmGroup.locator(".ago-add", { hasText: "Agent" }).click();
     await page.locator(".ago-dm-agent", { hasText: "Parity Agent" }).click();
@@ -174,6 +176,8 @@ async function main() {
     const sourceRow=page.locator("#conn-panel .conn-row",{hasText:"parity-dm"});
     await sourceRow.locator("button",{hasText:"Manage access"}).click();
     await page.locator("#conn-panel",{hasText:"Everyone on this Agora can start a direct message"}).waitFor();
+    const publicSwitch = page.locator('#conn-panel [role="switch"][aria-label="Public agent direct messages"]');
+    if (await publicSwitch.count() !== 1) throw new Error("Public DM policy is not exposed as a switch");
     await page.locator("#conn-panel .conn-head button").last().click();
     await page.evaluate(() => window.__parityAgent?.close());
     await api(`/api/pairing/${pairing.token}`, undefined, "DELETE");
