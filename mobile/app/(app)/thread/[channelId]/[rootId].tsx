@@ -408,6 +408,7 @@ export default function ThreadScreen() {
         <MessageActions
           message={actionsFor}
           channelId={channelId}
+          groupId={groupId ?? undefined}
           starred={starredIds.has(actionsFor.id)}
           canPin={false}
           canEdit={actionsFor.author_type === "user" && username !== "" && actionsFor.author_id === username}
