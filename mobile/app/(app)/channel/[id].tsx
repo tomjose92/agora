@@ -512,6 +512,7 @@ export default function ChannelScreen() {
         <MessageActions
           message={actionsFor}
           channelId={channelId}
+          groupId={groupId}
           starred={starredIds.has(actionsFor.id)}
           pinned={pinnedIds.has(actionsFor.id)}
           canPin

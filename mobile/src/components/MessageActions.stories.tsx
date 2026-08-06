@@ -10,6 +10,7 @@ const meta = {
   args: {
     message: edited,
     channelId: edited.channel_id,
+    groupId: "product",
     starred: false,
     pinned: false,
     canPin: true,
@@ -32,3 +33,9 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 export const OwnMessage: Story = {};
 export const OtherUsersMessage: Story = { args: { canEdit: false, canDelete: false } };
+export const ThreadReply: Story = {
+  args: {
+    message: { ...edited, id: edited.id + 1, thread_id: edited.id, reply_count: undefined },
+    onThread: undefined,
+  },
+};

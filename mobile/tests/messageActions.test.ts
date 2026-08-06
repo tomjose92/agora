@@ -58,7 +58,14 @@ function pressLabel(tree: TestRenderer.ReactTestRenderer, text: string) {
   return node.props.onPress();
 }
 
-beforeAll(() => useSession.setState({ username: "alice" }));
+beforeAll(() => useSession.setState({
+  username: "alice",
+  session: { baseUrl: "https://agora.example", token: "test" },
+}));
+
+function labels(tree: TestRenderer.ReactTestRenderer): unknown[] {
+  return tree.root.findAllByType(Text).map((node) => node.props.children);
+}
 
 test("Copy writes the entire raw multi-block message", async () => {
   const { tree } = render();
@@ -108,4 +115,31 @@ test("Delete keeps the sheet mounted until the alert action finishes", async () 
   expect(onClose).toHaveBeenCalledTimes(1);
   alert.mockRestore();
   act(() => tree.unmount());
+});
+
+test("Copy link writes an absolute message deep link", async () => {
+  (Clipboard.setStringAsync as jest.Mock).mockClear();
+  const { tree } = render({ groupId: "acme" });
+  await act(async () => { pressLabel(tree, "Copy link"); await Promise.resolve(); });
+  expect(Clipboard.setStringAsync).toHaveBeenCalledWith("https://agora.example/g/acme/c/general/m/7");
+  act(() => tree.unmount());
+});
+
+test("Copy link includes the thread segment for replies", async () => {
+  (Clipboard.setStringAsync as jest.Mock).mockClear();
+  const { tree } = render({ groupId: "acme", message: { ...message, thread_id: 3 } });
+  expect(labels(tree)).not.toContain("Copy thread link");
+  await act(async () => { pressLabel(tree, "Copy link"); await Promise.resolve(); });
+  expect(Clipboard.setStringAsync).toHaveBeenCalledWith("https://agora.example/g/acme/c/general/t/3/m/7");
+  act(() => tree.unmount());
+});
+
+test("the link row is gated on the authoritative group", () => {
+  const noGroup = render().tree;
+  expect(labels(noGroup)).not.toContain("Copy link");
+
+  const withGroup = render({ groupId: "acme" }).tree;
+  expect(labels(withGroup)).toContain("Copy link");
+  expect(labels(withGroup)).not.toContain("Copy thread link");
+  act(() => { noGroup.unmount(); withGroup.unmount(); });
 });

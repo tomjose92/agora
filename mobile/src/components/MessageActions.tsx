@@ -4,7 +4,7 @@ import {
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import {
-  Copy, Maximize2, MessageCircle, Minimize2, Pencil, Pin, Star, Trash2, Volume2,
+  Copy, Link, Maximize2, MessageCircle, Minimize2, Pencil, Pin, Star, Trash2, Volume2,
   type LucideIcon,
 } from "lucide-react-native";
 import {
@@ -12,16 +12,19 @@ import {
   type Message,
 } from "@agora/core";
 import { colors } from "../lib/theme";
+import { copyDeepLink } from "../lib/deepLinks";
 import { speakMessage } from "../lib/nativeSpeech";
 import { Icon } from "./Icon";
 import { QuickReactions } from "./Reactions";
 import { toastErr } from "./Toast";
 
 export function MessageActions({
-  message, channelId, starred, pinned = false, canPin, canEdit, canDelete, onClose, onReact, onThread, onDeleted,
+  message, channelId, groupId, starred, pinned = false, canPin, canEdit, canDelete,
+  onClose, onReact, onThread, onDeleted,
 }: {
   message: Message;
   channelId: string;
+  groupId?: string;
   starred: boolean;
   pinned?: boolean;
   canPin: boolean;
@@ -112,6 +115,12 @@ export function MessageActions({
           {onThread ? <Row icon={MessageCircle} label="Reply in thread" onPress={() => act(onThread)} /> : null}
           {hasText ? <Row icon={Copy} label="Copy" onPress={() => act(() => {
             void Clipboard.setStringAsync(message.text).catch((e) => toastErr("Copy failed", e));
+          })} /> : null}
+          {groupId ? <Row icon={Link} label="Copy link" onPress={() => act(() => {
+            void copyDeepLink({
+              kind: "message", groupId, channelId: message.channel_id,
+              threadId: message.thread_id, messageId: message.id,
+            }, "Message");
           })} /> : null}
           {canEdit && hasText ? <Row icon={Pencil} label="Edit"
             onPress={() => { setText(message.text); setEditing(true); }} /> : null}
