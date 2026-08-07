@@ -107,7 +107,7 @@ function Row({
 
 /* Rename dialog: prefilled with the current alias; empty Save clears it back
    to the first message. Anyone who can see the thread may rename it. */
-function RenameModal({
+export function RenameModal({
   thread,
   onClose,
 }: {
@@ -130,7 +130,13 @@ function RenameModal({
   return (
     <Modal transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <Pressable style={styles.dialog} onPress={() => {}}>
+        <Pressable
+          style={styles.dialog}
+          onPress={() => {}}
+          accessibilityViewIsModal
+          accessibilityLabel="Rename thread dialog"
+          testID="rename-thread-dialog"
+        >
           <Text style={styles.dialogTitle}>Rename thread</Text>
           <Text style={styles.dialogHint}>
             Leave blank to show the first message.
@@ -249,7 +255,7 @@ const styles = StyleSheet.create({
     padding: 28,
   },
   dialog: {
-    backgroundColor: colors.panel,
+    backgroundColor: colors.sheet,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 16,
