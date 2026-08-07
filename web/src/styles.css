@@ -1201,6 +1201,7 @@ a.btn { text-decoration: none; }
 .md-mermaid.rendered svg { max-width: 100%; height: auto; }
 
 /* ---------- ECharts charts ---------- */
+.md-text-segment { display: contents; }
 .md-echarts:has(.ago-chart-block, .ago-chart-error) > .md-pre { display: none; }
 .ago-chart-block {
   margin: 6px 0; max-width: 100%; overflow: hidden; border: 1px solid var(--border);

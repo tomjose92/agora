@@ -1,32 +1,43 @@
-/* Message prose: mdliteHtml + @mention
-   decoration, mermaid marker divs rendered lazily after paint. */
+/* Message prose: mdliteHtml + @mention decoration. Mermaid marker divs render
+   lazily after paint; ECharts fences become stable direct React children. */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect } from "react";
 import { mdliteHtml } from "@agora/core";
 import { decorateMentions, type MentionIndex } from "../lib/mentions";
 import { renderMermaid } from "../lib/mermaid";
 import { EChartBlock } from "./EChartBlock";
 
+type MdPart = { kind: "html"; text: string } | { kind: "echarts"; source: string };
+
+function splitECharts(text: string): MdPart[] {
+  const parts: MdPart[] = [];
+  // Keep this fence grammar aligned with mdliteHtml. Non-ECharts fences remain
+  // inside their prose segment so the shared renderer handles them normally.
+  const fences = /```(\w*)\n?([\s\S]*?)```/g;
+  let cursor = 0;
+  for (const match of text.matchAll(fences)) {
+    if (match[1].toLowerCase() !== "echarts") continue;
+    if (match.index > cursor) parts.push({ kind: "html", text: text.slice(cursor, match.index) });
+    parts.push({ kind: "echarts", source: match[2].replace(/\n$/, "") });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) parts.push({ kind: "html", text: text.slice(cursor) });
+  return parts.length ? parts : [{ kind: "html", text }];
+}
+
 export function MdText({ text, mentions }: { text: string; mentions?: MentionIndex }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [charts, setCharts] = useState<{ node: HTMLElement; source: string }[]>([]);
-  const html = mentions ? decorateMentions(mdliteHtml(text), mentions) : mdliteHtml(text);
+  const parts = splitECharts(text).map(part => part.kind === "html"
+    ? { ...part, html: mentions ? decorateMentions(mdliteHtml(part.text), mentions) : mdliteHtml(part.text) }
+    : part);
+  const mermaidHtml = parts.flatMap(part => part.kind === "html" ? [part.html] : []).join("");
   useEffect(() => {
-    if (html.includes("md-mermaid")) void renderMermaid();
-  }, [html]);
-  useLayoutEffect(() => {
-    const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>(".md-echarts") ?? []);
-    setCharts(nodes.map(node => ({ node, source: node.textContent?.trim() ?? "" })));
-  }, [html]);
+    if (mermaidHtml.includes("md-mermaid")) void renderMermaid();
+  }, [mermaidHtml]);
   return (
-    <>
-      <div ref={ref} dangerouslySetInnerHTML={{ __html: html }} />
-      {charts.map((chart, index) => createPortal(
-        <EChartBlock source={chart.source} />,
-        chart.node,
-        index,
-      ))}
-    </>
+    <div>
+      {parts.map((part, index) => part.kind === "echarts"
+        ? <EChartBlock key={index} source={part.source} />
+        : <div key={index} className="md-text-segment" dangerouslySetInnerHTML={{ __html: part.html }} />)}
+    </div>
   );
 }
