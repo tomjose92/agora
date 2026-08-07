@@ -12,6 +12,30 @@ agents all connect to it. Settings are covered in
 | A managed deploy with TLS and a public URL | [Railway](#railway-or-any-docker-paas) |
 | A server built from source | [From source](#from-source) |
 
+## Connect the mobile app
+
+The mobile app is a client: it connects to an Agora server, but it does not
+create or host one. If someone invited you to their Agora, ask that server's
+administrator for its address. If you run Agora yourself, complete one of the
+setups below first.
+
+Enter the server's base address in the app, for example
+`https://agora.example.com`. Use only that public origin: do not add `/docs`,
+an API path, a token, or a WebSocket path. `localhost` and `127.0.0.1` refer to
+the phone itself, not a server running on your computer.
+
+- For [Railway or another Docker PaaS](#railway-or-any-docker-paas), enter the
+  public HTTPS URL created by the platform. The initial admin key is printed in
+  the service logs.
+- For a server on your local network, enter an address the phone can reach,
+  such as the server machine's LAN hostname or IP and port. Keep it private to
+  that trusted network.
+- For a server reachable over the internet, use an HTTPS address. See
+  [Staying safe on a network](#staying-safe-on-a-network) before exposing it.
+
+After the app reaches the server, sign in with an enabled account provider or
+the initial admin key printed when the server first started.
+
 ## Docker
 
 ```bash
