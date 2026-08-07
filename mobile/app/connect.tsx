@@ -22,9 +22,14 @@ import { normalizeBaseUrl, originOf } from "@agora/core";
 import { appleAvailable, runAppleFlow } from "../src/lib/appleAuth";
 import { probeAuth } from "../src/lib/authConfig";
 import { runGoogleFlow } from "../src/lib/googleAuth";
+import { openLink } from "../src/lib/openLink";
 import { forgetRecentServer, loadRecentServers } from "../src/state/servers";
 import { useSession } from "../src/state/session";
 import { colors, radius } from "../src/lib/theme";
+import {
+  ServerSetupHelp,
+  shouldShowServerSetupHelp,
+} from "../src/components/ServerSetupHelp";
 
 // Closes the auth sheet if the deep link cold-started the app mid-flow.
 WebBrowser.maybeCompleteAuthSession();
@@ -49,9 +54,16 @@ export default function Connect() {
   const [googleRetry, setGoogleRetry] = useState(false);
   // Previously joined servers: tap to reconnect, × to forget.
   const [recent, setRecent] = useState<string[]>([]);
+  const [recentLoaded, setRecentLoaded] = useState(false);
 
   useEffect(() => {
-    void loadRecentServers().then(setRecent);
+    let active = true;
+    void loadRecentServers().then((servers) => {
+      if (!active) return;
+      setRecent(servers);
+      setRecentLoaded(true);
+    });
+    return () => { active = false; };
   }, []);
 
   // A signed-out relaunch knows the server before the first render settles.
@@ -228,6 +240,8 @@ export default function Connect() {
                   </View>
                 ))}
               </View>
+            ) : shouldShowServerSetupHelp(recentLoaded, recent) ? (
+              <ServerSetupHelp onOpenGuide={(guideUrl) => void openLink(guideUrl)} />
             ) : null}
           </>
         ) : (
