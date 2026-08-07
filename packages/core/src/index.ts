@@ -20,6 +20,7 @@ export * from "./lib/format";
 export * from "./lib/unread";
 export * from "./lib/emoji";
 export * from "./lib/artifacts";
+export * from "./lib/echarts";
 export * from "./lib/deepLinks";
 export * from "./lib/dropFiles";
 export * from "./lib/uploadLimits";
