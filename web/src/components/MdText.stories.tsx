@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, waitFor } from "storybook/test";
 import { fixtureMarkdown } from "@agora/core/testing/fixtures";
 import { MdText } from "./MdText";
 
@@ -35,5 +36,31 @@ export const LongUnbrokenContent: Story = {
   },
   parameters: {
     docs: { description: { story: "A realistic long, unbroken artifact URL proving links wrap instead of forcing horizontal scrolling." } },
+  },
+};
+
+export const EChartsMessage: Story = {
+  args: {
+    text: [
+      "Here is the activity trend:",
+      "",
+      "```echarts",
+      JSON.stringify({
+        title: { text: "Weekly activity" }, tooltip: { trigger: "axis" },
+        xAxis: { type: "category", data: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },
+        yAxis: { type: "value" },
+        series: [{ type: "line", smooth: true, data: [12, 19, 15, 28, 24, 32, 30] }],
+      }),
+      "```",
+      "",
+      "The weekend remained strong.",
+    ].join("\n"),
+  },
+  play: async ({ canvasElement }) => {
+    await waitFor(() => expect(canvasElement.querySelector(".ago-chart-block canvas")).toBeInTheDocument());
+    await expect(canvasElement.querySelector(".md-echarts")).not.toBeInTheDocument();
+  },
+  parameters: {
+    docs: { description: { story: "Exercises an ECharts fence through the real markdown message renderer." } },
   },
 };

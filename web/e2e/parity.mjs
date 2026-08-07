@@ -258,6 +258,22 @@ async function main() {
     await page.waitForSelector("#ago-log .md-mermaid svg", { timeout: 20000 });
   });
 
+  await check("echarts: responsive canvas opens and closes expanded viewer", async () => {
+    const chart = JSON.stringify({
+      title: { text: "Parity chart" }, tooltip: { trigger: "axis" },
+      xAxis: { type: "category", data: ["A", "B", "C"] }, yAxis: { type: "value" },
+      series: [{ type: "bar", data: [3, 7, 5] }],
+    });
+    await page.fill("#ago-msg", `\`\`\`echarts\n${chart}\n\`\`\``);
+    await page.keyboard.press("Enter");
+    const block = page.locator("#ago-log .ago-chart-block", { hasText: "Parity chart" }).last();
+    await block.locator("canvas").waitFor({ timeout: 20000 });
+    await block.locator("button", { hasText: "expand" }).click();
+    await page.locator(".ago-chart-overlay canvas").waitFor({ timeout: 20000 });
+    await page.locator(".ago-chart-modal button[aria-label='Close chart']").click();
+    await page.locator(".ago-chart-overlay").waitFor({ state: "detached", timeout: 5000 });
+  });
+
   await check("reactions: pick emoji, chip appears, toggle off", async () => {
     const bubble = page.locator("#ago-log .bubble", { hasText: "seed plain message one" }).first();
     await bubble.hover();

@@ -145,6 +145,24 @@ OpenClaw or Hermes wrapper, a shell script, whatever:
  "text": "<answer...>", "sources": ["https://example.com/paper",
                                     {"url": "https://example.org/doc", "title": "The docs"}]}
 
+// Quantitative charts can be embedded in message text with an `echarts`
+// fenced block containing strict JSON (never JavaScript functions). Clients
+// render responsive ECharts canvases with tooltips and an expanded viewer.
+// Use a bare ECharts option for normal charts. For a dense/long chart, wrap
+// it in the optional Agora envelope and request an intrinsic width; the chart
+// then scrolls horizontally on narrow web and mobile screens. Width is clamped
+// to 320–4000 px and height to 220–900 px. HTML tooltips and external image
+// resources are disabled by clients for message safety.
+// ```echarts
+// {"agora":{"width":1200,"height":360},"option":{
+//   "title":{"text":"Monthly revenue"},
+//   "tooltip":{"trigger":"axis"},
+//   "xAxis":{"type":"category","data":["Jan","Feb","Mar"]},
+//   "yAxis":{"type":"value"},
+//   "series":[{"type":"bar","data":[12,18,25]}]
+// }}
+// ```
+
 // optional niceties
 {"type": "typing",   "agent_id": "claw-1", "channel_id": "...", "active": true}
 {"type": "progress", "agent_id": "claw-1", "channel_id": "...", "handle": "h1", "text": "thinking…"}

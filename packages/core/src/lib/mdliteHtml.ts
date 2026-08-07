@@ -1,5 +1,5 @@
 /* HTML-emitting markdown-lite for chat messages: fenced code (incl. the
-   .md-mermaid marker), inline code, links, bold/italic, headings, and
+   .md-mermaid/.md-echarts markers), inline code, links, bold/italic, headings, and
    tables — with esc() applied to everything interpolated. (lib/mdlite.ts
    is the tree-parsing variant the mobile app renders natively; both ship
    so either host can pick.) */
@@ -20,6 +20,9 @@ export function mdliteHtml(s: string): string {
     // code standing when the graph doesn't parse).
     if (lang.toLowerCase() === "mermaid") {
       return stash(`<div class="md-mermaid"><pre class="md-pre">${code}</pre></div>`);
+    }
+    if (lang.toLowerCase() === "echarts") {
+      return stash(`<div class="md-echarts"><pre class="md-pre">${code}</pre></div>`);
     }
     return stash(`<pre class="md-pre"${lang ? ` data-lang="${lang}"` : ""}>${code}</pre>`);
   });

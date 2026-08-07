@@ -4,6 +4,7 @@ import { parseMd, type Span } from "@agora/core";
 import { openLink } from "../lib/openLink";
 import { colors, mono } from "../lib/theme";
 import { MermaidBlock } from "./Mermaid";
+import { EChartBlock } from "./EChart";
 
 function SpanText({ span }: { span: Span }) {
   switch (span.kind) {
@@ -97,6 +98,9 @@ export function MdText({ text, onLongPress }: { text: string; onLongPress?: () =
           case "codeblock":
             if (b.lang === "mermaid") {
               return <MermaidBlock key={i} code={b.text} maxWidth={width} />;
+            }
+            if (b.lang === "echarts") {
+              return <EChartBlock key={i} code={b.text} maxWidth={width} />;
             }
             return (
               <ScrollView

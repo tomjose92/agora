@@ -20,6 +20,10 @@
   "<div class=\"md-mermaid\"><pre class=\"md-pre\">graph TD; A--&gt;B;</pre></div>"
  ],
  [
+  "```echarts\n{\"title\":{\"text\":\"A & B\"}}\n```",
+  "<div class=\"md-echarts\"><pre class=\"md-pre\">{&quot;title&quot;:{&quot;text&quot;:&quot;A &amp; B&quot;}}</pre></div>"
+ ],
+ [
   "[label](https://example.com/x) and bare https://foo.bar/baz?q=1",
   "<a href=\"https://example.com/x\" target=\"_blank\" rel=\"noopener\">label</a> and bare <a href=\"https://foo.bar/baz?q=1\" target=\"_blank\" rel=\"noopener\">https://foo.bar/baz?q=1</a>"
  ],
