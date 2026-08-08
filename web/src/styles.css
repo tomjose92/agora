@@ -1243,7 +1243,12 @@ a.btn { text-decoration: none; }
 .ago-chart-modal header { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .ago-chart-modal header strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ago-chart-modal header button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; }
-.ago-chart-scroll.expanded { flex: 1; overflow: auto; padding: 8px; }
+/* The expanded chart fills the dialog body: the scroller, its stage, and the
+   canvas all stretch so a tall viewport doesn't leave dead space under it. */
+.ago-chart-scroll.expanded { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
+.ago-chart-scroll.expanded, .ago-chart-scroll.expanded > .ago-chart-stage { display: flex; }
+.ago-chart-scroll.expanded > .ago-chart-stage { flex-direction: column; }
+.ago-chart-canvas.expanded { flex: 1; min-height: 260px; }
 @media (max-width: 640px) {
   .ago-chart-overlay { padding: 8px; align-items: stretch; }
   .ago-chart-modal { width: 100%; max-height: none; }

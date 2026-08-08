@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-native";
-import { fixtureMarkdown } from "@agora/core/testing/fixtures";
+import { fixtureDenseTrendMessage, fixtureMarkdown } from "@agora/core/testing/fixtures";
 import { MdText } from "./MdText";
 
 const meta = {
@@ -23,4 +23,10 @@ export const WideTable: Story = {
       "| Composer | Native | Keyboard-aware layout |",
     ].join("\n"),
   },
+};
+
+/* The daily-tracker message shape agents post: a summary table followed by
+   one dense chart per series, all in a single bubble. */
+export const DenseTrendReport: Story = {
+  args: { text: fixtureDenseTrendMessage },
 };

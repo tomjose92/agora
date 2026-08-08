@@ -13,3 +13,16 @@ test("chart WebView pins ECharts and keeps option markup out of HTML", () => {
   expect(html).toContain('renderMode":"richText"');
   expect(html).toContain('confine":true');
 });
+
+test("chart stage fills its native box instead of the option's pixel height", () => {
+  const chart = normalizeEChart(JSON.stringify({
+    agora: { height: 300 },
+    option: { series: [{ type: "line", data: [1, 2] }] },
+  }));
+  const html = echartHtml(chart);
+  // The native side sizes the WebView (bounded inline, measured when expanded),
+  // so a fixed px stage would leave dead space in a taller box.
+  expect(html).toContain("height:100vh");
+  expect(html).not.toContain("height:300px");
+  expect(html).toContain("ResizeObserver");
+});
