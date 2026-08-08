@@ -11,6 +11,7 @@ export function echartHtml(chart: NormalizedEChart): string {
   const source = JSON.stringify(JSON.stringify(chart.option, null, 2)).replace(/</g, "\\u003c");
   const width = chart.width ? `${chart.width}px` : "100vw";
   return `<!doctype html><html><head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
 <style>
 html,body{margin:0;background:#0b0d12;color:#d9deea;overflow-x:auto;overflow-y:hidden}

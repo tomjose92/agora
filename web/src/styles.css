@@ -1240,6 +1240,7 @@ a.btn { text-decoration: none; }
   overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg);
   box-shadow: 0 20px 70px rgba(0,0,0,.6);
 }
+@media (min-width: 641px) { .ago-chart-modal { height: 94vh; } }
 .ago-chart-modal header { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .ago-chart-modal header strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ago-chart-modal header button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; }
