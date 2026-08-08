@@ -31,7 +31,17 @@ function ChartCanvas({ chart, source, expanded = false }: { chart: NormalizedECh
   }, [chart, expanded]);
 
   if (loadError) return <div className="ago-chart-load-error">Could not load the chart renderer.<pre>{source}</pre></div>;
-  return <div ref={ref} className="ago-chart-canvas" style={{ height: chart.height }} role="img" aria-label={chart.title} />;
+  // Expanded charts fill the dialog body (CSS-driven) instead of keeping the
+  // inline pixel height, which would leave the rest of the modal empty.
+  return (
+    <div
+      ref={ref}
+      className={expanded ? "ago-chart-canvas expanded" : "ago-chart-canvas"}
+      style={expanded ? undefined : { height: chart.height }}
+      role="img"
+      aria-label={chart.title}
+    />
+  );
 }
 
 function ChartModal({ chart, source, onClose }: { chart: NormalizedEChart; source: string; onClose: () => void }) {

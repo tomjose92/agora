@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-native";
+import { fixtureDenseTrendCharts } from "@agora/core/testing/fixtures";
 import { EChartBlock } from "./EChart";
 
 const line = JSON.stringify({
@@ -29,4 +30,8 @@ export const WideScrollable: Story = {
     },
   }) },
 };
+/* A dense agent payload: ~165 daily points whose values move fractions of a
+   percent, which is the case that reads as a flat line without an axis that
+   scales to the data. */
+export const DenseTrendLine: Story = { args: { code: fixtureDenseTrendCharts[3] } };
 export const InvalidJson: Story = { args: { code: "{ definitely not json" } };

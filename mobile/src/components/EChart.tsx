@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import { BarChart3, Maximize2, X } from "lucide-react-native";
 import { normalizeEChart, type NormalizedEChart } from "@agora/core";
 import { WebView } from "react-native-webview";
@@ -7,7 +7,10 @@ import { colors, mono } from "../lib/theme";
 import { echartHtml } from "../lib/echarts";
 import { Icon } from "./Icon";
 
-function ChartWebView({ chart, inline }: { chart: NormalizedEChart; inline?: boolean }) {
+/* `height` is the native box the chart paints into; the WebView stage fills it.
+   Inline cards stay bounded so a channel of charts scrolls normally, while the
+   expanded modal passes its measured body height. */
+function ChartWebView({ chart, height }: { chart: NormalizedEChart; height: number }) {
   return (
     <WebView
       originWhitelist={["*"]}
@@ -16,11 +19,13 @@ function ChartWebView({ chart, inline }: { chart: NormalizedEChart; inline?: boo
       scrollEnabled
       nestedScrollEnabled
       showsHorizontalScrollIndicator
-      style={[styles.web, { height: inline ? Math.min(chart.height, 320) : chart.height }]}
+      style={[styles.web, { height }]}
       containerStyle={styles.webContainer}
     />
   );
 }
+
+const INLINE_MAX_HEIGHT = 320;
 
 export function EChartBlock({ code, maxWidth }: { code: string; maxWidth?: number }) {
   const result = React.useMemo(() => {
@@ -28,6 +33,10 @@ export function EChartBlock({ code, maxWidth }: { code: string; maxWidth?: numbe
     catch (error) { return { chart: null, error: (error as Error).message }; }
   }, [code]);
   const [open, setOpen] = React.useState(false);
+  const [bodyHeight, setBodyHeight] = React.useState(0);
+  const onBody = React.useCallback((event: LayoutChangeEvent) => {
+    setBodyHeight(Math.round(event.nativeEvent.layout.height));
+  }, []);
 
   if (!result.chart) {
     return (
@@ -52,7 +61,7 @@ export function EChartBlock({ code, maxWidth }: { code: string; maxWidth?: numbe
             <Text style={styles.expandText}>expand</Text>
           </Pressable>
         </View>
-        <ChartWebView chart={chart} inline />
+        <ChartWebView chart={chart} height={Math.min(chart.height, INLINE_MAX_HEIGHT)} />
       </View>
       {open ? (
         <Modal animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setOpen(false)}>
@@ -64,7 +73,9 @@ export function EChartBlock({ code, maxWidth }: { code: string; maxWidth?: numbe
                 <Icon icon={X} size={21} color={colors.dim} />
               </Pressable>
             </View>
-            <ChartWebView chart={{ ...chart, height: Math.max(chart.height, 520) }} />
+            <View style={styles.modalBody} onLayout={onBody}>
+              {bodyHeight > 0 ? <ChartWebView chart={chart} height={bodyHeight} /> : null}
+            </View>
           </View>
         </Modal>
       ) : null}
@@ -81,6 +92,7 @@ const styles = StyleSheet.create({
   web: { backgroundColor: "#0b0d12" },
   webContainer: { backgroundColor: "#0b0d12" },
   modal: { flex: 1, backgroundColor: "#0b0d12", paddingTop: 54 },
+  modalBody: { flex: 1 },
   modalHead: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   modalTitle: { flex: 1, color: colors.text, fontSize: 14, fontWeight: "700" },
   error: { alignSelf: "flex-start", gap: 5, padding: 10, borderWidth: 1, borderColor: "rgba(248,113,113,.35)", borderRadius: 8, backgroundColor: "rgba(127,29,29,.14)" },
