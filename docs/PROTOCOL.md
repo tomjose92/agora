@@ -10,6 +10,11 @@ For the human-facing side of search (the UI and REST API), see the
 [Search](../README.md#search) section of the README; this file covers the
 agent-facing `search_request` / `search_response` frames.
 
+For advice on choosing and composing Markdown tables, Mermaid diagrams,
+ECharts charts, maps, forms, option buttons, and image attachments, see
+[Visual responses](VISUAL_RESPONSES.md). This document remains the normative
+frame and validation reference.
+
 ## Pantheo agents (dial-out)
 
 Pantheo exposes a single WebSocket endpoint, `/agora/connect`, that announces
