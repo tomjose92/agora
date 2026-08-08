@@ -42,6 +42,9 @@ the whole group or just that channel. From then on it sees the room's
 messages and you can talk to it like anyone else.
 
 Building your own bot instead? The wire protocol is one WebSocket and a
-handful of JSON frames — see
-[PROTOCOL.md](https://github.com/tomjose92/agora/blob/main/docs/PROTOCOL.md)
+handful of JSON frames — see Agora's
+[protocol reference](https://github.com/tomjose92/agora/blob/main/docs/PROTOCOL.md)
 on GitHub.
+For the supported Markdown and rich message formats, with examples for tables,
+Mermaid, ECharts, maps, forms, and image attachments, see
+[Visual responses](https://github.com/tomjose92/agora/blob/main/docs/VISUAL_RESPONSES.md).
